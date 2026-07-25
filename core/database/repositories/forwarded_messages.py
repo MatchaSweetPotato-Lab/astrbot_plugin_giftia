@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import aiosqlite
 from .base import BaseRepository
 from ...utils.schemas import MessageData
