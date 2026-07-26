@@ -329,10 +329,9 @@ class ToolsFunc:
         media_cfg = await self._get_media_clean_cfg()
             
         if media_cfg.get("enabled", False):
-            logger.info("[Giftia] 1/6 正在执行自动清理媒体缓存...")
+            logger.info("[Giftia] 1/6 正在清理媒体缓存...")
             try:
-                res = await self.auto_clean_media_cache()
-                logger.info(f"[Giftia] 媒体缓存清理结果: {res.get('message', '无结果')}")
+                await self.auto_clean_media_cache()
             except Exception as e:
                 logger.error(f"[Giftia] 媒体缓存自动清理执行异常: {e}")
         else:
@@ -343,10 +342,9 @@ class ToolsFunc:
         memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
         
         if memory_cfg.get("enabled", False):
-            logger.info("[Giftia] 2/6 正在执行自动清理长期记忆...")
+            logger.info("[Giftia] 2/6 正在清理长期记忆...")
             try:
-                res = await self.auto_clean_memories()
-                logger.info(f"[Giftia] 长期记忆清理结果: {res.get('message', '无结果')}")
+                await self.auto_clean_memories()
             except Exception as e:
                 logger.error(f"[Giftia] 长期记忆自动清理执行异常: {e}")
         else:
@@ -357,10 +355,9 @@ class ToolsFunc:
         alias_cfg = self.normalize_auto_clean_aliases_config(raw_alias_cfg)
 
         if alias_cfg.get("enabled", True):
-            logger.info("[Giftia] 3/6 正在执行自动清理过期外号...")
+            logger.info("[Giftia] 3/6 正在清理过期外号...")
             try:
-                res = await self.auto_clean_expired_user_aliases(config=alias_cfg)
-                logger.info(f"[Giftia] 过期外号清理结果: {res.get('message', '无结果')}")
+                await self.auto_clean_expired_user_aliases(config=alias_cfg)
             except Exception as e:
                 logger.error(f"[Giftia] 过期外号自动清理执行异常: {e}")
         else:
@@ -371,10 +368,9 @@ class ToolsFunc:
         chat_cfg = self.normalize_auto_clean_chat_history_config(raw_chat_cfg)
 
         if chat_cfg.get("enabled", False):
-            logger.info("[Giftia] 4/6 正在执行自动清理聊天记录...")
+            logger.info("[Giftia] 4/6 正在清理聊天记录...")
             try:
-                res = await self.auto_clean_chat_history(config=chat_cfg)
-                logger.info(f"[Giftia] 聊天记录清理结果: {res.get('message', '无结果')}")
+                await self.auto_clean_chat_history(config=chat_cfg)
             except Exception as e:
                 logger.error(f"[Giftia] 聊天记录自动清理执行异常: {e}")
         else:
@@ -382,10 +378,10 @@ class ToolsFunc:
 
 
         # 5. 合并转发记录清理（超过 24h 默认自动清理，无需 UI 配置）
-        logger.info("[Giftia] 5/6 正在执行自动清理超过 24h 的合并转发记录...")
+        logger.info("[Giftia] 5/6 正在清理合并转发记录...")
         try:
             deleted_forwards = await self.db.clean_old_forwards(max_age_hours=24)
-            logger.info(f"[Giftia] 合并转发记录清理结果: 已清理 {deleted_forwards} 条超过 24h 的记录")
+            logger.info(f"[Giftia] 合并转发记录清理完成，已清理 {deleted_forwards} 条超过 24h 的记录")
         except Exception as e:
             logger.error(f"[Giftia] 合并转发自动清理执行异常: {e}")
 
@@ -393,7 +389,7 @@ class ToolsFunc:
         token_cfg = await self._get_token_clean_cfg()
             
         if token_cfg.get("enabled", True):
-            logger.info("[Giftia] 6/6 正在执行自动清理 Token 消耗日志...")
+            logger.info("[Giftia] 6/6 正在清理 Token 消耗日志...")
             try:
                 await self.auto_clean_token_usage()
             except Exception as e:
@@ -452,7 +448,6 @@ class ToolsFunc:
 
     async def auto_clean_memories(self) -> dict:
         """自动清理低重要度、低活跃度、足够旧的长期记忆。"""
-        logger.info("[Giftia] 开始自动清理长期记忆...")
         try:
             raw_cfg = await self.db.get_kv_data("auto_clean_memory_config")
             cfg = self.normalize_auto_clean_memory_config(raw_cfg)
@@ -497,7 +492,7 @@ class ToolsFunc:
                 else:
                     failed_ids.append(memory_id)
 
-            msg = f"自动清理完成，共删除 {deleted_count} 条长期记忆"
+            msg = f"长期记忆自动清理完成，共删除 {deleted_count} 条长期记忆"
             if failed_ids:
                 msg += f"，{len(failed_ids)} 条删除失败"
             logger.info(f"[Giftia] {msg}")
@@ -515,7 +510,6 @@ class ToolsFunc:
 
     async def auto_clean_media_cache(self) -> dict:
         """自动清理非表情包类型的超出会话窗口的媒体文件"""
-        logger.info("[Giftia] 开始自动清理媒体缓存文件...")
         try:
             from astrbot.core.star.star_tools import StarTools
 
@@ -655,7 +649,7 @@ class ToolsFunc:
                                 f"[Giftia] 自动清理缓存文件失败 {hash_val}: {e}"
                             )
 
-            msg = f"自动清理完成，共物理删除 {cleaned_count} 个过期媒体文件，释放空间 {freed_bytes} 字节"
+            msg = f"媒体缓存自动清理完成，共物理删除 {cleaned_count} 个过期媒体文件，释放空间 {freed_bytes} 字节"
             logger.info(f"[Giftia] {msg}")
             return {
                 "status": "success",
@@ -683,6 +677,6 @@ class ToolsFunc:
                 # 2. 清理超过保留天数的历史归档
                 days = int(cfg.get("days", 365))
                 cleaned_count = await self.db.clear_token_logs(before_days=days)
-                logger.info(f"[Giftia] 自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
+                logger.info(f"[Giftia] Token 消耗日志自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
         except Exception as e:
             logger.error(f"[Giftia] 自动清理 Token 记录失败: {e}")

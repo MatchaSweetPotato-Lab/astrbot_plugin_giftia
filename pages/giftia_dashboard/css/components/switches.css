@@ -1,0 +1,75 @@
+/* Global Switch Component Styling */
+.switch-container {
+    position: relative;
+    display: inline-block;
+    width: 46px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.switch-checkbox {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0 !important;
+}
+
+.switch-label {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border-color, #ccc);
+    transition: .3s;
+    border-radius: 24px;
+}
+
+.switch-label:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.switch-checkbox:checked + .switch-label {
+    background-color: var(--primary, #4f46e5);
+}
+
+.switch-checkbox:checked + .switch-label:before {
+    transform: translateX(22px);
+}
+
+.form-row-switch {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 15px;
+    width: 100%;
+}
+
+.form-row-switch > div:first-child {
+    flex: 1;
+    min-width: 0;
+    margin-right: 12px;
+}
+
+@media (max-width: 768px) {
+    .form-row-switch,
+    .form-row.form-row-switch {
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        margin-bottom: 15px !important;
+        gap: 8px !important;
+    }
+}

@@ -242,7 +242,8 @@ html[data-theme="dark"] .sub-nav-tab.active {
         min-width: 100%;
     }
 
-    .btn {
+    .filter-card .btn,
+    .filter-row .btn {
         width: 100%;
         padding: 10px 16px;
     }
