@@ -963,8 +963,8 @@
                     <input type="number" id="token-auto-clean-days" min="1" max="3650" value="365">
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('token-auto-clean-modal')">取消</button>
+            <div class="modal-footer flex-between">
+                <button class="btn btn-warning" onclick="triggerAutoCleanTokenImmediately()">手动执行清理</button>
                 <button class="btn btn-primary" onclick="submitTokenAutoCleanConfig()">保存设置</button>
             </div>
         </div>

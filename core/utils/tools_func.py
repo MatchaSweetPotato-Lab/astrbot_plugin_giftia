@@ -665,18 +665,20 @@ class ToolsFunc:
         """兼容层：统一自动清理更新"""
         self.update_auto_cleanup_jobs()
 
-    async def auto_clean_token_usage(self):
+    async def auto_clean_token_usage(self, config: dict | None = None) -> dict:
         """自动清理过期 Token 日志"""
         try:
-            cfg = await self._get_token_clean_cfg()
+            if config is None:
+                config = await self._get_token_clean_cfg()
             
-            if cfg.get("enabled", True):
-                # 1. 先将昨日及以前的数据拍扁汇总归档
-                await self.db.squash_token_logs()
-                
-                # 2. 清理超过保留天数的历史归档
-                days = int(cfg.get("days", 365))
-                cleaned_count = await self.db.clear_token_logs(before_days=days)
-                logger.info(f"[Giftia] Token 消耗日志自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
+            # 1. 先将昨日及以前的数据拍扁汇总归档
+            await self.db.squash_token_logs()
+            
+            # 2. 清理超过保留天数的历史归档
+            days = int(config.get("days", 365))
+            cleaned_count = await self.db.clear_token_logs(before_days=days)
+            logger.info(f"[Giftia] Token 消耗日志自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
+            return {"status": "success", "count": cleaned_count, "days": days}
         except Exception as e:
             logger.error(f"[Giftia] 自动清理 Token 记录失败: {e}")
+            return {"status": "error", "message": f"自动清理 Token 记录失败: {str(e)}"}

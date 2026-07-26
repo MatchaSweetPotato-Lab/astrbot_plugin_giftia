@@ -348,3 +348,9 @@ class WebUIManager:
             methods=["POST"],
             desc="Set token auto clean config",
         )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/token/auto_clean/trigger",
+            view_handler=self.web_api.trigger_auto_clean_token,
+            methods=["POST"],
+            desc="Manually trigger token log auto cleanup",
+        )
