@@ -131,6 +131,25 @@ class MessageMediaFormatter:
 
         return xxh3_64_hexdigest(target_str.encode("utf-8"))[:16]
 
+    async def _update_existing_media_caption(
+        self,
+        existing_caption: MediaCaption,
+        url: str | None = None,
+        file_name: str | None = None,
+        duration: float = 0.0,
+        file_size: int = 0,
+    ) -> None:
+        """统一更新已存在媒体的 URL、文件名与元数据，并同步更新数据缓存"""
+        if url:
+            existing_caption.url = url
+        if file_name:
+            existing_caption.file_name = file_name
+        if duration > 0 and getattr(existing_caption, "duration", 0) <= 0:
+            existing_caption.duration = duration
+        if file_size > 0 and getattr(existing_caption, "file_size", 0) <= 0:
+            existing_caption.file_size = file_size
+        await self.data_cache.set_caption(existing_caption)
+
     async def format_image_ref(
         self,
         url: str,
@@ -269,6 +288,14 @@ class MessageMediaFormatter:
         is_over_limit = (file_size > 0) and (file_size > max_size_bytes)
         
         existing_caption = await self.data_cache.get_caption_by_hash(hash_val) if hash_val else None
+        if existing_caption:
+            await self._update_existing_media_caption(
+                existing_caption,
+                url=decision_url or url or "",
+                file_name=file_name,
+                duration=duration,
+                file_size=file_size,
+            )
 
         if is_over_limit:
             tag = f"[视频:{hash_val}][文件过大:{size_str}]"
@@ -420,11 +447,10 @@ class MessageMediaFormatter:
             # 检查缓存
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
-                media_caption.url = db_url
-                if file_name:
-                    media_caption.file_name = db_file_name
+                await self._update_existing_media_caption(
+                    media_caption, url=db_url, file_name=db_file_name if file_name else None
+                )
                 if getattr(media_caption, "is_captioned", True) or defer_caption:
-                    await self.data_cache.set_caption(media_caption)
                     return hash_val, media_caption
 
             if legacy_caption:
@@ -563,11 +589,10 @@ class MessageMediaFormatter:
             # 检查缓存
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
-                media_caption.url = url
-                if file_name:
-                    media_caption.file_name = file_name
+                await self._update_existing_media_caption(
+                    media_caption, url=url, file_name=file_name
+                )
                 if getattr(media_caption, "is_captioned", True) or defer_caption:
-                    await self.data_cache.set_caption(media_caption)
                     return hash_val, media_caption
 
             # 下载并保存语音文件，以便永久播放
