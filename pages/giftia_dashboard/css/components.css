@@ -1,12 +1,17 @@
 /* Glassmorphism Cards */
 .card {
     background-color: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--card-border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    transition: box-shadow 0.3s ease, transform 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+    transition: box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+    position: relative;
+}
+
+.card-hoverable:hover,
+.card:hover {
+    box-shadow: var(--shadow-hover);
+    border-color: rgba(16, 185, 129, 0.3);
 }
 
 /* Buttons */
@@ -15,48 +20,69 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 8px 16px;
+    padding: 9px 18px;
     font-size: 14px;
-    font-weight: 500;
-    border-radius: 8px;
-    border: none;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+    line-height: 1.25;
+}
+
+.btn:active {
+    transform: scale(0.97);
 }
 
 .btn-primary {
     background-color: var(--primary);
-    color: #fff;
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
 }
 
 .btn-primary:hover {
     background-color: var(--primary-hover);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
     transform: translateY(-1px);
 }
 
 .btn-secondary {
-    background-color: var(--border-color);
+    background-color: var(--bg-secondary);
     color: var(--font-color);
+    border-color: var(--border-color);
 }
 
 .btn-secondary:hover {
-    background-color: var(--font-secondary);
-    color: #fff;
+    background-color: var(--border-color);
+    color: var(--font-color);
+    border-color: var(--font-secondary);
+    transform: translateY(-1px);
 }
 
 .btn-danger {
-    background-color: var(--danger);
-    color: #fff;
+    background-color: var(--danger-bg);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.2);
 }
 
 .btn-danger:hover {
-    background-color: #dc2626;
+    background-color: var(--danger);
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    transform: translateY(-1px);
 }
 
 .btn-small {
-    padding: 4px 8px;
+    padding: 5px 12px;
     font-size: 12px;
     border-radius: 6px;
+}
+
+.btn-icon {
+    font-size: 15px;
+    line-height: 1;
+    font-weight: 700;
 }
 
 /* Flex Utilities */
@@ -72,49 +98,61 @@
     flex-grow: 1;
 }
 
-/* Data Tables */
+/* Data Cards & Container */
 .data-card {
-    padding: 8px;
+    padding: 16px;
     margin-bottom: 24px;
 }
 
 .table-container {
     overflow-x: auto;
     width: 100%;
+    border-radius: var(--radius-sm);
 }
 
 table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     text-align: left;
 }
 
 th, td {
-    padding: 12px 16px;
+    padding: 14px 18px;
     border-bottom: 1px solid var(--border-color);
-    font-size: 14px;
+    font-size: 13.5px;
 }
 
 th {
     font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     color: var(--font-secondary);
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--bg-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 2;
 }
 
-html[data-theme="dark"] th {
-    background-color: rgba(255, 255, 255, 0.02);
+th:first-child {
+    border-top-left-radius: var(--radius-sm);
+}
+
+th:last-child {
+    border-top-right-radius: var(--radius-sm);
 }
 
 tr:last-child td {
     border-bottom: none;
 }
 
-tr:hover td {
-    background-color: rgba(0, 0, 0, 0.01);
+tr {
+    transition: background-color 0.15s ease;
 }
 
-html[data-theme="dark"] tr:hover td {
-    background-color: rgba(255, 255, 255, 0.01);
+tr:hover td {
+    background-color: var(--primary-light);
 }
 
 .text-right {
@@ -125,29 +163,40 @@ html[data-theme="dark"] tr:hover td {
 .badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
-    font-size: 11px;
+    gap: 5px;
+    padding: 3px 10px;
+    font-size: 11.5px;
     font-weight: 600;
-    border-radius: 12px;
-    text-transform: uppercase;
+    border-radius: 20px;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.badge::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
 }
 
 .badge-success { background-color: var(--success-bg); color: var(--success); }
 .badge-danger { background-color: var(--danger-bg); color: var(--danger); }
 .badge-warning { background-color: var(--warning-bg); color: var(--warning); }
 .badge-info { background-color: var(--info-bg); color: var(--info); }
-.badge-secondary { background-color: var(--border-color); color: var(--font-secondary); }
+.badge-secondary { background-color: var(--bg-secondary); color: var(--font-secondary); border: 1px solid var(--border-color); }
 
 /* Pagination */
 .pagination-container {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px;
+    padding: 16px 8px 4px 8px;
     font-size: 13px;
     color: var(--font-secondary);
     border-top: 1px solid var(--border-color);
-    margin-top: 8px;
+    margin-top: 12px;
 }
 
 .pagination-buttons {
@@ -156,13 +205,14 @@ html[data-theme="dark"] tr:hover td {
 }
 
 .pagination-btn {
-    padding: 6px 12px;
+    padding: 6px 14px;
     border: 1px solid var(--border-color);
-    background-color: transparent;
+    background-color: var(--card-bg);
     color: var(--font-color);
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: 8px;
     font-weight: 500;
+    font-size: 13px;
     transition: all 0.2s ease;
 }
 
@@ -173,33 +223,38 @@ html[data-theme="dark"] tr:hover td {
 }
 
 .pagination-btn:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
 }
 
 .pagination-btn.active {
     background-color: var(--primary);
-    color: #fff;
+    color: #ffffff;
     border-color: var(--primary);
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
 }
 
 /* Toast Message */
 .toast {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
-    padding: 12px 24px;
-    background-color: var(--font-color);
-    color: var(--bg-color);
-    border-radius: 8px;
+    bottom: 28px;
+    right: 28px;
+    padding: 14px 26px;
+    background-color: var(--bg-secondary);
+    color: var(--font-color);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
     font-size: 14px;
-    font-weight: 500;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+    font-weight: 600;
+    box-shadow: var(--shadow-hover);
     display: none;
-    animation: slideUp 0.3s ease-out;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     z-index: 1100;
+    backdrop-filter: blur(12px);
 }
 
 .toast.show {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }

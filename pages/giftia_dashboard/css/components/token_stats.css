@@ -2,11 +2,12 @@
 
 /* Token usage tags / badges */
 .tag {
-    display: inline-block;
-    padding: 3px 8px;
-    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    font-size: 11.5px;
     font-weight: 600;
-    border-radius: 4px;
+    border-radius: 20px;
     line-height: 1;
 }
 
@@ -16,8 +17,8 @@
 }
 
 .tag-reply {
-    background-color: rgba(99, 102, 241, 0.12);
-    color: #6366f1;
+    background-color: rgba(244, 63, 94, 0.12);
+    color: #f43f5e;
 }
 
 .tag-image_caption {
@@ -44,7 +45,7 @@
 .token-stat-row {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
 }
 
 .token-stat-row.help-cursor {
@@ -54,7 +55,7 @@
 .token-stat-info {
     display: flex;
     justify-content: space-between;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     margin-bottom: 4px;
     gap: 12px;
 }
@@ -76,25 +77,27 @@
 }
 
 .token-stat-name {
-    font-weight: 500;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
+    color: var(--font-color);
 }
 
 .token-stat-name.monospace {
-    font-family: monospace;
+    font-family: 'Fira Code', monospace, sans-serif;
+    font-size: 0.8rem;
 }
 
 .token-stat-name.bold {
-    font-weight: 600;
-    color: var(--font-primary);
+    font-weight: 700;
+    color: var(--font-color);
 }
 
 .token-stat-subname {
-    font-size: 0.7rem;
-    color: var(--font-muted);
-    margin-top: 1px;
+    font-size: 0.72rem;
+    color: var(--font-secondary);
+    margin-top: 2px;
     text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
@@ -105,7 +108,9 @@
     color: var(--font-secondary);
     white-space: nowrap;
     flex-shrink: 0;
-    font-family: monospace;
+    font-family: 'Fira Code', monospace, sans-serif;
+    font-size: 0.8rem;
+    font-weight: 500;
 }
 
 .token-stat-value.no-mono {
@@ -119,28 +124,39 @@
 /* Shared progress bar background and fill */
 .progress-bar-container {
     height: 8px;
-    border-radius: 4px;
+    border-radius: 10px;
     background-color: var(--bg-secondary);
     overflow: hidden;
+    border: 1px solid var(--border-color);
 }
 
 .progress-bar-fill {
     height: 100%;
-    border-radius: 4px;
-    transition: width 0.3s ease;
+    border-radius: 10px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Token summary cards grid layout */
 .token-summary-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+    margin-bottom: 24px;
 }
 
 .token-summary-row .metric-card {
-    padding: 15px;
-    border-radius: 8px;
+    padding: 20px;
+    border-radius: var(--radius);
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(var(--blur));
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.token-summary-row .metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
 }
 
 .token-summary-row .metric-card.help-cursor {
@@ -148,70 +164,75 @@
 }
 
 .token-summary-row .metric-card.total-tokens {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.05));
-    border: 1px solid rgba(99, 102, 241, 0.2);
+    background: linear-gradient(135deg, rgba(244, 63, 94, 0.1), rgba(6, 182, 212, 0.05));
+    border-color: rgba(244, 63, 94, 0.25);
 }
 
 .token-summary-row .metric-card.tts-chars {
-    background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(244, 63, 94, 0.05));
-    border: 1px solid rgba(236, 72, 153, 0.2);
+    background: linear-gradient(135deg, rgba(236, 72, 153, 0.1), rgba(244, 63, 94, 0.05));
+    border-color: rgba(236, 72, 153, 0.25);
 }
 
 .token-summary-row .metric-label {
     font-size: 0.85rem;
     color: var(--font-secondary);
-    font-weight: 500;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .token-summary-row .metric-value {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-top: 8px;
-    color: var(--font-primary);
+    font-size: 1.6rem;
+    font-weight: 800;
+    margin-top: 10px;
+    color: var(--font-color);
+    letter-spacing: -0.02em;
 }
 
 .token-summary-row .metric-value.large {
-    font-size: 1.8rem;
-    font-weight: 700;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--primary);
 }
 
 .token-summary-row .metric-desc {
-    font-size: 0.75rem;
-    color: var(--font-muted);
-    margin-top: 4px;
+    font-size: 0.78rem;
+    color: var(--font-secondary);
+    margin-top: 6px;
 }
 
 /* Charts container and breakdown cards layout */
 .token-charts-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
     gap: 20px;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
 }
 
 .token-breakdown-card {
-    padding: 20px;
-    border-radius: 8px;
+    padding: 22px;
+    border-radius: var(--radius);
 }
 
 .token-breakdown-card h3 {
     margin-top: 0;
-    margin-bottom: 15px;
-    font-size: 1rem;
-    font-weight: 600;
+    margin-bottom: 18px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--font-color);
 }
 
 .token-progress-bars-container {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 16px;
 }
 
 /* Unified Large Chart Card Styles */
 .token-chart-large-card {
     grid-column: 1 / -1;
-    padding: 20px;
-    border-radius: 8px;
+    padding: 24px;
+    border-radius: var(--radius);
 }
 
 .token-chart-header {
@@ -219,10 +240,10 @@
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 12px;
+    padding-bottom: 14px;
     margin-bottom: 20px;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 14px;
 }
 
 .token-chart-tabs {
@@ -230,48 +251,49 @@
     gap: 4px;
     background-color: var(--bg-secondary);
     padding: 4px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border-color);
 }
 
 .token-chart-tabs .btn-tab {
     background: none;
     border: none;
-    padding: 6px 12px;
+    padding: 6px 14px;
     font-size: 0.85rem;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--font-secondary);
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .token-chart-tabs .btn-tab:hover {
-    color: var(--font-primary);
+    color: var(--font-color);
 }
 
 .token-chart-tabs .btn-tab.active {
-    background-color: var(--bg-primary);
-    color: var(--font-primary);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    background-color: var(--primary);
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
 }
 
 .token-chart-canvas-container {
     position: relative;
-    height: 340px;
+    height: 350px;
     width: 100%;
 }
 
 .token-chart-breakdown-section {
-    margin-top: 24px;
+    margin-top: 26px;
     border-top: 1px solid var(--border-color);
-    padding-top: 20px;
+    padding-top: 22px;
 }
 
 .token-chart-breakdown-section h4 {
     margin-top: 0;
-    margin-bottom: 15px;
-    font-size: 0.95rem;
-    font-weight: 600;
+    margin-bottom: 16px;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--font-color);
 }
 

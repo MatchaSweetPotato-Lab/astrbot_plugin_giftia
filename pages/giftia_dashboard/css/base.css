@@ -1,3 +1,8 @@
+html {
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -8,15 +13,35 @@ body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background-color: var(--bg-color);
     color: var(--font-color);
-    line-height: 1.5;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.3s ease, color 0.3s ease;
+    min-height: 100vh;
 }
 
 .app-container {
-    max-width: 1400px;
+    max-width: 1440px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 28px 24px;
+}
+
+/* Accessibility & Animation Safety */
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto !important;
+    }
+
+    .card,
+    .tab-panel,
+    .status-card,
+    .toast,
+    .modal-card,
+    .progress-bar-fill,
+    .loader {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
 }
 
 /* Animations */
@@ -35,21 +60,27 @@ body {
     100% { transform: rotate(360deg); }
 }
 
+@keyframes pulseGlow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.96); }
+}
+
 /* Loading/No Data State */
 .loading-row, .no-data-row {
     text-align: center;
     color: var(--font-secondary);
-    padding: 32px !important;
+    padding: 40px !important;
+    font-size: 14px;
 }
 
 .loader {
-    width: 24px;
-    height: 24px;
-    border: 3px solid var(--border-color);
+    width: 22px;
+    height: 22px;
+    border: 2.5px solid var(--border-color);
     border-bottom-color: var(--primary);
     border-radius: 50%;
     display: inline-block;
-    animation: rotation 1s linear infinite;
-    margin-right: 8px;
+    animation: rotation 0.8s linear infinite;
+    margin-right: 10px;
     vertical-align: middle;
 }
