@@ -488,6 +488,8 @@ class MediaApi:
                 conditions.append("media_type = 'image'")
             elif media_type == "audio":
                 conditions.append("media_type IN ('audio', 'voice')")
+            elif media_type == "video":
+                conditions.append("media_type = 'video'")
 
             genres = body.get("genres")
             exclude_genres = body.get("exclude_genres", False)
