@@ -5,6 +5,7 @@ window.openModal = function(id) {
     if (modal) {
         modal.classList.add("show");
         document.body.classList.add("modal-open");
+        document.documentElement.classList.add("modal-open");
     }
 };
 
@@ -33,6 +34,7 @@ window.closeModal = function(id) {
         const openedModals = document.querySelectorAll(".modal-overlay.show");
         if (openedModals.length === 0) {
             document.body.classList.remove("modal-open");
+            document.documentElement.classList.remove("modal-open");
         }
     }
 };
@@ -51,3 +53,61 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 });
+
+// Prevent background scrolling via wheel/touch when a modal is open
+(function setupModalScrollPrevention() {
+    function findScrollableContainer(target, activeOverlay) {
+        let el = target;
+        while (el && el !== activeOverlay) {
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            const isScrollable = (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") && el.scrollHeight > el.clientHeight;
+            if (isScrollable) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    document.addEventListener("wheel", function(e) {
+        const activeOverlay = document.querySelector(".modal-overlay.show");
+        if (!activeOverlay) return;
+
+        if (!activeOverlay.contains(e.target)) {
+            e.preventDefault();
+            return;
+        }
+
+        const scrollableEl = findScrollableContainer(e.target, activeOverlay);
+        if (!scrollableEl) {
+            e.preventDefault();
+            return;
+        }
+
+        const delta = e.deltaY;
+        const up = delta < 0;
+        const { scrollTop, scrollHeight, clientHeight } = scrollableEl;
+
+        if (up && scrollTop <= 0) {
+            e.preventDefault();
+        } else if (!up && scrollTop + clientHeight >= scrollHeight - 1) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    document.addEventListener("touchmove", function(e) {
+        const activeOverlay = document.querySelector(".modal-overlay.show");
+        if (!activeOverlay) return;
+
+        if (!activeOverlay.contains(e.target)) {
+            e.preventDefault();
+            return;
+        }
+
+        const scrollableEl = findScrollableContainer(e.target, activeOverlay);
+        if (!scrollableEl) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+})();

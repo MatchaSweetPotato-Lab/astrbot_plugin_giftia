@@ -173,8 +173,16 @@ html[data-theme="dark"] .media-preview-container {
 }
 
 /* Prevent background scrolling when modals are open */
+html.modal-open,
 body.modal-open {
     overflow: hidden !important;
+    overscroll-behavior: contain;
+}
+
+.modal-overlay,
+.modal-card,
+.modal-body {
+    overscroll-behavior: contain;
 }
 
 @media (max-width: 768px) {
