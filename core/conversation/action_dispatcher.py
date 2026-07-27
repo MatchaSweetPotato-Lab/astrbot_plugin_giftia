@@ -136,8 +136,8 @@ class ActionDispatcher:
         if record:
             return [record], segment.text
 
-        logger.warning("[Giftia TTS] 语音合成失败，使用纯文本作为降级回复。")
-        return [Plain(segment.text)], segment.text
+        logger.warning("[Giftia TTS] 语音合成重试后依然失败，放弃发送该段语音消息。")
+        return None, ""
 
     async def _dispatch_aiocqhttp_outputs(
         self,

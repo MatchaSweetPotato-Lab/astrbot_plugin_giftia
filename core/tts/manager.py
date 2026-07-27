@@ -231,24 +231,45 @@ class TTSManager:
         if not resolved:
             return None
 
-        try:
-            logger.info(
-                f"[Giftia TTS] 请求语音合成: lang={resolved.lang}, "
-                f"provider={resolved.provider_id}, text={resolved.text}"
+        max_attempts = 3
+        last_exception = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logger.info(
+                    f"[Giftia TTS] 请求语音合成 (第 {attempt}/{max_attempts} 次尝试): lang={resolved.lang}, "
+                    f"provider={resolved.provider_id}, text={resolved.text}"
+                )
+                audio_path = await self.get_audio_path(resolved, event)
+                if not audio_path:
+                    logger.warning(
+                        f"[Giftia TTS] 第 {attempt}/{max_attempts} 次请求未返回音频文件路径。"
+                    )
+                else:
+                    if hasattr(event, "track_temporary_local_file"):
+                        event.track_temporary_local_file(audio_path)
+
+                    logger.info(f"[Giftia TTS] 语音合成完成: {audio_path}")
+                    return Record.fromFileSystem(audio_path, text=segment.text)
+            except Exception as e:
+                last_exception = e
+                logger.warning(
+                    f"[Giftia TTS] 第 {attempt}/{max_attempts} 次语音合成失败: {e}"
+                )
+
+            if attempt < max_attempts:
+                await asyncio.sleep(1)
+
+        if last_exception:
+            logger.error(
+                f"[Giftia TTS] 语音合成连续 {max_attempts} 次失败，终止重试: {last_exception}",
+                exc_info=True,
             )
-            audio_path = await self.get_audio_path(resolved, event)
-            if not audio_path:
-                logger.error("[Giftia TTS] TTS 供应商未返回音频文件路径。")
-                return None
-
-            if hasattr(event, "track_temporary_local_file"):
-                event.track_temporary_local_file(audio_path)
-
-            logger.info(f"[Giftia TTS] 语音合成完成: {audio_path}")
-            return Record.fromFileSystem(audio_path, text=segment.text)
-        except Exception as e:
-            logger.error(f"[Giftia TTS] 语音合成失败: {e}", exc_info=True)
-            return None
+        else:
+            logger.error(
+                f"[Giftia TTS] 语音合成连续 {max_attempts} 次失败（未获取到音频路径），终止重试。"
+            )
+        return None
 
     def resolve_audio_path(self, path: str) -> str:
         path = path.strip()
