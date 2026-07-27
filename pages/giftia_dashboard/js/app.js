@@ -122,6 +122,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     "data-theme",
                     context.isDark ? "dark" : "light"
                 );
+                token.updateChartTheme();
             }
             window.GiftiaApp.loadActiveTabData();
         }).catch((err) => {
@@ -135,6 +136,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     "data-theme",
                     ctx.isDark ? "dark" : "light"
                 );
+                token.updateChartTheme();
             }
         });
     } else {

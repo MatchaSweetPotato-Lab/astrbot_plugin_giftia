@@ -36,6 +36,36 @@ function getColorForKey(key) {
     return keyColorsCache[key];
 }
 
+function getChartThemeColors() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const computedStyle = getComputedStyle(document.documentElement);
+    const fontColor = computedStyle.getPropertyValue('--font-color').trim() || (isDark ? '#f8fafc' : '#0f172a');
+    const fontSecondary = computedStyle.getPropertyValue('--font-secondary').trim() || (isDark ? '#94a3b8' : '#475569');
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+    return { fontColor, fontSecondary, gridColor };
+}
+
+export function updateChartTheme() {
+    if (!tokenChartInstance) return;
+    const { fontColor, fontSecondary, gridColor } = getChartThemeColors();
+    if (tokenChartInstance.options.plugins && tokenChartInstance.options.plugins.legend) {
+        tokenChartInstance.options.plugins.legend.labels.color = fontColor;
+    }
+    if (tokenChartInstance.options.scales) {
+        if (tokenChartInstance.options.scales.x) {
+            tokenChartInstance.options.scales.x.ticks.color = fontSecondary;
+            tokenChartInstance.options.scales.x.grid.color = gridColor;
+            tokenChartInstance.options.scales.x.grid.borderColor = gridColor;
+        }
+        if (tokenChartInstance.options.scales.y) {
+            tokenChartInstance.options.scales.y.ticks.color = fontSecondary;
+            tokenChartInstance.options.scales.y.grid.color = gridColor;
+            tokenChartInstance.options.scales.y.grid.borderColor = gridColor;
+        }
+    }
+    tokenChartInstance.update();
+}
+
 export async function initializeTokenStatsTab() {
     await initializeScopedView("tokenLogs");
     initChartTabs();
@@ -199,6 +229,8 @@ function renderChartAndProgressBars() {
             return lbl;
         };
 
+        const { fontColor, fontSecondary, gridColor } = getChartThemeColors();
+
         tokenChartInstance = new Chart(ctx, {
             type: 'line',
             data: {
@@ -221,7 +253,7 @@ function renderChartAndProgressBars() {
                             font: {
                                 size: 11
                             },
-                            color: 'var(--font-primary)'
+                            color: fontColor
                         }
                     },
                     tooltip: {
@@ -249,11 +281,11 @@ function renderChartAndProgressBars() {
                 scales: {
                     x: {
                         grid: {
-                            color: 'rgba(255, 255, 255, 0.05)',
-                            borderColor: 'rgba(255, 255, 255, 0.05)'
+                            color: gridColor,
+                            borderColor: gridColor
                         },
                         ticks: {
-                            color: 'var(--font-secondary)',
+                            color: fontSecondary,
                             maxTicksLimit: 12,
                             font: {
                                 size: 10
@@ -262,11 +294,11 @@ function renderChartAndProgressBars() {
                     },
                     y: {
                         grid: {
-                            color: 'rgba(255, 255, 255, 0.05)',
-                            borderColor: 'rgba(255, 255, 255, 0.05)'
+                            color: gridColor,
+                            borderColor: gridColor
                         },
                         ticks: {
-                            color: 'var(--font-secondary)',
+                            color: fontSecondary,
                             font: {
                                 size: 10
                             },

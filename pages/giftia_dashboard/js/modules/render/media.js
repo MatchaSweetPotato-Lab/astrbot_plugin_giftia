@@ -187,7 +187,7 @@ export function renderMedia(items) {
             preview = `
                 <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; cursor: pointer; text-align: center; padding: 8px; box-sizing: border-box; background: rgba(0,0,0,0.04); transition: background 0.2s;" onclick="window.loadVideoOnDemand('${item.hash_val}', '${uniqueId}-box', '${encodeURIComponent(item.url || '')}')">
                     <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
-                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333); margin-bottom: 2px;">▶️ 点击加载播放</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-color); margin-bottom: 2px;">▶️ 点击加载播放</div>
                     <div style="font-size: 11px; color: var(--font-secondary, #777);">${metaTag || '视频缓存'}</div>
                 </div>
             `;

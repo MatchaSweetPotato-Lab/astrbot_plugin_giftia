@@ -2,15 +2,17 @@
 
 /* Status Grid & Card Layout */
 .status-card {
-    padding: 20px;
+    padding: 22px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s ease;
 }
 
 .status-card:hover {
     box-shadow: var(--shadow-hover);
-    transform: translateY(-2px);
+    transform: translateY(-3px);
+    border-color: rgba(16, 185, 129, 0.3);
 }
 
 /* Card Header */

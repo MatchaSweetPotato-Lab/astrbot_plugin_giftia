@@ -74,7 +74,7 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             previewContainer.innerHTML = `
                 <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 140px; cursor: pointer; text-align: center; padding: 12px; box-sizing: border-box; background: rgba(0,0,0,0.04); border-radius: 6px;" onclick="window.loadVideoOnDemand('${hash}', '${uniqueId}-box', '${encodeURIComponent(url || '')}')">
                     <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
-                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333);">▶️ 点击加载/播放视频</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-color);">▶️ 点击加载/播放视频</div>
                 </div>
             `;
         } else {
@@ -101,7 +101,7 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             previewContainer.innerHTML = `
                 <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 140px; cursor: pointer; text-align: center; padding: 12px; box-sizing: border-box; background: rgba(0,0,0,0.04); border-radius: 6px;" onclick="window.loadVideoOnDemand('${hash}', '${uniqueId}-box', '${encodeURIComponent(url || '')}')">
                     <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
-                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333);">▶️ 点击加载/播放视频</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-color);">▶️ 点击加载/播放视频</div>
                 </div>
             `;
         } else {
@@ -187,7 +187,7 @@ window.openCleanCacheModal = async function() {
             unspecifiedDiv.style.margin = "4px 0";
             unspecifiedDiv.innerHTML = `
                 <input type="checkbox" id="clean-genre-unspecified" value="" style="width: auto; margin: 0; cursor: pointer;" checked>
-                <label for="clean-genre-unspecified" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">[未指定风格]</label>
+                <label for="clean-genre-unspecified" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-color);">[未指定风格]</label>
             `;
             container.appendChild(unspecifiedDiv);
 
@@ -199,7 +199,7 @@ window.openCleanCacheModal = async function() {
                 genreDiv.style.margin = "4px 0";
                 genreDiv.innerHTML = `
                     <input type="checkbox" name="clean-genre-checkbox" id="clean-genre-chk-${idx}" value="${window.escapeHtml(genre)}" style="width: auto; margin: 0; cursor: pointer;" checked>
-                    <label for="clean-genre-chk-${idx}" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">${window.escapeHtml(genre)}</label>
+                    <label for="clean-genre-chk-${idx}" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-color);">${window.escapeHtml(genre)}</label>
                 `;
                 container.appendChild(genreDiv);
             });
@@ -362,7 +362,7 @@ window.loadAutoCleanConfig = async function() {
             const isUnspecifiedChecked = config.keep_genres.includes("");
             unspecifiedDiv.innerHTML = `
                 <input type="checkbox" id="auto-clean-genre-unspecified" value="" style="width: auto; margin: 0; cursor: pointer;" ${isUnspecifiedChecked ? "checked" : ""}>
-                <label for="auto-clean-genre-unspecified" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">[未指定风格]</label>
+                <label for="auto-clean-genre-unspecified" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-color);">[未指定风格]</label>
             `;
             container.appendChild(unspecifiedDiv);
             
@@ -376,7 +376,7 @@ window.loadAutoCleanConfig = async function() {
                 const isChecked = config.keep_genres.includes(genre);
                 genreDiv.innerHTML = `
                     <input type="checkbox" name="auto-clean-genre-checkbox" id="auto-clean-genre-chk-${idx}" value="${window.escapeHtml(genre)}" style="width: auto; margin: 0; cursor: pointer;" ${isChecked ? "checked" : ""}>
-                    <label for="auto-clean-genre-chk-${idx}" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">${window.escapeHtml(genre)}</label>
+                    <label for="auto-clean-genre-chk-${idx}" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-color);">${window.escapeHtml(genre)}</label>
                 `;
                 container.appendChild(genreDiv);
             });
