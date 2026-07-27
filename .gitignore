@@ -212,5 +212,5 @@ test/
 prompt_example/other/
 
 # Runtime data directory
-data/
+/data/
 .agent/
