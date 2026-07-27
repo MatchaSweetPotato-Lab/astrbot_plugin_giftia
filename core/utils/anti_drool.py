@@ -23,13 +23,13 @@ def replace_outside_quotes(s: str, target: str, replacement: str) -> str:
     return "".join(result)
 
 def escape_tags_in_code_blocks(text: str) -> str:
-    """转义 Markdown 代码块（```...```）和行内代码（`...`）中的 XML 标签，防止解析器误伤"""
-    pattern = r'(```[a-zA-Z]*\n[\s\S]*?\n```|`[^`]+`)'
-    
+    """转义 Markdown 代码块（```...```）、行内代码（`...`）以及孤立文本标签标注（如前后带空格的 <message>），防止解析器误伤"""
+    pattern = r"(```[a-zA-Z]*\n[\s\S]*?\n```|`[^`]+`|\s+<\s*[a-zA-Z_0-9:-]+\b[^>]*?>\s+)"
+
     def repl(match):
         content = match.group(0)
         return content.replace('<', '&lt;').replace('>', '&gt;')
-        
+
     return re.sub(pattern, repl, text)
 
 
@@ -40,7 +40,7 @@ def clean_llm_completion(text: str) -> str:
     if not text:
         return ""
 
-    # 0. 转义代码块/行内代码中的 XML 标签，防止其干扰 XML 结构树
+    # 0. 转义代码块/行内代码/孤立文本标注中的 XML 标签，防止其干扰 XML 结构树
     cleaned = escape_tags_in_code_blocks(text)
 
     # 1. 规范化角括号 (例如 ‹ 和 › 替换为 < 和 >)
