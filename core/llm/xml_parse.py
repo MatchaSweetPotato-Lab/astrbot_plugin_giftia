@@ -551,7 +551,24 @@ class XmlParse:
 
         result = []
         open_tag = None
+        open_tag_pos_in_result = None
+        open_content_start_pos = 0
         last_end = 0
+
+        def _finalize_open_tag(content_end_pos: int) -> None:
+            nonlocal open_tag, open_tag_pos_in_result
+            if open_tag is None:
+                return
+            inner_text = xml_str[open_content_start_pos:content_end_pos]
+            if open_tag == "message" and len(inner_text.strip()) > 50:
+                # 只将起始的 '<' 转义为 '&lt;'，精准使开标签失效，避免损坏属性内容
+                tag_str = result[open_tag_pos_in_result]
+                if tag_str.startswith("<"):
+                    result[open_tag_pos_in_result] = "&lt;" + tag_str[1:]
+            else:
+                result.append(f"</{open_tag}>")
+            open_tag = None
+            open_tag_pos_in_result = None
 
         for match in re.finditer(pattern, xml_str):
             is_close = bool(match.group(1))
@@ -565,24 +582,23 @@ class XmlParse:
                 if open_tag == tag_name:
                     result.append(match.group(0))
                     open_tag = None
+                    open_tag_pos_in_result = None
                 else:
                     result.append(match.group(0))
             elif is_self_closing:
-                if open_tag is not None:
-                    result.append(f"</{open_tag}>")
-                    open_tag = None
+                _finalize_open_tag(start)
                 result.append(match.group(0))
             else:
-                if open_tag is not None:
-                    result.append(f"</{open_tag}>")
-                result.append(match.group(0))
+                _finalize_open_tag(start)
                 open_tag = tag_name
+                open_tag_pos_in_result = len(result)
+                open_content_start_pos = end
+                result.append(match.group(0))
 
             last_end = end
 
         result.append(xml_str[last_end:])
-        if open_tag is not None:
-            result.append(f"</{open_tag}>")
+        _finalize_open_tag(len(xml_str))
 
         return "".join(result)
 
