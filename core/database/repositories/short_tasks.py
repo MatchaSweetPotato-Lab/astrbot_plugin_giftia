@@ -237,6 +237,29 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    async def clear_short_tasks(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        statuses: list[str] | None = None,
+    ) -> int:
+        conditions = ["bot_name = ?", "group_or_user_id = ?"]
+        params: list = [bot_name, group_or_user_id]
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+
+        cursor = await self.conn.execute(
+            f"""
+            DELETE FROM short_tasks
+            WHERE {" AND ".join(conditions)}
+            """,
+            params,
+        )
+        await self.conn.commit()
+        return cursor.rowcount or 0
+
     async def get_short_task_stats(
         self, bot_name: str, group_or_user_id: str
     ) -> dict:

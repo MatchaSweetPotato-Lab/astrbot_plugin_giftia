@@ -234,6 +234,29 @@ class TaskBoardManager:
             return False, f"未找到任务 {clean_task_id}"
         return True, "删除短期任务成功"
 
+    async def clear_tasks_from_dashboard(
+        self, bot_name: str, group_or_user_id: str, status: str = "all"
+    ) -> tuple[bool, str, int]:
+        clean_status = str(status or "").strip().lower()
+        statuses = None
+        if clean_status == "active":
+            statuses = ["active"]
+        elif clean_status == "completed":
+            statuses = ["completed"]
+        elif clean_status == "archived":
+            statuses = ["canceled", "expired"]
+        elif clean_status == "all":
+            statuses = None
+        else:
+            return False, f"不支持的状态分类: {status}", 0
+
+        deleted_count = await self.plugin.db.clear_short_tasks(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            statuses=statuses,
+        )
+        return True, f"成功清空 {deleted_count} 条短期任务", deleted_count
+
     async def get_dashboard_summary(
         self, bot_name: str, group_or_user_id: str
     ) -> dict:

@@ -684,42 +684,71 @@
         </div>
     </div>
 
-    <!-- MODAL: Short Task Board -->
+    <!-- MODAL: Short & Scheduled Task Board -->
     <div id="task-board-modal" class="modal-overlay">
         <div class="modal-card card task-board-modal-card">
             <div class="modal-header">
-                <h2 id="task-board-title">短期任务</h2>
+                <h2 id="task-board-title">会话任务看板</h2>
                 <button class="modal-close-btn" onclick="closeModal('task-board-modal')">&times;</button>
             </div>
-            <div class="task-board-tabs-wrapper">
-                <div class="task-board-tabs">
-                    <button class="task-board-tab active" data-tab="active" onclick="window.setTaskBoardTab('active')">
-                        <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>
-                        <span class="task-tab-title">进行中</span>
-                    </button>
-                    <button class="task-board-tab" data-tab="completed" onclick="window.setTaskBoardTab('completed')">
-                        <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                        <span class="task-tab-title">已完成</span>
-                    </button>
-                    <button class="task-board-tab" data-tab="archived" onclick="window.setTaskBoardTab('archived')">
-                        <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
-                        <span class="task-tab-title">已失效</span>
-                    </button>
-                    <button class="task-board-tab" data-tab="all" onclick="window.setTaskBoardTab('all')">
-                        <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-                        <span class="task-tab-title">全部任务</span>
-                    </button>
-                </div>
+
+            <!-- Main Mode Switch -->
+            <div class="task-board-main-nav">
+                <button class="task-board-main-tab active" data-main-tab="short" onclick="window.setTaskBoardMainTab('short')">
+                    <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                    短期任务看板
+                </button>
+                <button class="task-board-main-tab" data-main-tab="scheduled" onclick="window.setTaskBoardMainTab('scheduled')">
+                    <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    定时任务看板
+                </button>
             </div>
+
             <div class="modal-body">
                 <input type="hidden" id="task-board-bot">
                 <input type="hidden" id="task-board-group">
-                <div id="task-board-list" class="task-board-modal-list">
-                    <div class="loading-row flex-grow"><span class="loader"></span> 加载任务中...</div>
+
+                <!-- Short Task Panel -->
+                <div id="short-task-board-panel" class="task-board-panel active">
+                    <div class="task-board-tabs-wrapper">
+                        <div class="task-board-tabs">
+                            <button class="task-board-tab active" data-tab="active" onclick="window.setTaskBoardTab('active')">
+                                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>
+                                <span class="task-tab-title">进行中</span>
+                            </button>
+                            <button class="task-board-tab" data-tab="completed" onclick="window.setTaskBoardTab('completed')">
+                                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                <span class="task-tab-title">已完成</span>
+                            </button>
+                            <button class="task-board-tab" data-tab="archived" onclick="window.setTaskBoardTab('archived')">
+                                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+                                <span class="task-tab-title">已失效</span>
+                            </button>
+                            <button class="task-board-tab" data-tab="all" onclick="window.setTaskBoardTab('all')">
+                                <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                                <span class="task-tab-title">全部任务</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="task-board-list" class="task-board-modal-list">
+                        <div class="loading-row flex-grow"><span class="loader"></span> 加载任务中...</div>
+                    </div>
+                </div>
+
+                <!-- Scheduled Task Panel -->
+                <div id="scheduled-task-board-panel" class="task-board-panel" style="display: none;">
+                    <div id="scheduled-task-list" class="task-board-modal-list">
+                        <div class="loading-row flex-grow"><span class="loader"></span> 加载定时任务中...</div>
+                    </div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="refreshTaskBoardModal()">刷新</button>
+
+            <div class="modal-footer flex-between">
+                <button class="btn btn-danger-outline" id="task-board-clear-btn" onclick="window.clearCurrentTaskBoard()">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    <span id="task-board-clear-text">清空进行中任务</span>
+                </button>
+                <button class="btn btn-primary" onclick="window.refreshTaskBoardModal()">刷新</button>
             </div>
         </div>
     </div>
