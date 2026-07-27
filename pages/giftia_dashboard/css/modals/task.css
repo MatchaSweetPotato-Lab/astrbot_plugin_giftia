@@ -18,6 +18,102 @@
     transition: all 0.2s ease;
 }
 
+/* Top Main Mode Switch Navigation */
+.task-board-main-nav {
+    display: flex;
+    gap: 8px;
+    background: var(--bg-secondary);
+    padding: 4px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 14px;
+    width: fit-content;
+}
+
+.task-board-main-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--font-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.task-board-main-tab:hover {
+    color: var(--font-color);
+    background-color: var(--card-bg);
+}
+
+.task-board-main-tab.active {
+    color: var(--primary);
+    background: var(--card-bg);
+    border-color: var(--border-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Footer & Action Buttons */
+.modal-footer.flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.btn-danger-outline {
+    background-color: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-danger-outline:hover {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15);
+}
+
+/* Scheduled Tasks Card Styling */
+.scheduled-task-card {
+    border-left: 3px solid var(--primary);
+}
+
+.scheduled-task-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.scheduled-task-text {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    padding: 8px 12px;
+    border-radius: 6px;
+    line-height: 1.5;
+    color: var(--font-color);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.scheduled-time-expr {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--primary);
+}
+
 html[data-theme="dark"] .task-tab-count {
     background-color: rgba(255, 255, 255, 0.08);
 }

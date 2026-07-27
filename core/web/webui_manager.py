@@ -172,6 +172,30 @@ class WebUIManager:
             desc="Delete short task",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/task_board/clear",
+            view_handler=self.web_api.clear_task_board,
+            methods=["POST"],
+            desc="Clear short tasks by status",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/scheduled_tasks",
+            view_handler=self.web_api.get_scheduled_tasks,
+            methods=["GET"],
+            desc="Get scheduled tasks list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/scheduled_tasks/delete",
+            view_handler=self.web_api.delete_scheduled_task,
+            methods=["POST"],
+            desc="Delete single scheduled task",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/scheduled_tasks/clear",
+            view_handler=self.web_api.clear_scheduled_tasks,
+            methods=["POST"],
+            desc="Clear all scheduled tasks for a session",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/chat_history",
             view_handler=self.web_api.get_chat_history,
             methods=["GET"],
