@@ -205,19 +205,27 @@ html[data-theme="dark"] .forward-detail-summary {
     #tab-forward-messages tbody,
     #tab-forward-messages th,
     #tab-forward-messages td,
-    #tab-forward-messages tr {
+    #tab-forward-messages tr,
+    .alias-table-container table,
+    .alias-table-container thead,
+    .alias-table-container tbody,
+    .alias-table-container th,
+    .alias-table-container td,
+    .alias-table-container tr {
         display: block;
     }
 
     #tab-chat-history thead tr,
-    #tab-forward-messages thead tr {
+    #tab-forward-messages thead tr,
+    .alias-table-container thead tr {
         position: absolute;
         top: -9999px;
         left: -9999px;
     }
 
     #tab-chat-history tr,
-    #tab-forward-messages tr {
+    #tab-forward-messages tr,
+    .alias-table-container tr {
         border: 1px solid var(--border-color);
         border-radius: 8px;
         margin-bottom: 12px;
@@ -227,7 +235,8 @@ html[data-theme="dark"] .forward-detail-summary {
     }
 
     #tab-chat-history td,
-    #tab-forward-messages td {
+    #tab-forward-messages td,
+    .alias-table-container td {
         border: none;
         border-bottom: 1px solid var(--border-color);
         position: relative;
@@ -241,12 +250,14 @@ html[data-theme="dark"] .forward-detail-summary {
     }
 
     #tab-chat-history td:last-child,
-    #tab-forward-messages td:last-child {
+    #tab-forward-messages td:last-child,
+    .alias-table-container td:last-child {
         border-bottom: none;
     }
 
     #tab-chat-history td::before,
-    #tab-forward-messages td::before {
+    #tab-forward-messages td::before,
+    .alias-table-container td::before {
         content: attr(data-label);
         position: absolute;
         top: 8px;

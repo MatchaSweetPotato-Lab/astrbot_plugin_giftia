@@ -136,8 +136,10 @@ window.formatBytes = function(bytes) {
 let confirmCallback = null;
 
 window.showConfirm = function(title, message, callback) {
-    document.getElementById("confirm-title").textContent = title;
-    document.getElementById("confirm-message").textContent = message;
+    const titleEl = document.getElementById("confirm-title");
+    const msgEl = document.getElementById("confirm-message");
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
     confirmCallback = callback;
     window.openModal("confirm-modal");
 };

@@ -397,21 +397,46 @@ export async function openTokenAutoCleanModal() {
     }
 }
 
-export async function submitTokenAutoCleanConfig() {
+export async function submitTokenAutoCleanConfig(silent = false) {
     const enabled = document.getElementById("token-auto-clean-enabled").checked;
     const days = parseInt(document.getElementById("token-auto-clean-days").value) || 365;
 
     try {
         const res = await window.apiPost("/token/auto_clean/config", { enabled, days });
         if (res.status === "success") {
-            window.showToast("配置保存成功");
-            window.closeModal("token-auto-clean-modal");
+            if (!silent) {
+                window.showToast("已保存自动清理配置");
+                window.closeModal("token-auto-clean-modal");
+            }
         } else {
-            window.showToast("保存配置失败: " + (res.message || "未知错误"));
+            if (!silent) {
+                window.showToast("保存配置失败: " + (res.message || "未知错误"));
+            }
         }
     } catch (e) {
-        window.showToast("保存配置失败: " + (e.message || e));
+        if (!silent) {
+            window.showToast("保存配置失败: " + (e.message || e));
+        }
     }
+}
+
+export function triggerAutoCleanTokenImmediately() {
+    window.showConfirm("确认执行 Token 日志清理", "确认要按当前设定的天数立即清理过期的 Token 消耗日志吗？此操作无法撤销。", async () => {
+        try {
+            await submitTokenAutoCleanConfig(true);
+            const res = await window.apiPost("/token/auto_clean/trigger", {});
+            if (res && res.status === "success") {
+                const count = res.count ?? 0;
+                window.showToast(`Token 日志清理完成，共物理删除 ${count} 条过期记录`);
+                window.closeModal("token-auto-clean-modal");
+                await renderChartAndProgressBars();
+            } else {
+                window.showToast(`执行清理失败: ${res.message || "请求出错"}`);
+            }
+        } catch (e) {
+            window.showToast(`执行清理出错: ${e.message}`);
+        }
+    });
 }
 
 export function openTokenClearModal() {

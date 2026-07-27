@@ -1,0 +1,170 @@
+/* Detailed Edit Media Modal Layout */
+.edit-media-modal-card {
+    max-width: 900px !important;
+    width: 95% !important;
+    height: 650px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.edit-media-modal-card .modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+}
+
+.edit-media-modal-body {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.edit-media-left {
+    flex: 1.2;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.edit-media-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.edit-media-left .media-preview-container {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+    margin-bottom: 0;
+}
+
+.edit-media-left .media-preview-container img,
+.edit-media-left .media-preview-container video,
+.media-preview-container video {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+/* Tab Layout inside Edit Media Modal */
+.edit-media-tabs {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: var(--bg-secondary);
+}
+
+.edit-media-tab-header {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="dark"] .edit-media-tab-header {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.media-tab-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--font-secondary);
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.media-tab-btn:hover {
+    color: var(--font-color);
+}
+
+.media-tab-btn.active {
+    color: var(--primary);
+    background-color: var(--bg-color);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.edit-media-tab-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-tab-panel {
+    display: none;
+    height: 100%;
+    flex: 1;
+    flex-direction: column;
+    padding: 12px;
+}
+
+.media-tab-panel.active {
+    display: flex;
+}
+
+.media-tab-panel textarea {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    border-radius: 6px;
+    outline: none;
+    padding: 10px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--font-color);
+    font-family: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.media-tab-panel textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+@media (max-width: 768px) {
+    .edit-media-modal-card {
+        max-height: none;
+    }
+    .edit-media-modal-card .modal-body {
+        overflow: visible;
+    }
+    .edit-media-modal-body {
+        flex-direction: column;
+        height: auto;
+    }
+    .edit-media-left .media-preview-container {
+        min-height: 200px;
+        height: 200px;
+    }
+    .edit-media-right {
+        overflow-y: visible;
+        padding-right: 0;
+    }
+    .edit-media-tabs {
+        min-height: 300px;
+        height: 300px;
+    }
+}

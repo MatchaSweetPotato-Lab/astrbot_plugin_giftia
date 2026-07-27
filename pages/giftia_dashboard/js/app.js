@@ -108,6 +108,7 @@ window.filterMemoryByUser = async function(userId) {
 
 window.openTokenAutoCleanModal = token.openTokenAutoCleanModal;
 window.submitTokenAutoCleanConfig = token.submitTokenAutoCleanConfig;
+window.triggerAutoCleanTokenImmediately = token.triggerAutoCleanTokenImmediately;
 window.openTokenClearModal = token.openTokenClearModal;
 
 // DOM Setup

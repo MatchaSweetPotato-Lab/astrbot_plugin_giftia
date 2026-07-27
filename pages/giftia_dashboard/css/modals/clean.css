@@ -1,0 +1,163 @@
+/* Clean Cache & Memory & Token Auto Clean Modals Styling */
+
+/* Clean Cache/Memory Modal Tab Overrides */
+#clean-cache-modal .edit-media-tabs,
+#memory-clean-modal .edit-media-tabs {
+    border: none;
+    border-radius: 0;
+    background-color: transparent;
+    overflow: visible;
+}
+
+#clean-cache-modal .edit-media-tab-header,
+#memory-clean-modal .edit-media-tab-header {
+    background-color: transparent;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#clean-cache-modal .media-tab-panel,
+#memory-clean-modal .media-tab-panel {
+    padding: 15px 0 0 0;
+}
+
+#clean-cache-modal .media-tab-btn,
+#memory-clean-modal .media-tab-btn {
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+}
+
+#clean-cache-modal .media-tab-btn.active,
+#memory-clean-modal .media-tab-btn.active {
+    background-color: transparent;
+    border-bottom-color: var(--primary);
+    color: var(--primary);
+}
+
+.memory-clean-modal-card {
+    max-width: 1000px;
+}
+
+.clean-layout-split {
+    display: flex;
+    gap: 24px;
+    align-items: stretch;
+}
+
+.clean-layout-left {
+    flex: 0 0 350px;
+    border-right: 1px solid var(--border-color);
+    padding-right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.clean-layout-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.clean-filter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.clean-filter-grid .form-group {
+    margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+    .clean-layout-split {
+        flex-direction: column;
+        gap: 20px;
+    }
+    .clean-layout-left {
+        flex: auto;
+        border-right: none;
+        padding-right: 0;
+        border-bottom: 1px dashed var(--border-color);
+        padding-bottom: 20px;
+    }
+}
+
+.memory-clean-inline-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--font-secondary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.memory-clean-inline-check input {
+    width: auto;
+    margin: 0;
+}
+
+.memory-clean-summary {
+    padding: 12px;
+    border-left: 4px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-secondary);
+    color: var(--font-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.memory-clean-selection-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.memory-clean-candidate-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.memory-clean-candidate {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--bg-secondary);
+}
+
+.memory-clean-candidate input {
+    width: auto;
+    margin-top: 3px;
+}
+
+.memory-clean-candidate-text {
+    color: var(--font-color);
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.memory-clean-candidate-meta,
+.memory-clean-candidate-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    color: var(--font-secondary);
+    font-size: 12px;
+}
+
+.memory-clean-candidate-reasons span {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+}

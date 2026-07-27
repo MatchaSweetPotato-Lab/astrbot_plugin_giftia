@@ -90,3 +90,14 @@ class TokenApi:
         except Exception as e:
             logger.error(f"[Giftia API] set_auto_clean_token_config error: {e}")
             return error_response(f"更新自动清理配置失败: {str(e)}")
+
+    async def trigger_auto_clean_token(self) -> dict:
+        """手动触发 Token 日志自动清理"""
+        try:
+            res = await self.giftia.tools_func.auto_clean_token_usage()
+            if isinstance(res, dict) and res.get("status") == "error":
+                return error_response(res.get("message", "触发清理失败"))
+            return json_response(res)
+        except Exception as e:
+            logger.error(f"[Giftia API] trigger_auto_clean_token error: {e}")
+            return error_response(f"手动触发 Token 清理失败: {str(e)}")
