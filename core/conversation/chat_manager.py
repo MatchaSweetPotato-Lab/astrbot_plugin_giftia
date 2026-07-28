@@ -15,6 +15,12 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
 
+try:
+    from astrbot.api.event.filter import CommandFilter, CommandGroupFilter
+except ImportError:
+    CommandFilter = None
+    CommandGroupFilter = None
+
 from ..utils.schemas import XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
@@ -151,6 +157,50 @@ class ChatManager:
         finally:
             self.plugin.running_tasks.pop(task_id, None)
 
+    @staticmethod
+    def has_event_been_responded(event: AstrMessageEvent) -> bool:
+        """检查事件是否已被其他插件或底层响应（读取 AstrBot 框架的 _has_send_oper 属性）"""
+        return bool(getattr(event, "_has_send_oper", False))
+
+    @staticmethod
+    def _is_command_filter(filter_obj) -> bool:
+        """健壮判定单一 filter 是否为指令过滤器（优先精确类型匹配，辅以 astrbot 模块命名空间 MRO 继承校验）"""
+        if filter_obj is None:
+            return False
+
+        # 1. 显式 None 校验与 isinstance 匹配
+        if CommandFilter is not None and CommandGroupFilter is not None:
+            if isinstance(filter_obj, (CommandFilter, CommandGroupFilter)):
+                return True
+
+        # 2. 精确 MRO 继承链 + astrbot 模块命名空间校验（防止跨包同名类误判）
+        cls = filter_obj.__class__
+        for base in getattr(cls, "__mro__", []):
+            mod = getattr(base, "__module__", "") or ""
+            if base.__name__ in ("CommandFilter", "CommandGroupFilter") and (
+                mod.startswith("astrbot.") or mod == "astrbot"
+            ):
+                return True
+
+        # 3. 组合特征属性判定（同时包含指令名称与处理器/组属性时才认定）
+        if hasattr(filter_obj, "command_name") and (
+            hasattr(filter_obj, "handler") or hasattr(filter_obj, "command_group")
+        ):
+            return True
+
+        return False
+
+    def is_command_event(self, event: AstrMessageEvent) -> bool:
+        """检查已激活的处理函数中是否包含指令类型 Filter"""
+        activated_handlers = event.get_extra("activated_handlers", [])
+        for handler in activated_handlers:
+            if getattr(handler, "handler_name", "") == "on_message":
+                continue
+            for filter_obj in getattr(handler, "event_filters", []):
+                if self._is_command_filter(filter_obj):
+                    return True
+        return False
+
     async def job(self, event: AstrMessageEvent):
         # 获取基础信息
         bot_name = self.plugin.adapter_id_map[event.platform_meta.id]
@@ -158,12 +208,18 @@ class ChatManager:
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
-        # 检查是否开启延迟多媒体转述 (仅在没有 @ 且不在发言窗口时延迟)
+        # 1. 检查是否已被其他插件响应或包含指令类型处理逻辑
+        is_already_handled = self.has_event_been_responded(event)
+        is_command = self.is_command_event(event)
+
+        # 检查是否开启延迟多媒体转述 (已响应或指令消息强制延迟转述，避免触发小模型转述 API)
         caption_config = self.plugin.get_caption_config(bot_conf)
         defer_enabled = caption_config.get("defer_caption_enabled", True)
 
         should_defer = False
-        if defer_enabled:
+        if is_already_handled or is_command:
+            should_defer = True
+        elif defer_enabled:
             is_just_at = any(
                 isinstance(c, At) and str(c.qq) == event.get_self_id()
                 for c in event.get_messages()
@@ -179,7 +235,7 @@ class ChatManager:
             if not is_just_at and not is_active_window:
                 should_defer = True
 
-        # 解析用户消息并缓存多媒体
+        # 解析用户消息并缓存到数据库（若 should_defer 为 True 则不发起小模型转述）
         async with self.plugin.parse_locks[f"{bot_name}:{group_or_user_id}"]:
             (
                 current_message,
@@ -189,25 +245,17 @@ class ChatManager:
                 event, bot_name, defer_caption=should_defer
             )
 
-        # Check if the message is a command-type message
-        is_command = False
-        activated_handlers = event.get_extra("activated_handlers", [])
-        for handler in activated_handlers:
-            if handler.handler_name == "on_message":
-                continue
-            for filter_obj in handler.event_filters:
-                if filter_obj.__class__.__name__ in (
-                    "CommandFilter",
-                    "CommandGroupFilter",
-                ):
-                    is_command = True
-                    break
-            if is_command:
-                break
+        # 统一出口拦截：在 parse_user_message 异步解析入库期间，其他并发任务/插件可能触发了消息发送并更新了响应标记，
+        # 因此此处重新获取最新的响应状态 has_event_been_responded(event)，若已被响应或为指令消息则立刻退出。
+        if self.has_event_been_responded(event):
+            logger.debug(
+                f"{bot_name} 跳过已由其他插件响应的消息（已入库）: {current_message.content}"
+            )
+            return
 
         if is_command:
             logger.debug(
-                f"{bot_name} command message detected, logged to database, skipping LLM reply"
+                f"{bot_name} 识别到指令消息，已入库并跳过 LLM 决策与回复"
             )
             return
 

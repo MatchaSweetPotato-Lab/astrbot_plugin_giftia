@@ -483,7 +483,7 @@ class Giftia(Star):
 
     # ==================== 消息事件接收 ====================
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
     async def on_message(self, event: AstrMessageEvent):
         """接收消息事件"""
         # 忽略机器人自身发送的消息（例如平台回显/echo事件）
