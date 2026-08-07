@@ -558,7 +558,8 @@
                     "leave(退群)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)",
-                    "recaption(重新转述媒体)"
+                    "recaption(重新转述媒体)",
+                    "set_call_name(设置/修改用户称呼)"
                 ],
                 "default": [
                     "poke(戳一戳)",
@@ -571,7 +572,8 @@
                     "task_board(短期任务看板)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)",
-                    "recaption(重新转述媒体)"
+                    "recaption(重新转述媒体)",
+                    "set_call_name(设置/修改用户称呼)"
                 ]
             }
         }

@@ -47,6 +47,7 @@ class ReplyPipeline:
             "task_board_actions",
             "tts_segments",
             "recaption_requests",
+            "set_call_names",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
 

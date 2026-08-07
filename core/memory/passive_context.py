@@ -20,7 +20,7 @@ from ..llm.prompt import (
     truncate_message_content,
 )
 
-SESSION_PROFILE_FIELDS = {"call_name", "aliases", "attitude", "agreements"}
+SESSION_PROFILE_FIELDS = {"aliases", "attitude", "agreements"}
 LONG_PROFILE_FIELDS = {"personality", "interests", "extra"}
 DEFAULT_LONG_PROFILE_SAMPLE_LIMIT = 200
 DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD = 200

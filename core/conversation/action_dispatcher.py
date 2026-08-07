@@ -98,6 +98,64 @@ class ActionDispatcher:
 
         return logs
 
+    async def _dispatch_set_call_name_actions(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        group_or_user_id: str,
+        llm_result: XmlLlmResult,
+    ) -> list[str]:
+        if not llm_result.set_call_names:
+            return []
+
+        logs = []
+        default_user_id = str(event.get_sender_id() or "").strip()
+        max_call_name_length = 20
+
+        for item in llm_result.set_call_names:
+            target_user_id = str(item.user_id or "").strip() or default_user_id
+            raw_name = str(item.name or "").strip()
+            name = re.sub(r"\s+", " ", raw_name).strip() if raw_name else ""
+            if len(name) > max_call_name_length:
+                logger.warning(
+                    f"[Giftia] 用户 {target_user_id} 设置的称呼 '{name}' 超出长度限制 ({max_call_name_length} 字)，已自动截断"
+                )
+                name = name[:max_call_name_length].strip()
+
+            if not target_user_id:
+                logs.append(
+                    "<set_call_name result='failed' reason='missing_user_id'/>"
+                )
+                continue
+
+            try:
+                profile_fields = {"call_name": name if name else None}
+                await self.plugin.data_cache.set_user_profile(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=target_user_id,
+                    profile_fields=profile_fields,
+                )
+                action_str = f"set call_name to '{name}'" if name else "cleared call_name"
+                name_attr = f" name={quoteattr(name)}" if name else ""
+                logs.append(
+                    f"<set_call_name user_id={quoteattr(target_user_id)}{name_attr} result='success'/>"
+                )
+                logger.info(
+                    f"[Giftia] 成功对用户 {target_user_id} 执行称呼设置: {action_str}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[Giftia] 设置用户 {target_user_id} 称呼失败: {e}",
+                    exc_info=True,
+                )
+                logs.append(
+                    f"<set_call_name user_id={quoteattr(target_user_id)} "
+                    f"result='failed' reason={quoteattr(str(e))}/>"
+                )
+
+        return logs
+
     @staticmethod
     def get_output_order(llm_result: XmlLlmResult) -> list[tuple[str, int]]:
         """
@@ -312,12 +370,19 @@ class ActionDispatcher:
             group_or_user_id=group_or_user_id,
             llm_result=llm_result,
         )
+        set_call_name_logs = await self._dispatch_set_call_name_actions(
+            event=event,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            llm_result=llm_result,
+        )
+        common_logs = task_board_logs + set_call_name_logs
 
         # 区分 aiocqhttp 平台与其它通用平台
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
         ):
-            success_logs = list(task_board_logs)
+            success_logs = list(common_logs)
             iso_string = datetime.now().isoformat()
 
             # 1. 删除长期记忆
@@ -627,7 +692,7 @@ class ActionDispatcher:
                 llm_result=llm_result,
             )
 
-        if task_board_logs:
+        if common_logs:
             await self.plugin.data_cache.add_message(
                 bot_name,
                 group_or_user_id,
@@ -637,7 +702,7 @@ class ActionDispatcher:
                     group_or_user_id=group_or_user_id,
                     time=datetime.now().isoformat(),
                     message_id="",
-                    content="\n".join(task_board_logs),
+                    content="\n".join(common_logs),
                     is_recalled=False,
                     media_id_list=[],
                     role="operation_log",

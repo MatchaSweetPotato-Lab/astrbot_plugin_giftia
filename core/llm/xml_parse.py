@@ -12,7 +12,14 @@ from astrbot.core.message.components import BaseMessageComponent
 
 from ..database.data_cache import DataCache
 from ..utils.emoji_manager import EmojiManager
-from ..utils.schemas import Decision, TTSRequest, XmlLlmResult
+from ..utils.schemas import (
+    FLAT_CLOSABLE_TAGS,
+    SYSTEM_XML_TAGS,
+    Decision,
+    SetCallNameRequest,
+    TTSRequest,
+    XmlLlmResult,
+)
 from ..utils.anti_drool import clean_llm_completion
 
 
@@ -312,6 +319,15 @@ class XmlParse:
                 elif tag_name == "leave":
                     result.leave.append(group_or_user_id)
 
+                elif tag_name == "set_call_name":
+                    user_id = self._attr_str(child, "user_id", "").strip()
+                    name = self._attr_str(child, "name", "").strip()
+                    if not name:
+                        name = child.get_text(strip=True)
+                    result.set_call_names.append(
+                        SetCallNameRequest(user_id=user_id, name=name)
+                    )
+
                 elif tag_name == "search_memory":
                     text = child.get_text(strip=True)
                     if text:
@@ -501,37 +517,7 @@ class XmlParse:
         Returns:
             The processed XML string with properly closed tags.
         """
-        flat_tags = [
-            "status",
-            "message",
-            "delete",
-            "like",
-            "poke",
-            "ban",
-            "kick",
-            "leave",
-            "summary_user_profile",
-            "summary_group_profile",
-            "save_memory",
-            "search_memory",
-            "search_chat_history",
-            "get_message_context",
-            "delete_memory",
-            "update_memory",
-            "update_relation",
-            "set_relation_title",
-            "tool_call",
-            "schedule_task",
-            "delete_task",
-            "all_task",
-            "task_board",
-            "short_task",
-            "add_sticker",
-            "tts",
-            "decision",
-            "caption",
-            "recaption",
-        ]
+        flat_tags = FLAT_CLOSABLE_TAGS
         pattern = r"<\s*(/?)\s*(" + "|".join(flat_tags) + r")\b([^>]*?)(/?)\s*>"
 
         result = []

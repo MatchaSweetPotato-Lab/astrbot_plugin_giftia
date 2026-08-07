@@ -148,6 +148,60 @@ class BotSticker:
     sticker_set: set[str]  # 完整的sticker_id集合
 
 
+# 根级平铺同级自动闭合标签（适用于 close_xml_tags）
+FLAT_CLOSABLE_TAGS = [
+    "status",
+    "message",
+    "delete",
+    "like",
+    "poke",
+    "ban",
+    "kick",
+    "leave",
+    "summary_user_profile",
+    "summary_group_profile",
+    "save_memory",
+    "search_memory",
+    "search_chat_history",
+    "get_message_context",
+    "delete_memory",
+    "update_memory",
+    "update_relation",
+    "set_relation_title",
+    "tool_call",
+    "schedule_task",
+    "delete_task",
+    "all_task",
+    "task_board",
+    "short_task",
+    "add_sticker",
+    "tts",
+    "decision",
+    "caption",
+    "recaption",
+    "set_call_name",
+]
+
+# 内嵌或容器类非平铺自动闭合标签
+INLINE_CONTAINER_TAGS = [
+    "at",
+    "sticker",
+    "emoji_like",
+    "think",
+    "root",
+    "repeat",
+]
+
+# 系统合法 XML 标签汇总
+SYSTEM_XML_TAGS = FLAT_CLOSABLE_TAGS + INLINE_CONTAINER_TAGS
+
+
+@dataclass(repr=False, slots=True)
+class SetCallNameRequest:
+    user_id: str = ""
+    name: str = ""
+
+
 @dataclass(repr=False, slots=True)
 class XmlLlmResult:
     status: Status = field(default_factory=Status)
@@ -201,5 +255,7 @@ class XmlLlmResult:
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 重新转述媒体请求
     recaption_requests: list[dict] = field(default_factory=list)
+    # 修改用户称呼请求
+    set_call_names: list[SetCallNameRequest] = field(default_factory=list)
     # 保留 message / tts 在 LLM XML 中的出现顺序
     output_order: list[tuple[str, int]] = field(default_factory=list)
