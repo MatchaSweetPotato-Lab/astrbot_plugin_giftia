@@ -542,12 +542,6 @@
                 "default": 3,
                 "hint": "同一个 Bot 在同一会话中最多保留多少条进行中的短期任务。达到上限后系统会拒绝继续创建。"
             },
-            "saucenao_api_key": {
-                "description": "SauceNAO API Key",
-                "type": "string",
-                "default": "",
-                "hint": "可选。用于 SauceNAO 以图搜插画/来源的官方 API Key。若留空则自动使用网页端 HTML 解析。"
-            },
             "enabled_interactive_features": {
                 "description": "启用的内置交互功能",
                 "hint": "勾选表示启用对应的内置互动/功能 XML 标签，大模型将只能输出勾选的标签。",
@@ -564,8 +558,7 @@
                     "leave(退群)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)",
-                    "recaption(重新转述媒体)",
-                    "search_anime(以图搜番)"
+                    "recaption(重新转述媒体)"
                 ],
                 "default": [
                     "poke(戳一戳)",
@@ -578,8 +571,7 @@
                     "task_board(短期任务看板)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)",
-                    "recaption(重新转述媒体)",
-                    "search_anime(以图搜番)"
+                    "recaption(重新转述媒体)"
                 ]
             }
         }

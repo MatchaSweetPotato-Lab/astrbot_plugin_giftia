@@ -173,11 +173,6 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
             '- **重新转述媒体**: `<recaption media_id="媒体ID">你想确定的问题或关注点</recaption>`。当其他人对某个媒体内容和你有争议时，可使用此标签自主选择该媒体重新进行转述。'
         )
 
-    if is_enabled("search_anime"):
-        interactive_lines.append(
-            '- **以图搜图/搜番/搜插画**: `<search_anime media_id="图片ID" type="anime|illust" limit="3"/>`。根据消息中的图片识别对应的动漫/番剧或插画作品来源（`type` 可填 `anime` 搜番剧或 `illust` 搜插画来源；`limit` 为返回结果条数）。'
-        )
-
     if interactive_lines:
         prompt_lines.append("")
         prompt_lines.append("## 可用的可选互动与功能标签")
