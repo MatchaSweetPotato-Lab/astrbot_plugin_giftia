@@ -201,7 +201,5 @@ class XmlLlmResult:
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 重新转述媒体请求
     recaption_requests: list[dict] = field(default_factory=list)
-    # 以图搜番请求
-    search_anime_requests: list[dict] = field(default_factory=list)
     # 保留 message / tts 在 LLM XML 中的出现顺序
     output_order: list[tuple[str, int]] = field(default_factory=list)

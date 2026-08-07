@@ -13,8 +13,6 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..utils.schemas import MessageData, XmlLlmResult
-from ..utils.anime_search import search_anime_by_media_id
-from ..utils.saucenao_search import search_illust_by_media_id
 
 
 class ActionDispatcher:
@@ -599,49 +597,8 @@ class ActionDispatcher:
                     except ValueError:
                         logger.error(f"{bot_name} 退群数据格式错误: {group_id}")
 
-            # 14. 以图搜番与以图搜插画 (SauceNAO)
-            if (
-                self._interactive_feature_enabled("search_anime")
-                and hasattr(llm_result, "search_anime_requests")
-                and llm_result.search_anime_requests
-            ):
-                bot_id = event.get_self_id()
-                for req in llm_result.search_anime_requests:
-                    media_id = req.get("media_id", "")
-                    stype = str(req.get("type", "anime")).lower().strip()
-                    limit = int(req.get("limit", 3))
-                    if media_id:
-                        if stype in {"illust", "saucenao"}:
-                            api_key = self.plugin.tools_config.get("saucenao_api_key", "")
-                            ok, chain, err_msg = await search_illust_by_media_id(
-                                self.plugin,
-                                media_id,
-                                limit=limit,
-                                api_key=api_key,
-                                bot_id=bot_id,
-                                bot_name=bot_name,
-                            )
-                        else:
-                            ok, chain, err_msg = await search_anime_by_media_id(
-                                self.plugin,
-                                media_id,
-                                limit=limit,
-                                bot_id=bot_id,
-                                bot_name=bot_name,
-                            )
 
-                        if ok:
-                            await event.send(chain)
-                            success_logs.append(
-                                f"<search_anime media_id={quoteattr(media_id)} type={quoteattr(stype)} limit={limit} result='success'/>"
-                            )
-                        else:
-                            await event.send(chain)
-                            success_logs.append(
-                                f"<search_anime media_id={quoteattr(media_id)} type={quoteattr(stype)} limit={limit} result='failed' reason={quoteattr(err_msg)}/>"
-                            )
-
-            # 15. 记录总体操作日志
+            # 14. 记录总体操作日志
             if len(success_logs) > 0:
                 await self.plugin.data_cache.add_message(
                     bot_name,

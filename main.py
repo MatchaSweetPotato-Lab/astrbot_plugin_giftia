@@ -469,18 +469,6 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.command("搜番")
-    async def search_anime(self, event: AstrMessageEvent):
-        """以图搜番"""
-        async for chunk in self.cmd_handler.search_anime_cmd(event):
-            yield chunk
-
-    @filter.command("搜插画", alias={"搜图", "搜画", "搜来源"})
-    async def search_illust(self, event: AstrMessageEvent):
-        """以图搜插画/来源 (SauceNAO)"""
-        async for chunk in self.cmd_handler.search_illust_cmd(event):
-            yield chunk
-
     # ==================== 消息事件接收 ====================
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
@@ -492,12 +480,6 @@ class Giftia(Star):
                 return
         except Exception:
             pass
-
-        # 搜番发图等待拦截
-        sender_id = event.get_sender_id()
-        if self.cmd_handler.has_anime_demand(sender_id):
-            if await self.cmd_handler.fulfill_anime_demand(event):
-                return
 
         await self.chat_manager.handle_message(event)
 
