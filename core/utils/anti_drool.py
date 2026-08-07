@@ -1,5 +1,6 @@
 import re
 import logging
+from .schemas import SYSTEM_XML_TAGS
 
 logger = logging.getLogger("astrbot")
 
@@ -23,8 +24,8 @@ def replace_outside_quotes(s: str, target: str, replacement: str) -> str:
     return "".join(result)
 
 def escape_tags_in_code_blocks(text: str) -> str:
-    """转义 Markdown 代码块（```...```）、行内代码（`...`）以及孤立文本标签标注（如前后带空格的 <message>），防止解析器误伤"""
-    pattern = r"(```[a-zA-Z]*\n[\s\S]*?\n```|`[^`]+`|\s+<\s*[a-zA-Z_0-9:-]+\b[^>]*?>\s+)"
+    """转义 Markdown 代码块（```...```）及行内代码（`...`）中的 < 和 >，防止其中的代码语法破坏 XML 结构树"""
+    pattern = r"(```[a-zA-Z]*\n[\s\S]*?\n```|`[^`]+`)"
 
     def repl(match):
         content = match.group(0)
@@ -62,13 +63,7 @@ def clean_llm_completion(text: str) -> str:
 
     # 3. 修复属性重复或异常 (如 name="send_meme" name="send_meme" 或 name="send_meme"x)
     # 我们只对支持的有效标签执行此操作，以免误伤用户正文中的类似结构
-    valid_tags = [
-        "status", "message", "delete", "like", "poke", "ban", "kick", "leave",
-        "save_memory", "search_memory", "search_chat_history", "get_message_context",
-        "delete_memory", "update_memory", "update_relation", "set_relation_title",
-        "tool_call", "schedule_task", "delete_task", "all_task", "add_sticker",
-        "decision", "caption", "at", "sticker", "emoji_like", "think", "root"
-    ]
+    valid_tags = SYSTEM_XML_TAGS
     tags_pattern = "|".join(valid_tags)
     tag_pattern = r'<\s*(/?)\s*(' + tags_pattern + r')\b([^>]*?)(/?)\s*>'
 

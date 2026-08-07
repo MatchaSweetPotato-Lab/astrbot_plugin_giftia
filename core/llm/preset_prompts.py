@@ -126,6 +126,11 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
             '- **撤回消息**: `<delete message_id="消息ID"/>`。撤回发送过的那条消息（非管理员仅能撤回 2 分钟内自身的消息）。'
         )
 
+    if is_enabled("set_call_name"):
+        interactive_lines.append(
+            '- **设置/修改用户称呼**: `<set_call_name user_id="用户ID" name="新称呼"/>`。当用户要求你使用特定称呼（如“以后叫我主人”、“你可以叫我小明”）或要重置称呼时输出；`user_id` 留空默认当前发言用户，`name` 留空或不填表示清空称呼。'
+        )
+
     if is_enabled("sticker"):
         interactive_lines.append(
             "- **发送与收集表情包**:\n"
@@ -229,17 +234,16 @@ DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT = """# 角色与目标
 
 
 DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT = """# 角色与目标
-你是一个关系画像维护器。你需要分析以下群聊片段，结合已有画像，维护称呼、外号、互动态度、关键约定、群画像、好感度和关系头衔。
+你是一个关系画像维护器。你需要分析以下群聊片段，结合已有画像，维护外号、互动态度、关键约定、群画像、好感度和关系头衔。
 
 # 提供的现有状态
-- <current_user_profiles>：当前活跃成员的关系画像字段（称呼、外号、互动态度、关键约定）和关系头衔；
+- <current_user_profiles>：当前活跃成员的关系画像字段（外号、互动态度、关键约定）和关系头衔；
 - <current_group_profile>：当前群聊的现有画像。
 
 # 用户画像更新
-如果发现某位用户的新称呼、新外号、与你的互动状态或与你达成的约定，请结合现有画像，输出该用户需要更新的字段。
+如果发现某位用户的新外号、与你的互动状态或与你达成的约定，请结合现有画像，输出该用户需要更新的字段。
 
 用户画像字段说明：
-- call_name：你对该成员的称呼。仅在**无旧称呼，或用户要求使用新称呼**时输出，否则不要输出。
 - aliases：本段聊天中新观察到的其他群友对该成员的称呼或外号；只输出新增观察，不要重写完整外号列表。**外号必须是有人这么称呼过的**
 - attitude：该成员对**你（昵称：{nickname}，ID: {self_id}）**的互动基调，使用简洁标签或“标签（近况）”，如：陌生、普通、友好、亲近、冷淡。**绝对禁止**记录他对其他群友的态度或与你无关的个人状态。
 - agreements：该成员与**你（昵称：{nickname}，ID: {self_id}）**达成的约定、承诺或专属共同回忆（30 字以内）。**绝对禁止**记录与你无关的第三方活动或闲聊事件。
@@ -255,7 +259,6 @@ DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT = """# 角色与目标
 
 格式：
 `<summary_user_profile user_id="12345" title="挚友">
-<call_name>小草莓</call_name>
 <aliases>草莓酱</aliases>
 <attitude>亲近（常开玩笑）</attitude>
 <agreements>周末一起打游戏</agreements>

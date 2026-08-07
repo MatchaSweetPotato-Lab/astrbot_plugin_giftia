@@ -352,8 +352,6 @@ class DataCache:
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         profile_fields = dict(profile_fields or {})
         aliases = profile_fields.pop("aliases", None)
-        if profile is not None:
-            self.user_profiles[fmt_key] = profile
         db_relation = relation
         db_title = title
         if relation is not None or title is not None:
@@ -371,8 +369,7 @@ class DataCache:
                 db_relation,
                 db_title,
             )
-        aliases_changed = aliases is not None
-        if aliases_changed:
+        if aliases is not None:
             if aliases or alias_increment_count:
                 await self.db.upsert_user_aliases(
                     bot_name=bot_name,
@@ -396,24 +393,8 @@ class DataCache:
             title=db_title,
             profile_fields=profile_fields,
         )
-        current_record = self.user_profile_records.get(fmt_key, {}).copy()
-        if profile is not None:
-            current_record["profile"] = profile
-        for key, value in profile_fields.items():
-            current_record[key] = value
-        if aliases_changed:
-            current_record["aliases"] = await self.db.get_user_aliases_text(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=user_id,
-                limit=6,
-            )
-        if db_relation is not None:
-            current_record["relation"] = db_relation
-        if db_title is not None:
-            current_record["title"] = db_title
-        if current_record:
-            self.user_profile_records[fmt_key] = current_record
+        self.user_profile_records.pop(fmt_key, None)
+        self.user_profiles.pop(fmt_key, None)
 
     async def get_group_profile(
         self, bot_name: str, group_or_user_id: str
