@@ -128,7 +128,7 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
 
     if is_enabled("set_call_name"):
         interactive_lines.append(
-            '- **设置/修改用户称呼**: `<set_call_name user_id="用户ID" name="新称呼"/>`。当用户要求你使用特定称呼（如“以后叫我主人”、“你可以叫我小明”）或要重置称呼时输出；`user_id` 留空默认当前发言用户，`name` 留空或不填表示清空称呼。'
+            '- **设置/修改用户称呼**: `<set_call_name user_id="目标用户ID" name="新称呼"/>`。为指定用户设置特定称呼；必须显式填入 `user_id`（目标用户的数字 ID），`name` 留空表示清空称呼。'
         )
 
     if is_enabled("sticker"):

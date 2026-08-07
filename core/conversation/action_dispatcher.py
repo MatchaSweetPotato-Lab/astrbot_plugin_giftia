@@ -109,11 +109,19 @@ class ActionDispatcher:
             return []
 
         logs = []
-        default_user_id = str(event.get_sender_id() or "").strip()
         max_call_name_length = 20
 
         for item in llm_result.set_call_names:
-            target_user_id = str(item.user_id or "").strip() or default_user_id
+            target_user_id = str(item.user_id or "").strip()
+            if not target_user_id:
+                logs.append(
+                    "<set_call_name result='failed' reason='missing_user_id'/>"
+                )
+                logger.warning(
+                    f"[Giftia] 设置用户称呼失败: 未在标签中显式提供 user_id"
+                )
+                continue
+
             raw_name = str(item.name or "").strip()
             name = re.sub(r"\s+", " ", raw_name).strip() if raw_name else ""
             if len(name) > max_call_name_length:
@@ -121,12 +129,6 @@ class ActionDispatcher:
                     f"[Giftia] 用户 {target_user_id} 设置的称呼 '{name}' 超出长度限制 ({max_call_name_length} 字)，已自动截断"
                 )
                 name = name[:max_call_name_length].strip()
-
-            if not target_user_id:
-                logs.append(
-                    "<set_call_name result='failed' reason='missing_user_id'/>"
-                )
-                continue
 
             try:
                 profile_fields = {"call_name": name if name else None}
