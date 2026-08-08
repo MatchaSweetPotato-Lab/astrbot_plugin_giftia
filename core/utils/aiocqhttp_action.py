@@ -392,10 +392,21 @@ class AIoCQHTTPAction:
                 }
                 if isinstance(component, Image):
                     # 同时兼容NapCat/Lagrange/go-cqhttp的命名规范
-                    data_dict["subType"] = 1
-                    data_dict["sub_type"] = 1
-                    data_dict["subtype"] = 1
-                    data_dict["summary"] = random.choice(self.sticker_summaries)
+                    sub_type = getattr(component, "sub_type", None)
+                    if sub_type is None:
+                        sub_type = getattr(component, "subType", None)
+
+                    if sub_type == 1:
+                        # 显式标记为表情包/小图
+                        data_dict["subType"] = 1
+                        data_dict["sub_type"] = 1
+                        data_dict["subtype"] = 1
+                        data_dict["summary"] = random.choice(self.sticker_summaries)
+                    else:
+                        # 普通大图模式
+                        data_dict["subType"] = 0
+                        data_dict["sub_type"] = 0
+                        data_dict["subtype"] = 0
                 message_data.append(
                     {
                         "type": component.type.lower(),
