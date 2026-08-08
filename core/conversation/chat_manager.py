@@ -35,8 +35,9 @@ class ChatManager:
             return
 
         # 2. 处理撤回消息通知
-        if hasattr(event.message_obj, "raw_message") and event.message_obj.raw_message:
-            raw_message = event.message_obj.raw_message
+        msg_obj = getattr(event, "message_obj", None)
+        raw_message = getattr(msg_obj, "raw_message", None) if msg_obj else None
+        if raw_message:
             message_name = getattr(raw_message, "name", "")
             if message_name in ["notice.group_recall", "notice.friend_recall"]:
                 recalled_message_id = str(getattr(raw_message, "message_id", ""))

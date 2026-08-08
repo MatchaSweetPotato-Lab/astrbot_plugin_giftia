@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain, Reply, Image
+from astrbot.api.message_components import Plain, Reply, Image, Video
 from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
 from astrbot.core.utils.session_lock import session_lock_manager
@@ -34,7 +34,7 @@ from .core.utils.scheduler import Scheduler
 from .core.utils.task_board import TaskBoardManager
 from .core.utils.tools_func import ToolsFunc
 from .core.web.webui_manager import WebUIManager
-from .core.utils.schemas import XmlLlmResult
+from .core.utils.schemas import MessageData, XmlLlmResult
 
 
 class Giftia(Star):
@@ -520,10 +520,10 @@ class Giftia(Star):
         unified_msg_origin: str,
         **kwargs,
     ):
-        """后台绘图完成回调"""
+        """后台绘图/媒体生成完成回调"""
 
-        # 1. 过滤出真正的图片组件
-        images = [comp for comp in result.chain if isinstance(comp, Image)]
+        # 1. 过滤出真正的图片与视频组件
+        media_comps = [comp for comp in result.chain if isinstance(comp, (Image, Video))]
         
         # 2. 检查结果文本
         result_text = ""
@@ -532,13 +532,13 @@ class Giftia(Star):
                 result_text += comp.text or ""
 
         # 3. 判定是否成功
-        # 优先从 kwargs 获取显式成功状态（如果未来绘图后端支持传入 success 参数）
-        is_success = kwargs.get("success")
+        # 优先从 kwargs 获取显式成功状态（big_banana 会传入 is_success=True/False）
+        is_success = kwargs.get("is_success")
+        if is_success is None:
+            is_success = kwargs.get("success")
         if is_success is None:
             # 兼容模式：若无显式状态参数，通过消息链内容进行判定。
-            # 大香蕉生成失败时，会向消息链放入包含 "执行失败" 的 Plain 文本，且无图片组件；
-            # 成功时，若不直接发送则包含图片组件，若直接发送则包含 "图片已成功发送给用户" 的 Plain 文本。
-            if len(images) > 0:
+            if len(media_comps) > 0:
                 is_success = True
             elif "执行失败" in result_text:
                 is_success = False
@@ -561,21 +561,59 @@ class Giftia(Star):
         group_or_user_id = event.get_group_id() or event.get_sender_id()
         reply_key = f"{bot_name}:{group_or_user_id}"
 
-        # 使用系统内置会话锁排队，确保等当前发言结束后再发送图片和激活回复
+        # 使用系统内置会话锁排队，确保等当前发言结束后再发送媒体和激活回复
         async with session_lock_manager.acquire_lock(event.unified_msg_origin):
-            # 4. 如果成功，且包含图片（大香蕉未开启直接发送时），构造只包含图片的 MessageChain 并直接发送给用户
+            # 4. 如果成功且包含媒体组件，构造 MessageChain 并直接发送给用户
             if is_success:
-                if len(images) > 0:
-                    logger.info(f"[Giftia] 后台绘图完成，正在直接发送生成的图片...")
+                if len(media_comps) > 0:
+                    logger.info(f"[Giftia] 后台绘图/媒体生成完成，正在直接发送生成的媒体组件...")
                     send_chain = []
-                    if event.message_obj and hasattr(event.message_obj, "message_id") and event.message_obj.message_id:
-                        send_chain.append(Reply(id=event.message_obj.message_id))
-                    send_chain.extend(images)
-                    await event.send(event.chain_result(send_chain))
+                    message_obj = getattr(event, "message_obj", None)
+                    message_id_attr = getattr(message_obj, "message_id", None) if message_obj else None
+                    if message_id_attr:
+                        send_chain.append(Reply(id=str(message_id_attr)))
+                    send_chain.extend(media_comps)
+
+                    sent_by_aiocqhttp = False
+                    success = False
+                    message_id = None
+
+                    if event.get_platform_name() == "aiocqhttp" and hasattr(self, "aiocqhttp"):
+                        success, message_id = await self.aiocqhttp.send_message(event, send_chain)
+                        if success:
+                            sent_by_aiocqhttp = True
+
+                    if not success:
+                        success = await self.context.send_message(
+                            event.unified_msg_origin, MessageChain(send_chain)
+                        )
+
+                    if success and sent_by_aiocqhttp:
+                        try:
+                            from datetime import datetime
+
+                            parsed_msg = await self.message_parser.chain_to_result(
+                                send_chain, defer_caption=False
+                            )
+                            msg_data = MessageData(
+                                nickname=nickname,
+                                user_id=event.get_self_id() or "bot",
+                                group_or_user_id=group_or_user_id,
+                                time=datetime.now().isoformat(),
+                                message_id=str(message_id or ""),
+                                content=parsed_msg.content,
+                                is_recalled=0,
+                                media_id_list=parsed_msg.media_id_list,
+                                forward_messages=parsed_msg.forward_messages,
+                            )
+                            await self.data_cache.add_message(bot_name, group_or_user_id, msg_data)
+                            logger.info(f"[Giftia] 后台绘图/媒体已成功通过 aiocqhttp 投递并存入数据库")
+                        except Exception as e:
+                            logger.error(f"[Giftia] 媒体入库失败: {e}", exc_info=True)
                 else:
-                    logger.info(f"[Giftia] 后台绘图完成（大香蕉已直接发送图片），状态: {result_text}")
+                    logger.warning(f"[Giftia] 后台绘图/媒体生成完成，但消息链中未包含图片/视频组件: {result_text}")
             else:
-                logger.warning(f"[Giftia] 后台绘图失败: {error_msg}")
+                logger.warning(f"[Giftia] 后台绘图/媒体生成失败: {error_msg}")
 
             # 5. 唤醒 Bot 进行后继发言/点评
             try:
