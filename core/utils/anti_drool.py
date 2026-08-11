@@ -65,7 +65,7 @@ def clean_llm_completion(text: str) -> str:
     # 我们只对支持的有效标签执行此操作，以免误伤用户正文中的类似结构
     valid_tags = SYSTEM_XML_TAGS
     tags_pattern = "|".join(valid_tags)
-    tag_pattern = r'<\s*(/?)\s*(' + tags_pattern + r')\b([^>]*?)(/?)\s*>'
+    tag_pattern = r'<\s*(/?)\s*(' + tags_pattern + r')(?=[\s/>])([^>]*?)(/?)\s*>'
 
     def clean_tag_attributes(match):
         is_close = match.group(1)  # "/" if closing tag (e.g. </tool_call>)

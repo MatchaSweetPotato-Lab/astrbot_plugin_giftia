@@ -10,6 +10,7 @@ from astrbot.api.star import Context
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.provider.entities import LLMResponse, TokenUsage
 
+from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
 from ..utils.schemas import (
     Decision,
     MediaCaption,
@@ -213,16 +214,21 @@ class CallLLM:
         tts_instruction: str = "",
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
+        is_qq_official: bool = False,
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
         # logger.info(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
+        is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
+
         for provider_id in provider_ids:
             for i in range(self.network_conf["reply_retry_times"]):
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
-                    xml_inst = build_xml_instructions(enabled_features, tts_instruction)
+                    xml_inst = build_xml_instructions(
+                        enabled_features, tts_instruction, is_qq_official=is_qq_official_flag
+                    )
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
                     tools_set = None
                     if use_source_tools or force_xml_tools:
