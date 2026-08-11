@@ -136,18 +136,32 @@ class BotApi:
                     if callable(meta_raw):
                         try:
                             meta = meta_raw()
-                        except Exception:
+                        except Exception as exc:
+                            logger.warning(
+                                "[Giftia BotApi] Failed to retrieve metadata from adapter %r (%s): %s",
+                                inst,
+                                type(inst).__name__,
+                                exc,
+                            )
                             meta = None
                     else:
                         meta = meta_raw
 
                     if meta:
-                        a_id = str(getattr(meta, "id", "") or "").strip()
+                        # 兼容对象属性与类字典 (dict-like) 结构
+                        def _get_meta_attr(obj, attr: str):
+                            if isinstance(obj, dict):
+                                return obj.get(attr)
+                            return getattr(obj, attr, None)
+
+                        a_id = str(_get_meta_attr(meta, "id") or "").strip()
                         if a_id and not any(x["id"] == a_id for x in adapters):
+                            name_val = str(_get_meta_attr(meta, "name") or a_id)
+                            plat_name = str(_get_meta_attr(meta, "platform_name") or "")
                             adapters.append({
                                 "id": a_id,
-                                "name": str(getattr(meta, "name", a_id) or a_id),
-                                "platform_name": str(getattr(meta, "platform_name", "")),
+                                "name": name_val,
+                                "platform_name": plat_name,
                             })
 
                 # 2. 回退检查：从 platforms_config 中补充提取在配置中启用或存在的平台
