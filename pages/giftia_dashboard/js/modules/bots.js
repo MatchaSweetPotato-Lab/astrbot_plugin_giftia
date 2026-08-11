@@ -312,12 +312,20 @@ function renderInteractiveFeaturesCheckboxes(selectedFeatures) {
     const allFeatures = stateBotMetadata.interactive_features || [];
 
     container.innerHTML = allFeatures.map(feat => {
-        const isChecked = selectedFeatures.includes(feat);
+        const featKey = feat.split('(')[0];
+        const isChecked = selectedFeatures.some(sf => sf === feat || (featKey && (sf.startsWith(featKey + '(') || sf === featKey)));
         const id = `feat-${feat.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+        let displayText = feat;
+        const match = feat.match(/^[a-zA-Z0-9_]+\((.*)\)$/);
+        if (match && match[1]) {
+            displayText = match[1];
+        }
+
         return `
             <label class="feature-checkbox-card" for="${id}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-tertiary, rgba(255,255,255,0.04)); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 6px; cursor: pointer;">
                 <input type="checkbox" id="${id}" value="${escapeHtml(feat)}" class="bot-feature-cb" ${isChecked ? 'checked' : ''}>
-                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(feat)}</span>
+                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(displayText)}</span>
             </label>
         `;
     }).join('');

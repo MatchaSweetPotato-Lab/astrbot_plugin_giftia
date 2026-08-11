@@ -8,19 +8,19 @@ from astrbot.api import logger
 from astrbot.api.star import StarTools
 
 DEFAULT_INTERACTIVE_FEATURES = [
-    "poke(戳一戳)",
-    "emoji_like(贴表情回应)",
-    "repeat(消息复读)",
-    "like(点赞名片)",
-    "delete(撤回自身消息)",
-    "group_admin(群管禁言/踢人)",
+    "poke(戳一戳(仅onebot))",
+    "emoji_like(贴表情回应(仅onebot))",
+    "repeat(消息复读(仅onebot))",
+    "like(点赞名片(仅onebot))",
+    "delete(撤回自身消息(仅onebot))",
+    "group_admin(群管禁言/踢人(仅onebot))",
     "schedule_task(设置/查看/删除定时任务)",
     "task_board(短期任务看板)",
     "sticker(表情包发送与收集)",
     "memory_query_delete(记忆查询与删除)",
     "recaption(重新转述媒体)",
     "set_call_name(设置/修改用户称呼)",
-    "leave(主动退群)",
+    "leave(主动退群(仅onebot))",
 ]
 
 DEFAULT_BOT_CONFIG = {
