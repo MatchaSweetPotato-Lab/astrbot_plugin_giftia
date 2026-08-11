@@ -76,7 +76,7 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
         if enabled_features is None:
             # 默认除 leave (退群) 之外全部开启
             return feature_name != "leave"
-        return any(f.startswith(feature_name) for f in enabled_features)
+        return feature_name in enabled_features
 
     # 1. 基础消息格式与输出规范 (永远启用)
     prompt_lines = [

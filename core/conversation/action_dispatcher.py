@@ -23,7 +23,7 @@ class ActionDispatcher:
         enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
-        return any(str(item).startswith(feature_name) for item in enabled_features)
+        return feature_name in enabled_features
 
     def _find_recent_message(
         self, bot_name: str, group_or_user_id: str, message_id: str

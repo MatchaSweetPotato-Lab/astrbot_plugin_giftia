@@ -310,22 +310,21 @@ function renderInteractiveFeaturesCheckboxes(selectedFeatures) {
     const container = document.getElementById('bot-form-interactive-grid');
     if (!container) return;
     const allFeatures = stateBotMetadata.interactive_features || [];
+    const activeKeys = (selectedFeatures || []).map(sf => String(sf).split('(')[0].trim());
 
     container.innerHTML = allFeatures.map(feat => {
-        const featKey = feat.split('(')[0];
-        const isChecked = selectedFeatures.some(sf => sf === feat || (featKey && (sf.startsWith(featKey + '(') || sf === featKey)));
-        const id = `feat-${feat.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const key = typeof feat === 'object' && feat.key ? feat.key : String(feat);
+        const label = typeof feat === 'object' && feat.label ? feat.label : feat;
+        const note = typeof feat === 'object' && feat.note ? feat.note : '';
+        const isChecked = activeKeys.includes(key);
 
-        let displayText = feat;
-        const match = feat.match(/^[a-zA-Z0-9_]+\((.*)\)$/);
-        if (match && match[1]) {
-            displayText = match[1];
-        }
+        const id = `feat-${key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const noteHtml = note ? `<span style="font-size: 0.75rem; color: var(--font-secondary); font-weight: normal;">(${escapeHtml(note)})</span>` : '';
 
         return `
             <label class="feature-checkbox-card" for="${id}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-tertiary, rgba(255,255,255,0.04)); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 6px; cursor: pointer;">
-                <input type="checkbox" id="${id}" value="${escapeHtml(feat)}" class="bot-feature-cb" ${isChecked ? 'checked' : ''}>
-                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(displayText)}</span>
+                <input type="checkbox" id="${id}" value="${escapeHtml(key)}" class="bot-feature-cb" ${isChecked ? 'checked' : ''}>
+                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(label)} ${noteHtml}</span>
             </label>
         `;
     }).join('');

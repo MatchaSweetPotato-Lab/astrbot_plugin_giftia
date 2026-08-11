@@ -7,20 +7,24 @@ from astrbot.api import logger
 
 from astrbot.api.star import StarTools
 
+INTERACTIVE_FEATURES_METADATA = [
+    {"key": "poke", "label": "戳一戳", "note": "仅OneBot"},
+    {"key": "emoji_like", "label": "贴表情回应", "note": "仅OneBot"},
+    {"key": "repeat", "label": "消息复读", "note": "仅OneBot"},
+    {"key": "like", "label": "点赞名片", "note": "仅OneBot"},
+    {"key": "delete", "label": "撤回自身消息", "note": "仅OneBot"},
+    {"key": "group_admin", "label": "群管禁言/踢人", "note": "仅OneBot"},
+    {"key": "schedule_task", "label": "设置/查看/删除定时任务", "note": ""},
+    {"key": "task_board", "label": "短期任务看板", "note": ""},
+    {"key": "sticker", "label": "表情包发送与收集", "note": ""},
+    {"key": "memory_query_delete", "label": "记忆查询与删除", "note": ""},
+    {"key": "recaption", "label": "重新转述媒体", "note": ""},
+    {"key": "set_call_name", "label": "设置/修改用户称呼", "note": ""},
+    {"key": "leave", "label": "主动退群", "note": "仅OneBot"},
+]
+
 DEFAULT_INTERACTIVE_FEATURES = [
-    "poke(戳一戳(仅onebot))",
-    "emoji_like(贴表情回应(仅onebot))",
-    "repeat(消息复读(仅onebot))",
-    "like(点赞名片(仅onebot))",
-    "delete(撤回自身消息(仅onebot))",
-    "group_admin(群管禁言/踢人(仅onebot))",
-    "schedule_task(设置/查看/删除定时任务)",
-    "task_board(短期任务看板)",
-    "sticker(表情包发送与收集)",
-    "memory_query_delete(记忆查询与删除)",
-    "recaption(重新转述媒体)",
-    "set_call_name(设置/修改用户称呼)",
-    "leave(主动退群(仅onebot))",
+    item["key"] for item in INTERACTIVE_FEATURES_METADATA if item["key"] != "leave"
 ]
 
 DEFAULT_BOT_CONFIG = {
@@ -197,6 +201,14 @@ class BotConfigManager:
         if features is None or not isinstance(features, list):
             bot["enabled_interactive_features"] = list(DEFAULT_INTERACTIVE_FEATURES)
         else:
-            bot["enabled_interactive_features"] = [str(f).strip() for f in features if f]
+            normalized_features = []
+            for f in features:
+                if not f:
+                    continue
+                s = str(f).strip()
+                key = s.split("(")[0].strip() if "(" in s else s
+                if key and key not in normalized_features:
+                    normalized_features.append(key)
+            bot["enabled_interactive_features"] = normalized_features
 
         return bot

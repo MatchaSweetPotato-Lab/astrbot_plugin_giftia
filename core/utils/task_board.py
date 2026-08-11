@@ -17,7 +17,7 @@ class TaskBoardManager:
         enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
-        return any(str(item).startswith("task_board") for item in enabled_features)
+        return "task_board" in enabled_features
 
     def max_active_tasks(self) -> int:
         try:
