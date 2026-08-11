@@ -258,3 +258,179 @@ tr:hover td {
     align-items: center;
     gap: 10px;
 }
+
+/* Tag Select Popover Component */
+.tag-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.tag-select-box {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    min-height: 42px;
+    background: var(--card-bg, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: var(--radius-sm, 6px);
+    cursor: text;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.tag-select-box:focus-within {
+    border-color: var(--info, #3b82f6);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: var(--info-bg, rgba(59, 130, 246, 0.1));
+    color: var(--info, #3b82f6);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 6px;
+    font-size: 0.84rem;
+    font-weight: 500;
+    user-select: none;
+}
+
+.tag-chip-remove {
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+    margin-left: 2px;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+}
+
+.tag-chip-remove:hover {
+    opacity: 1;
+}
+
+.tag-select-input {
+    border: none !important;
+    outline: none !important;
+    background: transparent !important;
+    color: var(--font-color, #0f172a) !important;
+    font-size: 0.88rem !important;
+    flex: 1;
+    min-width: 140px;
+    padding: 4px 0 !important;
+    box-shadow: none !important;
+}
+
+.tag-select-input::placeholder {
+    color: var(--font-secondary, #94a3b8) !important;
+}
+
+.tag-select-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--card-bg, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: var(--radius, 10px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    z-index: 2000;
+    padding: 6px 0;
+}
+
+.tag-select-option {
+    padding: 9px 14px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--font-color, #0f172a);
+    transition: background 0.15s;
+}
+
+.tag-select-option:hover {
+    background: var(--bg-secondary, #f1f5f9);
+}
+
+.tag-select-option.selected {
+    background: var(--info-bg, rgba(59, 130, 246, 0.1));
+    color: var(--info, #3b82f6);
+    font-weight: 500;
+}
+
+/* Info Tooltip Hover Component */
+.info-tooltip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    color: var(--font-secondary, #94a3b8);
+    cursor: help;
+    margin-left: 5px;
+    position: relative;
+    vertical-align: middle;
+    transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.info-tooltip svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    display: block;
+}
+
+.info-tooltip:hover {
+    color: var(--info, #3b82f6);
+    transform: scale(1.1);
+}
+
+.info-tooltip[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background-color: #1e293b;
+    color: #f8fafc;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: break-word;
+    width: max-content;
+    max-width: 260px;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    z-index: 3000;
+}
+
+html[data-theme="dark"] .info-tooltip[data-tooltip]::after {
+    background-color: #0f172a;
+    color: #f1f5f9;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.info-tooltip[data-tooltip]:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+}
+
+

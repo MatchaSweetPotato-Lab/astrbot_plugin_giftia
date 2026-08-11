@@ -378,3 +378,53 @@ class WebUIManager:
             methods=["POST"],
             desc="Manually trigger token log auto cleanup",
         )
+
+        # Bot management APIs
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots",
+            view_handler=self.web_api.get_bots,
+            methods=["GET"],
+            desc="Get bot configurations and metadata",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/save",
+            view_handler=self.web_api.save_bot,
+            methods=["POST"],
+            desc="Create or update bot configuration",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/delete",
+            view_handler=self.web_api.delete_bot,
+            methods=["POST"],
+            desc="Delete bot configuration",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/toggle",
+            view_handler=self.web_api.toggle_bot,
+            methods=["POST"],
+            desc="Toggle bot enabled status",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/voice/upload",
+            view_handler=self.web_api.upload_signature_voice,
+            methods=["POST"],
+            desc="Upload signature voice file",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/voice/list",
+            view_handler=self.web_api.list_signature_voices,
+            methods=["GET"],
+            desc="List uploaded signature voice files",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/voice/file/b64",
+            view_handler=self.web_api.get_voice_file_b64,
+            methods=["POST"],
+            desc="Get base64 data url of signature voice file",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/bots/voice/delete",
+            view_handler=self.web_api.delete_signature_voice,
+            methods=["POST"],
+            desc="Delete signature voice file from disk",
+        )

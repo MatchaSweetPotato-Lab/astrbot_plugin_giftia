@@ -226,5 +226,9 @@ export function loadActiveTabData() {
         app.loadProfilesData();
     } else if (state.activeTab === "token-stats") {
         app.initializeTokenStatsTab();
+    } else if (state.activeTab === "bots") {
+        if (typeof window.loadBotsData === "function") {
+            window.loadBotsData();
+        }
     }
 }

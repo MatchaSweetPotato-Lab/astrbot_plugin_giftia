@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import re
+
 from dataclasses import dataclass
 
 from astrbot.api import logger
@@ -37,87 +40,116 @@ class TTSManager:
             logger.warning(f"[Giftia TTS] 获取插件数据目录失败: {e}")
             self.data_dir = None
 
-    @property
-    def config(self) -> dict:
-        return getattr(self.plugin, "tts_config", {}) or {}
+    def get_config(self, bot_conf: dict | str = None) -> dict:
+        if hasattr(self.plugin, "get_bot_config"):
+            conf = self.plugin.get_bot_config(bot_conf)
+            if isinstance(conf, dict):
+                return conf.get("tts_config", {}) or {}
+        return {}
 
-    def enabled(self) -> bool:
-        return bool(self.config.get("enabled", False))
+    def enabled(self, bot_conf: dict | str = None) -> bool:
+        return bool(self.get_config(bot_conf).get("enabled", False))
 
-    def provider_type(self) -> str:
-        provider_type = str(self.config.get("provider_type", "minimax")).strip().lower()
+    def provider_type(self, bot_conf: dict | str = None) -> str:
+        provider_type = str(self.get_config(bot_conf).get("provider_type", "minimax")).strip().lower()
         return provider_type if provider_type in SUPPORTED_PROVIDER_TYPES else "minimax"
 
-    def _language_items(self) -> list[tuple[str, str]]:
-        items = self.config.get("language_provider_map") or []
-        if not isinstance(items, list):
-            return []
-
+    def _language_items(self, bot_conf: dict | str = None) -> list[tuple[str, str]]:
+        tts_conf = self.get_config(bot_conf)
         result = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            original_lang = (
-                item.get("language") or item.get("lang") or item.get("语言") or ""
-            )
-            lang = self.normalize_language(original_lang)
-            provider_id = str(
-                item.get("provider_id")
-                or item.get("provider")
-                or item.get("tts_provider_id")
-                or item.get("供应商")
-                or ""
-            ).strip()
-            if lang:
-                result.append((lang, provider_id))
-            elif original_lang:
-                supported_langs = "/".join(LANGUAGE_NAMES.values())
-                logger.warning(
-                    f"[Giftia TTS] 语言配置错误: 无法识别语言标签 '{original_lang}'，该配置条目已忽略。目前仅支持: {supported_langs}。"
+
+        # 1. 优先使用按顺序配对的 language_provider_map 模式（首个配置项即为默认语言）
+        items = tts_conf.get("language_provider_map") or []
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                original_lang = (
+                    item.get("language") or item.get("lang") or item.get("语言") or ""
                 )
+                lang = self.normalize_language(original_lang)
+                provider_id = str(
+                    item.get("provider_id")
+                    or item.get("provider")
+                    or item.get("tts_provider_id")
+                    or item.get("供应商")
+                    or ""
+                ).strip()
+                if lang and provider_id:
+                    result.append((lang, provider_id))
+
+        if result:
+            return result
+
+        # 2. 兼容回退旧版静态多语言字段
+        default_lang_label = str(tts_conf.get("default_language", "中文")).strip()
+        default_lang = self.normalize_language(default_lang_label) or "zh-CN"
+
+        lang_fields = [
+            ("zh-CN", tts_conf.get("zh_provider_id")),
+            ("en-US", tts_conf.get("en_provider_id")),
+            ("ja-JP", tts_conf.get("ja_provider_id")),
+        ]
+
+        for lang_code, provider_id in lang_fields:
+            p_id = str(provider_id or "").strip()
+            if p_id:
+                result.append((lang_code, p_id))
+
+        if result:
+            result.sort(key=lambda x: 0 if x[0] == default_lang else 1)
+
         return result
+
 
     @staticmethod
     def normalize_language(value: str) -> str:
         key = str(value or "").strip()
-        return LANGUAGE_LABELS.get(key) or LANGUAGE_LABELS.get(key.lower(), "")
+        if not key:
+            return ""
+        if key in LANGUAGE_LABELS:
+            return LANGUAGE_LABELS[key]
+        if key.lower() in LANGUAGE_LABELS:
+            return LANGUAGE_LABELS[key.lower()]
+        return key
 
-    def default_language(self) -> str:
-        items = self._language_items()
+    def default_language(self, bot_conf: dict | str = None) -> str:
+        items = self._language_items(bot_conf)
         return items[0][0] if items else "zh-CN"
 
-    def language_options(self) -> list[tuple[str, str]]:
+    def language_options(self, bot_conf: dict | str = None) -> list[tuple[str, str]]:
         options = []
         seen = set()
-        for lang, _provider_id in self._language_items():
+        for lang, _provider_id in self._language_items(bot_conf):
             if lang in seen:
                 continue
             seen.add(lang)
             options.append((lang, LANGUAGE_NAMES.get(lang, lang)))
         return options
 
-    def _provider_id_for_language(self, lang: str) -> tuple[str, str]:
-        items = self._language_items()
+    def _provider_id_for_language(self, lang: str, bot_conf: dict | str = None) -> tuple[str, str]:
+        items = self._language_items(bot_conf)
         if not items:
             return "", lang or "zh-CN"
 
-        normalized_lang = lang if lang in LANGUAGE_NAMES else ""
+        normalized_lang = self.normalize_language(lang) or lang
         for item_lang, provider_id in items:
             if item_lang == normalized_lang:
                 return provider_id, item_lang
         return items[0][1], items[0][0]
+
 
     def _lock_for_provider(self, provider_id: str) -> asyncio.Lock:
         if provider_id not in self._provider_locks:
             self._provider_locks[provider_id] = asyncio.Lock()
         return self._provider_locks[provider_id]
 
-    def _warn_provider_type_mismatch(self, provider: TTSProvider, provider_id: str) -> None:
+    def _warn_provider_type_mismatch(self, provider: TTSProvider, provider_id: str, bot_conf: dict | str = None) -> None:
         expected = {
             "minimax": "minimax_tts_api",
             "fishaudio": "fishaudio_tts_api",
             "gsvtts": "gsv_tts_selfhost",
-        }.get(self.provider_type())
+        }.get(self.provider_type(bot_conf))
         actual = ""
         try:
             actual = provider.meta().type
@@ -129,16 +161,16 @@ class TTSManager:
                 f"但 provider_id={provider_id} 的实际类型是 {actual}。"
             )
 
-    def resolve(self, segment: TTSRequest) -> ResolvedTTSRequest | None:
-        if not self.enabled():
+    def resolve(self, segment: TTSRequest, bot_conf: dict | str = None) -> ResolvedTTSRequest | None:
+        if not self.enabled(bot_conf):
             return None
 
         text = str(segment.text or "").strip()
         if not text:
             return None
 
-        lang = self.normalize_language(segment.lang) or self.default_language()
-        provider_id, resolved_lang = self._provider_id_for_language(lang)
+        lang = self.normalize_language(segment.lang) or self.default_language(bot_conf)
+        provider_id, resolved_lang = self._provider_id_for_language(lang, bot_conf)
         if not provider_id:
             logger.warning(
                 f"[Giftia TTS] 未配置 {LANGUAGE_NAMES.get(resolved_lang, resolved_lang)} 的 AstrBot TTS 供应商，跳过语音合成。"
@@ -152,7 +184,7 @@ class TTSManager:
             )
             return None
 
-        self._warn_provider_type_mismatch(provider, provider_id)
+        self._warn_provider_type_mismatch(provider, provider_id, bot_conf)
 
         emotion = str(segment.emotion or "").strip()
         return ResolvedTTSRequest(
@@ -173,11 +205,11 @@ class TTSManager:
         """
         return text
 
-    async def get_audio_path(self, resolved: ResolvedTTSRequest, event=None) -> str:
+    async def get_audio_path(self, resolved: ResolvedTTSRequest, event=None, bot_conf: dict | str = None) -> str:
         lock = self._lock_for_provider(resolved.provider_id)
         async with lock:
             audio_path = ""
-            if self.provider_type() != "minimax":
+            if self.provider_type(bot_conf) != "minimax":
                 audio_path = await resolved.provider.get_audio(resolved.text)
             else:
                 emotion = resolved.emotion.strip().lower()
@@ -204,13 +236,15 @@ class TTSManager:
                 if event:
                     bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
                     group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+                if not bot_name and isinstance(bot_conf, dict):
+                    bot_name = bot_conf.get("name", "")
                 char_count = len(resolved.text)
                 await self.plugin.db.log_token_usage(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     type="tts",
                     provider_id=resolved.provider_id,
-                    model_name=self.provider_type(),
+                    model_name=self.provider_type(bot_conf),
                     prompt_tokens=char_count,
                     completion_tokens=0,
                     total_tokens=char_count,
@@ -218,7 +252,7 @@ class TTSManager:
                 )
             return audio_path
 
-    async def build_record(self, event, segment: TTSRequest) -> Record | None:
+    async def build_record(self, event, segment: TTSRequest, bot_conf: dict | str = None) -> Record | None:
         if segment.pre_recorded_path:
             resolved_path = self.resolve_audio_path(segment.pre_recorded_path)
             if not os.path.exists(resolved_path):
@@ -227,7 +261,7 @@ class TTSManager:
             logger.info(f"[Giftia TTS] 使用标志性语音文件: {resolved_path}")
             return Record.fromFileSystem(resolved_path, text=segment.text)
 
-        resolved = self.resolve(segment)
+        resolved = self.resolve(segment, bot_conf)
         if not resolved:
             return None
 
@@ -240,7 +274,7 @@ class TTSManager:
                     f"[Giftia TTS] 请求语音合成 (第 {attempt}/{max_attempts} 次尝试): lang={resolved.lang}, "
                     f"provider={resolved.provider_id}, text={resolved.text}"
                 )
-                audio_path = await self.get_audio_path(resolved, event)
+                audio_path = await self.get_audio_path(resolved, event, bot_conf)
                 if not audio_path:
                     logger.warning(
                         f"[Giftia TTS] 第 {attempt}/{max_attempts} 次请求未返回音频文件路径。"
@@ -300,8 +334,62 @@ class TTSManager:
             return os.path.abspath(os.path.join(str(self.data_dir), path))
         return cwd_path
 
-    def split_text_by_signatures(self, text: str, resolved_voices: list[dict] = None) -> list[dict]:
-        voices_conf = self.config.get("signature_voices") or []
+    @staticmethod
+    def _resolve_voices_conf(voices_conf: list) -> list[dict]:
+        import random
+        import re
+
+        resolved_voices = []
+        for item in voices_conf:
+            audio_path = ""
+            matched_texts = []
+            if isinstance(item, str):
+                item_str = item.strip()
+                if not item_str:
+                    continue
+                if ":" in item_str or "：" in item_str:
+                    delim = ":" if ":" in item_str else "："
+                    parts = item_str.split(delim, 1)
+                    raw_audios = parts[0].strip()
+                    raw_texts = parts[1].strip()
+
+                    audio_list = [a.strip() for a in re.split(r'[,，|;]', raw_audios) if a.strip()]
+                    audio_path = random.choice(audio_list) if audio_list else ""
+
+                    text_list = [t.strip() for t in re.split(r'[,，|;]', raw_texts) if t.strip()]
+                    matched_texts = text_list
+                else:
+                    audio_list = [a.strip() for a in re.split(r'[,，|;]', item_str) if a.strip()]
+                    audio_path = random.choice(audio_list) if audio_list else ""
+                    matched_texts = []
+            elif isinstance(item, dict):
+                audio_val = item.get("audio")
+                if isinstance(audio_val, list):
+                    valid_audios = [str(a).strip() for a in audio_val if a]
+                    audio_path = random.choice(valid_audios) if valid_audios else ""
+                elif isinstance(audio_val, str):
+                    audio_list = [a.strip() for a in re.split(r'[,，|;]', audio_val) if a.strip()]
+                    audio_path = random.choice(audio_list) if audio_list else ""
+                else:
+                    audio_path = ""
+
+                matched_val = item.get("matched_texts") or []
+                if isinstance(matched_val, list):
+                    matched_texts = [str(t).strip() for t in matched_val if t]
+                elif isinstance(matched_val, str):
+                    matched_texts = [t.strip() for t in re.split(r'[,，|;]', matched_val) if t.strip()]
+            else:
+                continue
+
+            if audio_path:
+                resolved_voices.append({
+                    "audio": audio_path,
+                    "matched_texts": matched_texts
+                })
+        return resolved_voices
+
+    def split_text_by_signatures(self, text: str, resolved_voices: list[dict] = None, bot_conf: dict | str = None) -> list[dict]:
+        voices_conf = self.get_config(bot_conf).get("signature_voices") or []
         if not voices_conf:
             return [{"type": "tts", "text": text}]
             
@@ -310,23 +398,7 @@ class TTSManager:
             return []
 
         if resolved_voices is None:
-            # Resolve and cache the selected audio path for each voice item during this split
-            # This handles list of files (picking one randomly) and safeguards against list type stripping errors
-            import random
-            resolved_voices = []
-            for item in voices_conf:
-                audio_val = item.get("audio")
-                if isinstance(audio_val, list):
-                    valid_audios = [str(a).strip() for a in audio_val if a]
-                    audio_path = random.choice(valid_audios) if valid_audios else ""
-                else:
-                    audio_path = str(audio_val or "").strip()
-                
-                if audio_path:
-                    resolved_voices.append({
-                        "audio": audio_path,
-                        "matched_texts": item.get("matched_texts") or []
-                    })
+            resolved_voices = self._resolve_voices_conf(voices_conf)
 
         # Regex for leading emotion tags like [元気に] or (laughs)
         LEADING_TAGS_RE = re.compile(r'^(\s*(?:\[[^\]]+\]|\([^)]+\))\s*)+')
@@ -421,47 +493,31 @@ class TTSManager:
 
         return segments
 
-    def preprocess_signatures(self, llm_result: XmlLlmResult) -> None:
-        if not self.enabled():
+    def preprocess_signatures(self, llm_result: XmlLlmResult, bot_conf: dict | str = None) -> None:
+        if not self.enabled(bot_conf):
             return
             
-        voices_conf = self.config.get("signature_voices") or []
+        voices_conf = self.get_config(bot_conf).get("signature_voices") or []
         if not voices_conf:
             return
 
-        # Resolve once for this entire response turn to ensure random consistency across all segments
-        import random
-        resolved_voices = []
-        for item in voices_conf:
-            audio_val = item.get("audio")
-            if isinstance(audio_val, list):
-                valid_audios = [str(a).strip() for a in audio_val if a]
-                audio_path = random.choice(valid_audios) if valid_audios else ""
-            else:
-                audio_path = str(audio_val or "").strip()
-            
-            if audio_path:
-                resolved_voices.append({
-                    "audio": audio_path,
-                    "matched_texts": item.get("matched_texts") or []
-                })
-
+        resolved_voices = self._resolve_voices_conf(voices_conf)
         if not resolved_voices:
             return
 
         # 1. Process TTS segments
-        self._preprocess_tts_segments(llm_result, resolved_voices)
+        self._preprocess_tts_segments(llm_result, resolved_voices, bot_conf)
         
         # 2. Process message chains (if enabled)
-        if self.config.get("replace_in_message", False):
-            self._preprocess_msg_chains(llm_result, resolved_voices)
+        if self.get_config(bot_conf).get("replace_in_message", False):
+            self._preprocess_msg_chains(llm_result, resolved_voices, bot_conf)
 
-    def _preprocess_tts_segments(self, llm_result: XmlLlmResult, resolved_voices: list[dict]) -> None:
+    def _preprocess_tts_segments(self, llm_result: XmlLlmResult, resolved_voices: list[dict], bot_conf: dict | str = None) -> None:
         new_tts_segments: list[TTSRequest] = []
         index_mapping: dict[int, list[int]] = {}
         
         for i, segment in enumerate(llm_result.tts_segments):
-            split_parts = self.split_text_by_signatures(segment.text, resolved_voices)
+            split_parts = self.split_text_by_signatures(segment.text, resolved_voices, bot_conf)
             new_indices = []
             for part in split_parts:
                 if part["type"] == "signature":
@@ -498,7 +554,7 @@ class TTSManager:
         llm_result.tts_segments = new_tts_segments
         llm_result.output_order = new_output_order
 
-    def _preprocess_msg_chains(self, llm_result: XmlLlmResult, resolved_voices: list[dict]) -> None:
+    def _preprocess_msg_chains(self, llm_result: XmlLlmResult, resolved_voices: list[dict], bot_conf: dict | str = None) -> None:
         new_msg_chains = []
         new_tts_segments = list(llm_result.tts_segments)
         msg_index_mapping: dict[int, list[tuple[str, int]]] = {}
@@ -509,7 +565,7 @@ class TTSManager:
             
             for component in chain:
                 if isinstance(component, Plain):
-                    split_parts = self.split_text_by_signatures(component.text, resolved_voices)
+                    split_parts = self.split_text_by_signatures(component.text, resolved_voices, bot_conf)
                     for part in split_parts:
                         if part["type"] == "signature":
                             new_seg = TTSRequest(
@@ -572,3 +628,4 @@ class TTSManager:
         llm_result.msg_logs = new_msg_logs
         llm_result.tts_segments = new_tts_segments
         llm_result.output_order = new_output_order
+

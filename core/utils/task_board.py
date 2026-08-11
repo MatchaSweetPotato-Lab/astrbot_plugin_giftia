@@ -12,8 +12,9 @@ class TaskBoardManager:
     def __init__(self, plugin):
         self.plugin = plugin
 
-    def is_enabled(self) -> bool:
-        enabled_features = self.plugin.tools_config.get("enabled_interactive_features")
+    def is_enabled(self, bot_conf: dict | str = None) -> bool:
+        bot_dict = self.plugin.get_bot_config(bot_conf) if hasattr(self.plugin, "get_bot_config") else {}
+        enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
         return any(str(item).startswith("task_board") for item in enabled_features)
