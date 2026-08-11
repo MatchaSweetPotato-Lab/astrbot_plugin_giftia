@@ -96,7 +96,7 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
         "   能量: 0-100 之间的数值（回复后会扣减或恢复）",
         "   </status>",
         "2. **`<message>`**: 所有的文本回复、说话台词必须写入 `<message>` 标签内。单条回复若句子较长，可以使用多个并列的 `<message>` 标签分段输出（通常不超过 3 段）。",
-        '   - **引用回复**: 如果你想回复/引用某条特定消息，可以加上 `quote` 属性，形如：`<message quote="消息ID">回复内容平台</message>`。',
+        '   - **引用回复**: 如果你想回复/引用某条特定消息，可以加上 `quote` 属性，形如：`<message quote="消息ID">回复内容</message>`。',
         '3. **`<at>`**: 如果需要 @ 提及某个群友，在 `<message>` 标签内部或外部输出 `<at user_id="用户ID"/>`。请勿高频或无意义地频繁使用。',
     ]
 
