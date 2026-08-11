@@ -123,22 +123,60 @@ class BotApi:
                         if not any(x["id"] == p_id for x in llm_providers):
                             llm_providers.append(info)
 
+    @staticmethod
+    def _get_meta_attr(obj, attr: str, default=None):
+        """兼容对象属性与类字典 (dict-like) 结构的辅助方法。"""
+        if isinstance(obj, dict):
+            return obj.get(attr, default)
+        return getattr(obj, attr, default)
+
     def _extract_platform_adapters(self, context) -> list[dict]:
-        """从 PlatformManager 提取活跃的消息平台适配器 ID 列表。"""
+        """从 PlatformManager 提取活跃及配置的消息平台适配器 ID 列表。"""
         adapters = []
         try:
             pm_plat = getattr(context, "platform_manager", None)
             if pm_plat:
+                # 1. 从运行中的适配器实例提取 (支持 inst.meta() 与 inst.metadata)
                 insts = getattr(pm_plat, "get_insts", lambda: [])() or getattr(pm_plat, "platform_insts", []) or []
                 for inst in insts:
-                    meta = getattr(inst, "metadata", None)
+                    meta_raw = getattr(inst, "meta", None) or getattr(inst, "metadata", None)
+                    if callable(meta_raw):
+                        try:
+                            meta = meta_raw()
+                        except Exception as exc:
+                            logger.warning(
+                                "[Giftia BotApi] Failed to retrieve metadata from adapter %r (%s): %s",
+                                inst,
+                                type(inst).__name__,
+                                exc,
+                            )
+                            meta = None
+                    else:
+                        meta = meta_raw
+
                     if meta:
-                        a_id = str(getattr(meta, "id", "") or "").strip()
+                        a_id = str(self._get_meta_attr(meta, "id") or "").strip()
                         if a_id and not any(x["id"] == a_id for x in adapters):
+                            name_val = str(self._get_meta_attr(meta, "name") or a_id)
+                            plat_name = str(self._get_meta_attr(meta, "platform_name") or self._get_meta_attr(meta, "type") or "")
                             adapters.append({
                                 "id": a_id,
-                                "name": str(getattr(meta, "name", a_id) or a_id),
-                                "platform_name": str(getattr(meta, "platform_name", "")),
+                                "name": name_val,
+                                "platform_name": plat_name,
+                            })
+
+                # 2. 回退检查：从 platforms_config 中补充提取在配置中启用或存在的平台
+                platforms_config = getattr(pm_plat, "platforms_config", None) or []
+                for p_cfg in platforms_config:
+                    if isinstance(p_cfg, dict):
+                        a_id = str(p_cfg.get("id", "") or "").strip()
+                        if a_id and not any(x["id"] == a_id for x in adapters):
+                            name_val = str(p_cfg.get("name") or a_id)
+                            plat_name = str(p_cfg.get("platform_name") or p_cfg.get("type", ""))
+                            adapters.append({
+                                "id": a_id,
+                                "name": name_val,
+                                "platform_name": plat_name,
                             })
         except Exception as e:
             logger.warning(f"[Giftia BotApi] Fetching adapters failed: {e}")
