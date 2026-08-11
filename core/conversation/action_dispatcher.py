@@ -7,7 +7,6 @@ from xml.sax.saxutils import quoteattr
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Plain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -19,8 +18,9 @@ class ActionDispatcher:
     def __init__(self, plugin):
         self.plugin = plugin
 
-    def _interactive_feature_enabled(self, feature_name: str) -> bool:
-        enabled_features = self.plugin.tools_config.get("enabled_interactive_features")
+    def _interactive_feature_enabled(self, feature_name: str, bot_conf: dict | str = None) -> bool:
+        bot_dict = self.plugin.get_bot_config(bot_conf) if hasattr(self.plugin, "get_bot_config") else {}
+        enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
         return any(str(item).startswith(feature_name) for item in enabled_features)
@@ -176,6 +176,7 @@ class ActionDispatcher:
         event: AstrMessageEvent,
         llm_result: XmlLlmResult,
         index: int,
+        bot_conf: dict | str = None,
     ):
         """
         [Internal Helper] 构建指定的 TTS 消息链。
@@ -184,13 +185,14 @@ class ActionDispatcher:
         """
         if not hasattr(self.plugin, "tts_manager"):
             return None, ""
-        if not self.plugin.tts_manager.enabled():
+        bot_dict = self.plugin.get_bot_config(bot_conf or (event.platform_meta.id if hasattr(event, "platform_meta") else None))
+        if not self.plugin.tts_manager.enabled(bot_dict):
             return None, ""
         if index < 0 or index >= len(llm_result.tts_segments):
             return None, ""
 
         segment = llm_result.tts_segments[index]
-        record = await self.plugin.tts_manager.build_record(event, segment)
+        record = await self.plugin.tts_manager.build_record(event, segment, bot_dict)
         if record:
             return [record], segment.text
 
@@ -205,6 +207,7 @@ class ActionDispatcher:
         group_or_user_id: str,
         llm_result: XmlLlmResult,
     ) -> None:
+        bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
         for item_type, item_index in self.get_output_order(llm_result):
             if item_type == "message":
@@ -220,7 +223,7 @@ class ActionDispatcher:
                 )
             elif item_type == "tts":
                 msg_chain, msg_str = await self.build_tts_message_chain(
-                    event, llm_result, item_index
+                    event, llm_result, item_index, bot_conf
                 )
                 if not msg_chain:
                     continue
@@ -274,6 +277,7 @@ class ActionDispatcher:
         group_or_user_id: str,
         llm_result: XmlLlmResult,
     ) -> None:
+        bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
         for item_type, item_index in self.get_output_order(llm_result):
             is_tts = item_type == "tts"
@@ -285,7 +289,7 @@ class ActionDispatcher:
                     continue
             elif is_tts:
                 msg_chain, tts_text = await self.build_tts_message_chain(
-                    event, llm_result, item_index
+                    event, llm_result, item_index, bot_conf
                 )
                 if not msg_chain:
                     continue
@@ -319,7 +323,7 @@ class ActionDispatcher:
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
-                        message_id="",
+                        message_id=str(uuid.uuid4()),
                         content=db_content,
                         is_recalled=False,
                         media_id_list=[],
@@ -333,7 +337,7 @@ class ActionDispatcher:
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
-                        message_id="",
+                        message_id=str(uuid.uuid4()),
                         content=parsed_msg.content,
                         is_recalled=False,
                         media_id_list=parsed_msg.media_id_list,
@@ -363,8 +367,9 @@ class ActionDispatcher:
             )
             return
 
-        if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
-            self.plugin.tts_manager.preprocess_signatures(llm_result)
+        bot_conf = self.plugin.get_bot_config(bot_name)
+        if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
+            self.plugin.tts_manager.preprocess_signatures(llm_result, bot_conf)
 
         task_board_logs = await self._dispatch_task_board_actions(
             event=event,
@@ -443,7 +448,7 @@ class ActionDispatcher:
 
             # 4. 消息复读
             if llm_result.repeat_message_ids:
-                repeat_enabled = self._interactive_feature_enabled("repeat")
+                repeat_enabled = self._interactive_feature_enabled("repeat", bot_conf)
                 self_id = str(event.get_self_id() or "")
                 for message_id in llm_result.repeat_message_ids:
                     message_id = str(message_id or "").strip()

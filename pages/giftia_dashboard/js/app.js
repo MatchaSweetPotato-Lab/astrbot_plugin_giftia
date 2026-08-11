@@ -9,9 +9,11 @@ import * as media from './modules/render/media.js';
 import * as forwards from './modules/render/forwards.js';
 import * as profiles from './modules/render/profiles.js';
 import * as token from './modules/render/token.js';
+import * as bots from './modules/bots.js';
 
 // Assemble window.GiftiaApp keeping identical structure for backward compatibility
 window.GiftiaApp = {
+    loadBotsData: bots.loadBotsData,
     // Current state variables (mapped to modules/state)
     get activeTab() { return state.activeTab; },
     set activeTab(val) { state.activeTab = val; },

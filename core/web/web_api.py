@@ -1,3 +1,4 @@
+from .bot_api import BotApi
 from .bot_status_api import BotStatusApi
 from .chat_history_api import ChatHistoryApi
 from .forward_api import ForwardApi
@@ -9,6 +10,7 @@ from .token_api import TokenApi
 
 
 class GiftiaWebApi(
+    BotApi,
     MediaApi,
     ForwardApi,
     TokenApi,

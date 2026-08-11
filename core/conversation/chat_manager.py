@@ -266,7 +266,7 @@ class ChatManager:
                             has_tts_reply = (
                                 bool(chunk.tts_segments)
                                 and hasattr(self.plugin, "tts_manager")
-                                and self.plugin.tts_manager.enabled()
+                                and self.plugin.tts_manager.enabled(bot_conf)
                             )
                             if chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids:
                                 has_sent_reply = True
@@ -332,6 +332,7 @@ class ChatManager:
     ):
         """处理定时任务调度提醒"""
         reply_key = f"{bot_name}:{group_or_user_id}"
+        bot_conf = self.plugin.get_bot_config(bot_name)
         async with session_lock_manager.acquire_lock(unified_msg_origin):
             self.plugin.replying_status[reply_key] = (
                 self.plugin.replying_status.get(reply_key, 0) + 1
@@ -357,8 +358,8 @@ class ChatManager:
                 ):
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):
-                            if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
-                                self.plugin.tts_manager.preprocess_signatures(chunk)
+                            if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
+                                self.plugin.tts_manager.preprocess_signatures(chunk, bot_conf)
                             if platform_name == "aiocqhttp":
                                 if mock_event:
                                     await self.action_dispatcher.dispatch_actions(
@@ -371,7 +372,7 @@ class ChatManager:
                                     has_tts_reply = (
                                         bool(chunk.tts_segments)
                                         and hasattr(self.plugin, "tts_manager")
-                                        and self.plugin.tts_manager.enabled()
+                                        and self.plugin.tts_manager.enabled(bot_conf)
                                     )
                                     if (
                                         chunk.msg_chains
@@ -393,7 +394,7 @@ class ChatManager:
                                 elif item_type == "tts":
                                     msg_chain, _ = (
                                         await self.action_dispatcher.build_tts_message_chain(
-                                            mock_event, chunk, item_index
+                                            mock_event, chunk, item_index, bot_conf
                                         )
                                     )
                                 else:

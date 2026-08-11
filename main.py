@@ -9,6 +9,7 @@ from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
 from astrbot.core.utils.session_lock import session_lock_manager
 
+from .core.bot.bot_config_manager import BotConfigManager
 from .core.conversation.chat_manager import ChatManager
 from .core.database.data_cache import DataCache
 from .core.database.database import Database
@@ -42,17 +43,11 @@ class Giftia(Star):
         super().__init__(context)
         self.context: Context = context  # type: ignore
         self.conf = config
-        bot_list = self.conf.get("bot_template", [])
-        # 机器人名称，映射机器人配置
+        # 机器人配置管理器与实例映射
+        self.bot_config_manager = BotConfigManager(self)
         self.bot_map: dict[str, dict] = {}
-        # 机器人可以有多个适配器，多个适配器映射同一个机器人名称
         self.adapter_id_map: dict[str, str] = {}
-        for bot_conf in bot_list:
-            if not bot_conf.get("enabled", False):
-                continue
-            self.bot_map[bot_conf["name"]] = bot_conf
-            for adapter_id in bot_conf.get("adapter_ids", []):
-                self.adapter_id_map[adapter_id] = bot_conf["name"]
+        self.sync_bot_maps()
 
         # 图片转述提供商
         self.caption_config = self.conf.get("caption_config", {})
@@ -133,8 +128,6 @@ class Giftia(Star):
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
-        # TTS XML 配置
-        self.tts_config = self.conf.get("tts_config", {})
         # 并发锁
         self.group_locks = defaultdict(lambda: asyncio.Semaphore(self.concurrent_limit))
         # 用户并发锁
@@ -168,6 +161,35 @@ class Giftia(Star):
         if bot_conf:
             caption_config.update(bot_conf.get("caption_config") or {})
         return caption_config
+
+    def get_bot_config(self, identifier: str | dict | None = None) -> dict:
+        if isinstance(identifier, dict):
+            return identifier
+        if isinstance(identifier, str) and identifier:
+            if identifier in self.bot_map:
+                return self.bot_map[identifier]
+            if identifier in self.adapter_id_map:
+                bot_name = self.adapter_id_map[identifier]
+                return self.bot_map.get(bot_name, {})
+            logger.warning(
+                f"[Giftia] 未匹配到标识为 '{identifier}' 的机器人配置，降级使用首个可用机器人配置。"
+            )
+        if self.bot_map:
+            return next(iter(self.bot_map.values()))
+        return {}
+
+
+    def sync_bot_maps(self):
+        """同步重新加载机器人配置及适配器映射字典。"""
+        bot_list = self.bot_config_manager.load_bots()
+        self.bot_map.clear()
+        self.adapter_id_map.clear()
+        for bot_conf in bot_list:
+            if not bot_conf.get("enabled", False):
+                continue
+            self.bot_map[bot_conf["name"]] = bot_conf
+            for adapter_id in bot_conf.get("adapter_ids", []):
+                self.adapter_id_map[adapter_id] = bot_conf["name"]
 
     async def initialize(self):
         """插件初始化方法"""

@@ -349,16 +349,14 @@ class ReplyPipeline:
             user_prompt=user_prompt,
             use_source_tools=self.plugin.tools_config.get("use_source_tools", False),
             force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
-            enabled_features=self.plugin.tools_config.get(
-                "enabled_interactive_features"
-            ),
+            enabled_features=bot_conf.get("enabled_interactive_features"),
             tts_instruction=(
                 build_tts_xml_instructions(
-                    self.plugin.tts_manager.provider_type(),
-                    self.plugin.tts_manager.language_options(),
+                    self.plugin.tts_manager.provider_type(bot_conf),
+                    self.plugin.tts_manager.language_options(bot_conf),
                 )
                 if hasattr(self.plugin, "tts_manager")
-                and self.plugin.tts_manager.enabled()
+                and self.plugin.tts_manager.enabled(bot_conf)
                 else ""
             ),
             image_urls=image_urls,
