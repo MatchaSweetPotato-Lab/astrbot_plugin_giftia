@@ -1,5 +1,8 @@
+import asyncio
 import copy
+import inspect
 import random
+import re
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -358,6 +361,76 @@ class AIoCQHTTPAction:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
             return "当前仅支持aiocqhttp平台"
 
+    @staticmethod
+    async def _make_text_segment(component: Plain, text: str) -> dict:
+        try:
+            res = component.to_dict()
+            d = await res if (asyncio.iscoroutine(res) or inspect.isawaitable(res)) else res
+            if isinstance(d, dict):
+                d = copy.deepcopy(d)
+                if "data" in d and isinstance(d["data"], dict):
+                    d["data"]["text"] = text
+                else:
+                    d["data"] = {"text": text}
+                return d
+        except Exception:
+            pass
+        return {"type": "text", "data": {"text": text}}
+
+    async def _parse_plain_inline_ats(
+        self,
+        component: Plain,
+        last_was_at: bool,
+    ) -> tuple[list[dict], bool]:
+        """
+        解析 Plain 文本中内嵌的 `<at id/user_id/qq="..." />` 语法。
+
+        支持的语法结构:
+        - `<at user_id="12345" />` / `<at qq="12345" />` / `<at id="12345" />`
+
+        处理规则:
+        1. 当紧邻前一个组件为 at 时，自动在文本前缝合 '\u200b ' 零宽空格，防止客户端合并 @。
+        2. 返回解析后的字典片段列表，以及更新后的 last_was_at 标记（末尾是否为 at）。
+        """
+        segments: list[dict] = []
+        text = component.text
+        if not text:
+            return segments, last_was_at
+
+        at_pattern = r'<at\s+(?:id|user_id|qq)=["\']?([^"\'\s/>]+)["\']?\s*/?>'
+        matches = list(re.finditer(at_pattern, text))
+        if matches:
+            last_end = 0
+            for match in matches:
+                start, end = match.span()
+                plain_part = text[last_end:start]
+                if plain_part:
+                    if last_was_at:
+                        plain_part = "\u200b " + plain_part
+                    segments.append(await self._make_text_segment(component, plain_part))
+                    last_was_at = False
+
+                target_qq = match.group(1)
+                if last_was_at:
+                    segments.append(await self._make_text_segment(Plain("\u200b \u200b"), "\u200b \u200b"))
+                segments.append({"type": "at", "data": {"qq": str(target_qq)}})
+                last_was_at = True
+                last_end = end
+
+            remaining = text[last_end:]
+            if remaining:
+                if last_was_at:
+                    remaining = "\u200b " + remaining
+                segments.append(await self._make_text_segment(component, remaining))
+                last_was_at = False
+        else:
+            if last_was_at:
+                text = "\u200b " + text
+            segments.append(await self._make_text_segment(component, text))
+            last_was_at = False
+
+        return segments, last_was_at
+
     async def _msg_chain_to_data(
         self,
         message_chain: list[BaseMessageComponent],
@@ -366,17 +439,14 @@ class AIoCQHTTPAction:
         将消息链转换为aiocqhttp的数据结构
         """
         message_data: list = []
+        last_was_at = False
         for component in message_chain:
             if isinstance(component, Plain):
-                if not component.text.strip():
-                    continue
-                # 检查前面是不是@，如果是@，添加\u200b字符
-                if message_data and message_data[-1].get("type") == "at":
-                    component.text = "\u200b " + component.text
-                message_data.append(await component.to_dict())
+                parsed_segs, last_was_at = await self._parse_plain_inline_ats(component, last_was_at)
+                message_data.extend(parsed_segs)
             # 如果是@，也需要检查前面是不是@
             elif isinstance(component, At):
-                if message_data and message_data[-1].get("type") == "at":
+                if last_was_at:
                     message_data.append(
                         {
                             "type": "text",
@@ -384,7 +454,9 @@ class AIoCQHTTPAction:
                         }
                     )
                 message_data.append(await component.to_dict())
+                last_was_at = True
             elif isinstance(component, Image | Record):
+                last_was_at = False
                 # For Image and Record segments, we convert them to base64
                 bs64 = await component.convert_to_base64()
                 data_dict: dict = {

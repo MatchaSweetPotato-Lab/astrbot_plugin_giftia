@@ -131,12 +131,17 @@ class XmlParse:
                         # 如果是子标签 (<at>, <sticker>等)
                         elif isinstance(content, Tag):
                             if content.name == "at":
-                                if content.get("user_id"):
-                                    sub_chain.append(At(qq=content.get("user_id")))
-                                    sub_log += f" <@{content.get('user_id')}>"
+                                user_id = (
+                                    self._attr_str(content, "user_id", "")
+                                    or self._attr_str(content, "id", "")
+                                    or self._attr_str(content, "qq", "")
+                                )
+                                if user_id:
+                                    sub_chain.append(At(qq=user_id))
+                                    sub_log += f" <@{user_id}>"
                                 else:
                                     logger.error(
-                                        f"At组件缺少user_id属性: {content.attrs}, xml_str: {xml_str[:1000]}"
+                                        f"At组件缺少user_id/id/qq属性: {content.attrs}, xml_str: {xml_str[:1000]}"
                                     )
 
                             elif content.name == "sticker":
@@ -189,13 +194,14 @@ class XmlParse:
                         )
 
                 elif tag_name == "at":
-                    if self._attr_str(child, "user_id", ""):
-                        result.msg_chains.append(
-                            [At(qq=self._attr_str(child, "user_id", ""))]
-                        )
-                        result.msg_logs.append(
-                            f"<@{self._attr_str(child, 'user_id', '')}>"
-                        )
+                    user_id = (
+                        self._attr_str(child, "user_id", "")
+                        or self._attr_str(child, "id", "")
+                        or self._attr_str(child, "qq", "")
+                    )
+                    if user_id:
+                        result.msg_chains.append([At(qq=user_id)])
+                        result.msg_logs.append(f"<@{user_id}>")
                         result.output_order.append(
                             ("message", len(result.msg_chains) - 1)
                         )
@@ -616,6 +622,10 @@ class XmlParse:
         #     processed_lines.append(line)
 
         # clean_str = "\n".join(processed_lines)
+
+        clean_str = clean_str.strip()
+        if clean_str.startswith("<root>") and clean_str.endswith("</root>"):
+            clean_str = clean_str[6:-7].strip()
 
         # 包裹根节点
         return f"<root>{clean_str}</root>"

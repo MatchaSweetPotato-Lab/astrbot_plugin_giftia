@@ -28,6 +28,7 @@ from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
 from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
+from .core.utils.qq_official_action import QQOfficialAction
 from .core.utils.emoji_manager import EmojiManager
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
@@ -143,6 +144,7 @@ class Giftia(Star):
             "sticker_summaries", ["这是一张表情包"]
         )
         self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
+        self.qq_official = QQOfficialAction(sticker_summaries=sticker_summaries)
 
         # 缓存
         self._recall_tasks = set()
@@ -503,6 +505,12 @@ class Giftia(Star):
         except Exception:
             pass
 
+        # 如果是官方 QQ 平台消息，记录引用映射
+        if hasattr(self, "qq_official") and self.qq_official.is_qq_official(event):
+            msg_id, msg_idx = self.qq_official.extract_msg_id_and_idx(event)
+            if msg_id and msg_idx:
+                self.qq_official.record_msg_mapping(msg_id, msg_idx)
+
         await self.chat_manager.handle_message(event)
 
     async def remind_task(
@@ -596,21 +604,25 @@ class Giftia(Star):
                         send_chain.append(Reply(id=str(message_id_attr)))
                     send_chain.extend(media_comps)
 
-                    sent_by_aiocqhttp = False
+                    sent_by_direct_action = False
                     success = False
                     message_id = None
 
                     if event.get_platform_name() == "aiocqhttp" and hasattr(self, "aiocqhttp"):
                         success, message_id = await self.aiocqhttp.send_message(event, send_chain)
                         if success:
-                            sent_by_aiocqhttp = True
+                            sent_by_direct_action = True
+                    elif hasattr(self, "qq_official") and self.qq_official.is_qq_official(event):
+                        success, message_id = await self.qq_official.send_message(event, send_chain)
+                        if success:
+                            sent_by_direct_action = True
 
                     if not success:
                         success = await self.context.send_message(
                             event.unified_msg_origin, MessageChain(send_chain)
                         )
 
-                    if success and sent_by_aiocqhttp:
+                    if success and sent_by_direct_action:
                         try:
                             from datetime import datetime
 

@@ -11,12 +11,33 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
 from ..utils.schemas import MessageData, XmlLlmResult
 
 
 class ActionDispatcher:
     def __init__(self, plugin):
         self.plugin = plugin
+
+    async def _invoke_platform_action(
+        self,
+        event: AstrMessageEvent,
+        action_name: str,
+        is_qq_official: bool,
+        *args,
+        **kwargs,
+    ):
+        handler = (
+            getattr(self.plugin, "qq_official", None)
+            if is_qq_official
+            else getattr(self.plugin, "aiocqhttp", None)
+        )
+        if not handler:
+            return "handler_not_found"
+        func = getattr(handler, action_name, None)
+        if callable(func):
+            return await func(event=event, *args, **kwargs)
+        return "action_not_supported"
 
     def _interactive_feature_enabled(self, feature_name: str, bot_conf: dict | str = None) -> bool:
         bot_dict = self.plugin.get_bot_config(bot_conf) if hasattr(self.plugin, "get_bot_config") else {}
@@ -236,10 +257,24 @@ class ActionDispatcher:
                 )
                 await asyncio.sleep(interval)
 
-            success, message_id = await self.plugin.aiocqhttp.send_message(
-                event,
-                msg_chain,
-            )
+            if is_qq_official_platform(event):
+                success, message_id = await self.plugin.qq_official.send_message(
+                    event,
+                    msg_chain,
+                )
+                if not success:
+                    try:
+                        event._giftia_bypass_logging = True
+                        await event.send(MessageChain(msg_chain))
+                        success = True
+                        message_id = str(uuid.uuid4())
+                    except Exception as err_fallback:
+                        logger.error(f"[Giftia] 官方 QQ 富媒体消息降级发送失败: {err_fallback}")
+            else:
+                success, message_id = await self.plugin.aiocqhttp.send_message(
+                    event,
+                    msg_chain,
+                )
             sent_index += 1
             if success and message_id:
                 iso_string = datetime.now().isoformat()
@@ -385,10 +420,13 @@ class ActionDispatcher:
         )
         common_logs = task_board_logs + set_call_name_logs
 
-        # 区分 aiocqhttp 平台与其它通用平台
-        if event.get_platform_name() == "aiocqhttp" and isinstance(
+        # 区分 aiocqhttp / qq_official 平台与其它通用平台
+        is_aiocqhttp = event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
-        ):
+        )
+        is_qq_official = is_qq_official_platform(event)
+
+        if is_aiocqhttp or is_qq_official:
             success_logs = list(common_logs)
             iso_string = datetime.now().isoformat()
 
@@ -411,40 +449,53 @@ class ActionDispatcher:
 
             # 2. 撤回消息
             if llm_result.delete_message_ids:
-                try:
-                    ids = [int(msg_id) for msg_id in llm_result.delete_message_ids]
-                    err_msg = await self.plugin.aiocqhttp.delete_messages(
-                        event=event, message_ids=ids
+                if is_qq_official:
+                    target_ids = llm_result.delete_message_ids
+                else:
+                    try:
+                        target_ids = [int(msg_id) for msg_id in llm_result.delete_message_ids]
+                    except ValueError:
+                        target_ids = None
+                        logger.error(
+                            f"{bot_name} 撤回消息数据格式错误: {llm_result.delete_message_ids}"
+                        )
+                if target_ids is not None:
+                    err_msg = await self._invoke_platform_action(
+                        event, "delete_messages", is_qq_official, message_ids=target_ids
                     )
-                    await self.plugin.data_cache.set_message_recalled(
-                        bot_name, group_or_user_id, llm_result.delete_message_ids
-                    )
-                    success_logs.append(
-                        f"<recall message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
-                    )
-                except ValueError:
-                    logger.error(
-                        f"{bot_name} 撤回消息数据格式错误: {llm_result.delete_message_ids}"
-                    )
+                    if err_msg not in ("handler_not_found", "action_not_supported"):
+                        await self.plugin.data_cache.set_message_recalled(
+                            bot_name, group_or_user_id, llm_result.delete_message_ids
+                        )
+                        success_logs.append(
+                            f"<recall message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
+                        )
+                    else:
+                        logger.debug(f"[Giftia] delete_messages 动作暂不支持 [{err_msg}]")
 
             # 3. 消息贴表情点赞
             if llm_result.emoji_ids:
                 for message_id, emoji_id in llm_result.emoji_ids:
-                    try:
-                        message_id_int = int(message_id)
-                        emoji_id_int = int(emoji_id)
-                        err_msg = await self.plugin.aiocqhttp.msg_emoji_like(
-                            event=event,
-                            message_id=message_id_int,
-                            emoji_id=emoji_id_int,
+                    if is_qq_official:
+                        m_id, e_id = message_id, int(emoji_id or 0)
+                    else:
+                        try:
+                            m_id, e_id = int(message_id), int(emoji_id)
+                        except ValueError:
+                            m_id = None
+                            logger.error(
+                                f"{bot_name} 贴表情数据格式错误: {message_id}, {emoji_id}"
+                            )
+                    if m_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "msg_emoji_like", is_qq_official, message_id=m_id, emoji_id=e_id
                         )
-                        success_logs.append(
-                            f"<emoji_like message_id={message_id} emoji_id={emoji_id} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(
-                            f"{bot_name} 贴表情数据格式错误: {message_id}, {emoji_id}"
-                        )
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<emoji_like message_id={message_id} emoji_id={emoji_id} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] msg_emoji_like 动作暂不支持 [{err_msg}]")
 
             # 4. 消息复读
             if llm_result.repeat_message_ids:
@@ -484,21 +535,30 @@ class ActionDispatcher:
                         )
                         continue
 
-                    try:
-                        message_id_int = int(message_id)
-                    except ValueError:
-                        logger.error(f"{bot_name} 复读消息ID格式错误: {message_id}")
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='invalid_message_id'/>"
-                        )
+                    if is_qq_official:
+                        m_id = message_id
+                    else:
+                        try:
+                            m_id = int(message_id)
+                        except ValueError:
+                            logger.error(f"{bot_name} 复读消息ID格式错误: {message_id}")
+                            success_logs.append(
+                                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='invalid_message_id'/>"
+                            )
+                            continue
+
+                    res = await self._invoke_platform_action(
+                        event, "repeat_message", is_qq_official, message_id=m_id
+                    )
+                    if res in ("handler_not_found", "action_not_supported"):
+                        logger.debug(f"[Giftia] repeat_message 动作暂不支持 [{res}]")
                         continue
 
-                    success, new_message_id, err_msg = (
-                        await self.plugin.aiocqhttp.repeat_message(
-                            event=event,
-                            message_id=message_id_int,
-                        )
-                    )
+                    if isinstance(res, tuple) and len(res) == 3:
+                        success, new_message_id, err_msg = res
+                    else:
+                        success, new_message_id, err_msg = False, None, str(res)
+
                     if success:
                         if new_message_id:
                             success_logs.append(
@@ -530,59 +590,72 @@ class ActionDispatcher:
             # 5. 点赞
             if llm_result.likes:
                 for user_id, count in llm_result.likes:
-                    try:
-                        user_id_int = int(user_id)
-                        count_int = int(count)
-                        err_msg = await self.plugin.aiocqhttp.like(
-                            event=event,
-                            user_id=user_id_int,
-                            count=count_int,
+                    if is_qq_official:
+                        u_id, c_count = user_id, int(count or 1)
+                    else:
+                        try:
+                            u_id, c_count = int(user_id), int(count)
+                        except ValueError:
+                            u_id = None
+                            logger.error(f"{bot_name} 点赞数据格式错误: {user_id}, {count}")
+                    if u_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "like", is_qq_official, user_id=u_id, count=c_count
                         )
-                        success_logs.append(
-                            f"<like user_id={user_id} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(f"{bot_name} 点赞数据格式错误: {user_id}, {count}")
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<like user_id={user_id} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] like 动作暂不支持 [{err_msg}]")
 
             # 6. 戳一戳
             if llm_result.poke:
                 for group_id, user_id in llm_result.poke:
-                    try:
-                        group_id_int = int(group_id)
-                        user_id_int = int(user_id)
-                        err_msg = await self.plugin.aiocqhttp.group_poke(
-                            event=event,
-                            group_id=group_id_int,
-                            user_id=user_id_int,
+                    if is_qq_official:
+                        g_id, u_id = group_id, user_id
+                    else:
+                        try:
+                            g_id, u_id = int(group_id), int(user_id)
+                        except ValueError:
+                            g_id = None
+                            logger.error(
+                                f"{bot_name} 戳一戳数据格式错误: {group_id}, {user_id}"
+                            )
+                    if g_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "group_poke", is_qq_official, group_id=g_id, user_id=u_id
                         )
-                        success_logs.append(
-                            f"<poke user_id={user_id} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(
-                            f"{bot_name} 戳一戳数据格式错误: {group_id}, {user_id}"
-                        )
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<poke user_id={user_id} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] group_poke 动作暂不支持 [{err_msg}]")
 
             # 7. 禁言
             if llm_result.ban:
                 for group_id, user_id, duration in llm_result.ban:
-                    try:
-                        group_id_int = int(group_id)
-                        user_id_int = int(user_id)
-                        duration_int = int(duration)
-                        err_msg = await self.plugin.aiocqhttp.group_ban(
-                            event=event,
-                            group_id=group_id_int,
-                            user_id=user_id_int,
-                            duration=duration_int,
+                    if is_qq_official:
+                        g_id, u_id, dur = group_id, user_id, int(duration or 1800)
+                    else:
+                        try:
+                            g_id, u_id, dur = int(group_id), int(user_id), int(duration)
+                        except ValueError:
+                            g_id = None
+                            logger.error(
+                                f"{bot_name} 禁言数据格式错误: {group_id}, {user_id}, {duration}"
+                            )
+                    if g_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "group_ban", is_qq_official, group_id=g_id, user_id=u_id, duration=dur
                         )
-                        success_logs.append(
-                            f"<ban user_id={user_id} duration={duration} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(
-                            f"{bot_name} 禁言数据格式错误: {group_id}, {user_id}, {duration}"
-                        )
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<ban user_id={user_id} duration={duration} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] group_ban 动作暂不支持 [{err_msg}]")
 
             # 8. 添加定时任务
             if llm_result.schedule_tasks:
@@ -638,36 +711,48 @@ class ActionDispatcher:
             # 12. 踢人
             if llm_result.kick:
                 for group_id, user_id in llm_result.kick:
-                    try:
-                        group_id_int = int(group_id)
-                        user_id_int = int(user_id)
-                        err_msg = await self.plugin.aiocqhttp.group_kick(
-                            event=event,
-                            group_id=group_id_int,
-                            user_id=user_id_int,
+                    if is_qq_official:
+                        g_id, u_id = group_id, user_id
+                    else:
+                        try:
+                            g_id, u_id = int(group_id), int(user_id)
+                        except ValueError:
+                            g_id = None
+                            logger.error(
+                                f"{bot_name} 踢人数据格式错误: {group_id}, {user_id}"
+                            )
+                    if g_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "group_kick", is_qq_official, group_id=g_id, user_id=u_id
                         )
-                        success_logs.append(
-                            f"<kick user_id={user_id} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(
-                            f"{bot_name} 踢人数据格式错误: {group_id}, {user_id}"
-                        )
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<kick user_id={user_id} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] group_kick 动作暂不支持 [{err_msg}]")
 
             # 13. 退群
             if llm_result.leave:
                 for group_id in llm_result.leave:
-                    try:
-                        group_id_int = int(group_id)
-                        err_msg = await self.plugin.aiocqhttp.group_leave(
-                            event=event,
-                            group_id=group_id_int,
+                    if is_qq_official:
+                        g_id = group_id
+                    else:
+                        try:
+                            g_id = int(group_id)
+                        except ValueError:
+                            g_id = None
+                            logger.error(f"{bot_name} 退群数据格式错误: {group_id}")
+                    if g_id is not None:
+                        err_msg = await self._invoke_platform_action(
+                            event, "group_leave", is_qq_official, group_id=g_id
                         )
-                        success_logs.append(
-                            f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
-                        )
-                    except ValueError:
-                        logger.error(f"{bot_name} 退群数据格式错误: {group_id}")
+                        if err_msg not in ("handler_not_found", "action_not_supported"):
+                            success_logs.append(
+                                f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
+                            )
+                        else:
+                            logger.debug(f"[Giftia] group_leave 动作暂不支持 [{err_msg}]")
 
 
             # 14. 记录总体操作日志

@@ -15,6 +15,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
 
+from ..utils.qq_official_action import is_qq_official
 from ..utils.schemas import XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
@@ -360,7 +361,7 @@ class ChatManager:
                         if isinstance(chunk, XmlLlmResult):
                             if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
                                 self.plugin.tts_manager.preprocess_signatures(chunk, bot_conf)
-                            if platform_name == "aiocqhttp":
+                            if platform_name == "aiocqhttp" or is_qq_official(platform_name):
                                 if mock_event:
                                     await self.action_dispatcher.dispatch_actions(
                                         event=mock_event,

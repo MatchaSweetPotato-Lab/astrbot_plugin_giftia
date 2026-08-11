@@ -69,13 +69,28 @@ def build_tts_xml_instructions(
 
 from ..utils.schemas import FeatureKey
 
+# 官方 QQ 平台暂不支持的动作 Feature 集合
+UNSUPPORTED_QQ_OFFICIAL_FEATURES = {
+    FeatureKey.POKE,
+    FeatureKey.EMOJI_LIKE,
+    FeatureKey.REPEAT,
+    FeatureKey.LIKE,
+    FeatureKey.LEAVE,
+}
 
-def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: str = "") -> str:
+
+def build_xml_instructions(
+    enabled_features: list[str] | None,
+    tts_instruction: str = "",
+    is_qq_official: bool = False,
+) -> str:
     """
     根据配置启用的内置交互功能列表，动态生成硬编码的 XML 提示词和交互规范说明。
     """
 
     def is_enabled(feature_name: str) -> bool:
+        if is_qq_official and feature_name in UNSUPPORTED_QQ_OFFICIAL_FEATURES:
+            return False
         if enabled_features is None:
             # 默认除 leave (退群) 之外全部开启
             return feature_name != FeatureKey.LEAVE
@@ -142,11 +157,17 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
         )
 
     if is_enabled(FeatureKey.GROUP_ADMIN):
-        interactive_lines.append(
-            "- **群管指令（群管专用，请仅在必要且拥有管理员身份时合理使用）**:\n"
-            '  * **禁言**: `<ban user_id="用户ID" duration="禁言秒数"/>`。\n'
-            '  * **踢人**: `<kick user_id="用户ID"/>`。'
-        )
+        if is_qq_official:
+            interactive_lines.append(
+                "- **群管指令（群管专用，请仅在必要且拥有管理员身份时合理使用）**:\n"
+                '  * **禁言**: `<ban user_id="用户ID" duration="禁言秒数"/>`。'
+            )
+        else:
+            interactive_lines.append(
+                "- **群管指令（群管专用，请仅在必要且拥有管理员身份时合理使用）**:\n"
+                '  * **禁言**: `<ban user_id="用户ID" duration="禁言秒数"/>`。\n'
+                '  * **踢人**: `<kick user_id="用户ID"/>`。'
+            )
 
     if is_enabled(FeatureKey.SCHEDULE_TASK):
         interactive_lines.append(
@@ -194,21 +215,26 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
         prompt_lines.append(tts_instruction)
 
     # 3. 输出格式示例与提示
+    example_lines = [
+        "<status>",
+        '  心情: "开心"',
+        '  状态: "正在闲聊"',
+        '  思考: "今天天气真好！"',
+        '  动作: "微笑"',
+        "  能量: 95",
+        "</status>",
+        "<message>哼哼，今天也要元气满满哦！</message>",
+    ]
+    if not is_qq_official:
+        example_lines.append('<emoji_like message_id="msg-12345" emoji_id="424"/>')
+
     prompt_lines.extend(
         [
             "",
             "## 输出格式示例",
             "一个典型的 XML 输出结构应该如下：",
             "```xml",
-            "<status>",
-            '  心情: "开心"',
-            '  状态: "正在闲聊"',
-            '  思考: "今天天气真好！"',
-            '  动作: "微笑"',
-            "  能量: 95",
-            "</status>",
-            "<message>哼哼，今天也要元气满满哦！</message>",
-            '<emoji_like message_id="msg-12345" emoji_id="424"/>',
+            *example_lines,
             "```",
             "注意：如果不想回复或无需回复，可以仅输出 `<status>` 以及一个包含空文本或省略的结构（甚至空回复拦截会在无变动时生效）。所有 XML 格式必须严格闭合，不允许有悬空的半截标签。回复台词中不要夹杂 Markdown（如粗体、代码块等）或 LaTeX、标点双引号等规范，遵循角色特有人设提示词中的具体要求。",
         ]
