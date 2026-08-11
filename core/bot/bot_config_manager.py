@@ -4,23 +4,27 @@ import json
 import os
 
 from astrbot.api import logger
-
 from astrbot.api.star import StarTools
+from ..utils.schemas import FeatureKey
+
+INTERACTIVE_FEATURES_METADATA = [
+    {"key": FeatureKey.POKE, "label": "戳一戳", "note": "仅OneBot"},
+    {"key": FeatureKey.EMOJI_LIKE, "label": "贴表情回应", "note": "仅OneBot"},
+    {"key": FeatureKey.REPEAT, "label": "消息复读", "note": "仅OneBot"},
+    {"key": FeatureKey.LIKE, "label": "点赞名片", "note": "仅OneBot"},
+    {"key": FeatureKey.DELETE, "label": "撤回自身消息", "note": "仅OneBot"},
+    {"key": FeatureKey.GROUP_ADMIN, "label": "群管禁言/踢人", "note": "仅OneBot"},
+    {"key": FeatureKey.SCHEDULE_TASK, "label": "设置/查看/删除定时任务", "note": ""},
+    {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
+    {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
+    {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},
+    {"key": FeatureKey.RECAPTION, "label": "重新转述媒体", "note": ""},
+    {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},
+    {"key": FeatureKey.LEAVE, "label": "主动退群", "note": "仅OneBot"},
+]
 
 DEFAULT_INTERACTIVE_FEATURES = [
-    "poke(戳一戳)",
-    "emoji_like(贴表情回应)",
-    "repeat(消息复读)",
-    "like(点赞名片)",
-    "delete(撤回自身消息)",
-    "group_admin(群管禁言/踢人)",
-    "schedule_task(设置/查看/删除定时任务)",
-    "task_board(短期任务看板)",
-    "sticker(表情包发送与收集)",
-    "memory_query_delete(记忆查询与删除)",
-    "recaption(重新转述媒体)",
-    "set_call_name(设置/修改用户称呼)",
-    "leave(主动退群)",
+    item["key"] for item in INTERACTIVE_FEATURES_METADATA if item["key"] != FeatureKey.LEAVE
 ]
 
 DEFAULT_BOT_CONFIG = {
@@ -197,6 +201,14 @@ class BotConfigManager:
         if features is None or not isinstance(features, list):
             bot["enabled_interactive_features"] = list(DEFAULT_INTERACTIVE_FEATURES)
         else:
-            bot["enabled_interactive_features"] = [str(f).strip() for f in features if f]
+            normalized_features = []
+            for f in features:
+                if not f:
+                    continue
+                s = str(f).strip()
+                key = s.split("(")[0].strip() if "(" in s else s
+                if key and key not in normalized_features:
+                    normalized_features.append(key)
+            bot["enabled_interactive_features"] = normalized_features
 
         return bot

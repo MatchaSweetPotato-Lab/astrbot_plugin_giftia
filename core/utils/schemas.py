@@ -7,6 +7,22 @@ FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音|视频):([^\]\s]+)\]")
 FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
 
 
+class FeatureKey:
+    POKE = "poke"
+    EMOJI_LIKE = "emoji_like"
+    REPEAT = "repeat"
+    LIKE = "like"
+    DELETE = "delete"
+    GROUP_ADMIN = "group_admin"
+    SCHEDULE_TASK = "schedule_task"
+    TASK_BOARD = "task_board"
+    STICKER = "sticker"
+    MEMORY_QUERY_DELETE = "memory_query_delete"
+    RECAPTION = "recaption"
+    SET_CALL_NAME = "set_call_name"
+    LEAVE = "leave"
+
+
 def extract_media_ids(content: str) -> list[str]:
     if not content:
         return []

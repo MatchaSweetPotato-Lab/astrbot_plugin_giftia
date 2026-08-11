@@ -199,7 +199,7 @@ function openBotEditModal(botName = null) {
             replace_in_message: false,
             signature_voices: []
         },
-        enabled_interactive_features: stateBotMetadata.interactive_features || []
+        enabled_interactive_features: (stateBotMetadata.interactive_features || []).map(f => typeof f === 'object' && f !== null && f.key ? f.key : f)
     };
 
     title.innerText = botName ? `编辑机器人: ${botName}` : '新增机器人配置';
@@ -310,14 +310,21 @@ function renderInteractiveFeaturesCheckboxes(selectedFeatures) {
     const container = document.getElementById('bot-form-interactive-grid');
     if (!container) return;
     const allFeatures = stateBotMetadata.interactive_features || [];
+    const activeKeys = (selectedFeatures || []).map(sf => String(sf).split('(')[0].trim());
 
     container.innerHTML = allFeatures.map(feat => {
-        const isChecked = selectedFeatures.includes(feat);
-        const id = `feat-${feat.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const key = typeof feat === 'object' && feat.key ? feat.key : String(feat);
+        const label = typeof feat === 'object' && feat.label ? feat.label : feat;
+        const note = typeof feat === 'object' && feat.note ? feat.note : '';
+        const isChecked = activeKeys.includes(key);
+
+        const id = `feat-${key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const noteHtml = note ? `<span style="font-size: 0.75rem; color: var(--font-secondary); font-weight: normal;">(${escapeHtml(note)})</span>` : '';
+
         return `
             <label class="feature-checkbox-card" for="${id}" style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-tertiary, rgba(255,255,255,0.04)); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 6px; cursor: pointer;">
-                <input type="checkbox" id="${id}" value="${escapeHtml(feat)}" class="bot-feature-cb" ${isChecked ? 'checked' : ''}>
-                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(feat)}</span>
+                <input type="checkbox" id="${id}" value="${escapeHtml(key)}" class="bot-feature-cb" ${isChecked ? 'checked' : ''}>
+                <span style="font-size: 0.85rem; color: var(--font-primary);">${escapeHtml(label)} ${noteHtml}</span>
             </label>
         `;
     }).join('');

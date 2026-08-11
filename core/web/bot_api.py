@@ -6,7 +6,7 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 
-from ..bot.bot_config_manager import DEFAULT_INTERACTIVE_FEATURES
+from ..bot.bot_config_manager import DEFAULT_INTERACTIVE_FEATURES, INTERACTIVE_FEATURES_METADATA
 from .web_helpers import read_file_to_base64, safe_path_join
 
 
@@ -202,7 +202,7 @@ class BotApi:
             "llm_providers": llm_providers,
             "tts_providers": tts_providers,
             "adapters": adapters,
-            "interactive_features": DEFAULT_INTERACTIVE_FEATURES,
+            "interactive_features": INTERACTIVE_FEATURES_METADATA,
         }
 
 
