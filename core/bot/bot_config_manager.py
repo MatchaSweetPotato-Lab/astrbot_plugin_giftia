@@ -4,27 +4,27 @@ import json
 import os
 
 from astrbot.api import logger
-
 from astrbot.api.star import StarTools
+from ..utils.schemas import FeatureKey
 
 INTERACTIVE_FEATURES_METADATA = [
-    {"key": "poke", "label": "戳一戳", "note": "仅OneBot"},
-    {"key": "emoji_like", "label": "贴表情回应", "note": "仅OneBot"},
-    {"key": "repeat", "label": "消息复读", "note": "仅OneBot"},
-    {"key": "like", "label": "点赞名片", "note": "仅OneBot"},
-    {"key": "delete", "label": "撤回自身消息", "note": "仅OneBot"},
-    {"key": "group_admin", "label": "群管禁言/踢人", "note": "仅OneBot"},
-    {"key": "schedule_task", "label": "设置/查看/删除定时任务", "note": ""},
-    {"key": "task_board", "label": "短期任务看板", "note": ""},
-    {"key": "sticker", "label": "表情包发送与收集", "note": ""},
-    {"key": "memory_query_delete", "label": "记忆查询与删除", "note": ""},
-    {"key": "recaption", "label": "重新转述媒体", "note": ""},
-    {"key": "set_call_name", "label": "设置/修改用户称呼", "note": ""},
-    {"key": "leave", "label": "主动退群", "note": "仅OneBot"},
+    {"key": FeatureKey.POKE, "label": "戳一戳", "note": "仅OneBot"},
+    {"key": FeatureKey.EMOJI_LIKE, "label": "贴表情回应", "note": "仅OneBot"},
+    {"key": FeatureKey.REPEAT, "label": "消息复读", "note": "仅OneBot"},
+    {"key": FeatureKey.LIKE, "label": "点赞名片", "note": "仅OneBot"},
+    {"key": FeatureKey.DELETE, "label": "撤回自身消息", "note": "仅OneBot"},
+    {"key": FeatureKey.GROUP_ADMIN, "label": "群管禁言/踢人", "note": "仅OneBot"},
+    {"key": FeatureKey.SCHEDULE_TASK, "label": "设置/查看/删除定时任务", "note": ""},
+    {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
+    {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
+    {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},
+    {"key": FeatureKey.RECAPTION, "label": "重新转述媒体", "note": ""},
+    {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},
+    {"key": FeatureKey.LEAVE, "label": "主动退群", "note": "仅OneBot"},
 ]
 
 DEFAULT_INTERACTIVE_FEATURES = [
-    item["key"] for item in INTERACTIVE_FEATURES_METADATA if item["key"] != "leave"
+    item["key"] for item in INTERACTIVE_FEATURES_METADATA if item["key"] != FeatureKey.LEAVE
 ]
 
 DEFAULT_BOT_CONFIG = {

@@ -67,6 +67,9 @@ def build_tts_xml_instructions(
     return "\n".join(prompt_lines)
 
 
+from ..utils.schemas import FeatureKey
+
+
 def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: str = "") -> str:
     """
     根据配置启用的内置交互功能列表，动态生成硬编码的 XML 提示词和交互规范说明。
@@ -75,7 +78,7 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
     def is_enabled(feature_name: str) -> bool:
         if enabled_features is None:
             # 默认除 leave (退群) 之外全部开启
-            return feature_name != "leave"
+            return feature_name != FeatureKey.LEAVE
         return feature_name in enabled_features
 
     # 1. 基础消息格式与输出规范 (永远启用)
@@ -93,59 +96,59 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
         "   能量: 0-100 之间的数值（回复后会扣减或恢复）",
         "   </status>",
         "2. **`<message>`**: 所有的文本回复、说话台词必须写入 `<message>` 标签内。单条回复若句子较长，可以使用多个并列的 `<message>` 标签分段输出（通常不超过 3 段）。",
-        '   - **引用回复**: 如果你想回复/引用某条特定消息，可以加上 `quote` 属性，形如：`<message quote="消息ID">回复内容</message>`。',
+        '   - **引用回复**: 如果你想回复/引用某条特定消息，可以加上 `quote` 属性，形如：`<message quote="消息ID">回复内容平台</message>`。',
         '3. **`<at>`**: 如果需要 @ 提及某个群友，在 `<message>` 标签内部或外部输出 `<at user_id="用户ID"/>`。请勿高频或无意义地频繁使用。',
     ]
 
     # 2. 动态生成的互动标签说明
     interactive_lines = []
 
-    if is_enabled("poke"):
+    if is_enabled(FeatureKey.POKE):
         interactive_lines.append(
             '- **戳一戳**: `<poke user_id="用户ID"/>`。常用于叫人、打招呼或引起注意。'
         )
 
-    if is_enabled("emoji_like"):
+    if is_enabled(FeatureKey.EMOJI_LIKE):
         interactive_lines.append(
             '- **贴表情回应**: `<emoji_like message_id="消息ID" emoji_id="表情ID"/>`。在特定消息上贴一个微表情作为互动反馈。\n'
             "  * 常用表情 ID：424 (太对了/赞同), 10068 (问号/抽象), 264 (捂脸/笑哭), 128560 (紧张/恶心/超前), 265 (辣眼睛), 76 (赞), 123 (NO/不赞同), 128557 (大哭), 49 (拥抱/安慰), 66 (爱心)。"
         )
 
-    if is_enabled("repeat"):
+    if is_enabled(FeatureKey.REPEAT):
         interactive_lines.append(
             '- **消息复读**: `<repeat message_id="消息ID"/>`。当你想原样复读某条近期群友消息时使用，如：表情、文字、语音等。'
         )
 
-    if is_enabled("like"):
+    if is_enabled(FeatureKey.LIKE):
         interactive_lines.append(
             '- **点赞名片**: `<like user_id="用户ID" count="点赞次数(1-50)"/>`。为对方的名片点赞，表达好意。'
         )
 
-    if is_enabled("delete"):
+    if is_enabled(FeatureKey.DELETE):
         interactive_lines.append(
             '- **撤回消息**: `<delete message_id="消息ID"/>`。撤回发送过的那条消息（非管理员仅能撤回 2 分钟内自身的消息）。'
         )
 
-    if is_enabled("set_call_name"):
+    if is_enabled(FeatureKey.SET_CALL_NAME):
         interactive_lines.append(
             '- **设置/修改用户称呼**: `<set_call_name user_id="目标用户ID" name="新称呼"/>`。为指定用户设置特定称呼；必须显式填入 `user_id`（目标用户的数字 ID），`name` 留空表示清空称呼。'
         )
 
-    if is_enabled("sticker"):
+    if is_enabled(FeatureKey.STICKER):
         interactive_lines.append(
             "- **发送与收集表情包**:\n"
             '  * **发送**: `<sticker sticker_id="表情包ID"/>`。发送符合当前心情的可爱表情包。可以与文本消息共存，也可以单独只发表情包。\n'
             '  * **收集**: `<add_sticker media_id="图片ID"/>`。当你看到群友发了极其可爱、有趣或与你高度相关的图片时，使用此标签将它收录到自己的表情包库中。'
         )
 
-    if is_enabled("group_admin"):
+    if is_enabled(FeatureKey.GROUP_ADMIN):
         interactive_lines.append(
             "- **群管指令（群管专用，请仅在必要且拥有管理员身份时合理使用）**:\n"
             '  * **禁言**: `<ban user_id="用户ID" duration="禁言秒数"/>`。\n'
             '  * **踢人**: `<kick user_id="用户ID"/>`。'
         )
 
-    if is_enabled("schedule_task"):
+    if is_enabled(FeatureKey.SCHEDULE_TASK):
         interactive_lines.append(
             "- **定时任务**:\n"
             '  * **添加任务**: `<schedule_task time="cron表达式或ISO8601时间">提醒内容</schedule_task>`。注意：添加前需要检查上下文，避免重复添加相同的提醒。\n'
@@ -153,7 +156,7 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
             '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
         )
 
-    if is_enabled("task_board"):
+    if is_enabled(FeatureKey.TASK_BOARD):
         interactive_lines.append(
             "- **短期任务看板**:\n"
             '  * **创建任务**: `<task_board action="create">一句自然语言任务</task_board>`。用于记录短期待办，例如“下次看到 123456 时提醒他交作业”。任务数量达到会话上限时系统会拒绝创建。\n'
@@ -161,19 +164,19 @@ def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: 
             '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
         )
 
-    if is_enabled("memory_query_delete"):
+    if is_enabled(FeatureKey.MEMORY_QUERY_DELETE):
         interactive_lines.append(
             "- **记忆检索与删除**:\n"
             '  * **检索记忆**: `<search_memory>检索问题</search_memory>`。用于模糊检索你的长期记忆，回答与过往回忆、约定等相关的内容。\n'
             '  * **删除记忆**: `<delete_memory id="记忆ID"/>`。用于清理失效或不准确的记忆。'
         )
 
-    if is_enabled("leave"):
+    if is_enabled(FeatureKey.LEAVE):
         interactive_lines.append(
             "- **退群**: `<leave/>`。退出当前群聊（请极度谨慎使用）。"
         )
 
-    if is_enabled("recaption"):
+    if is_enabled(FeatureKey.RECAPTION):
         interactive_lines.append(
             '- **重新转述媒体**: `<recaption media_id="媒体ID">你想确定的问题或关注点</recaption>`。当其他人对某个媒体内容和你有争议时，可使用此标签自主选择该媒体重新进行转述。'
         )
