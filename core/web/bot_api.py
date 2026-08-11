@@ -124,14 +124,23 @@ class BotApi:
                             llm_providers.append(info)
 
     def _extract_platform_adapters(self, context) -> list[dict]:
-        """从 PlatformManager 提取活跃的消息平台适配器 ID 列表。"""
+        """从 PlatformManager 提取活跃及配置的消息平台适配器 ID 列表。"""
         adapters = []
         try:
             pm_plat = getattr(context, "platform_manager", None)
             if pm_plat:
+                # 1. 从运行中的适配器实例提取 (支持 inst.meta() 与 inst.metadata)
                 insts = getattr(pm_plat, "get_insts", lambda: [])() or getattr(pm_plat, "platform_insts", []) or []
                 for inst in insts:
-                    meta = getattr(inst, "metadata", None)
+                    meta_raw = getattr(inst, "meta", None) or getattr(inst, "metadata", None)
+                    if callable(meta_raw):
+                        try:
+                            meta = meta_raw()
+                        except Exception:
+                            meta = None
+                    else:
+                        meta = meta_raw
+
                     if meta:
                         a_id = str(getattr(meta, "id", "") or "").strip()
                         if a_id and not any(x["id"] == a_id for x in adapters):
@@ -139,6 +148,18 @@ class BotApi:
                                 "id": a_id,
                                 "name": str(getattr(meta, "name", a_id) or a_id),
                                 "platform_name": str(getattr(meta, "platform_name", "")),
+                            })
+
+                # 2. 回退检查：从 platforms_config 中补充提取在配置中启用或存在的平台
+                platforms_config = getattr(pm_plat, "platforms_config", None) or []
+                for p_cfg in platforms_config:
+                    if isinstance(p_cfg, dict):
+                        a_id = str(p_cfg.get("id", "") or "").strip()
+                        if a_id and not any(x["id"] == a_id for x in adapters):
+                            adapters.append({
+                                "id": a_id,
+                                "name": str(p_cfg.get("name") or a_id),
+                                "platform_name": str(p_cfg.get("type", "")),
                             })
         except Exception as e:
             logger.warning(f"[Giftia BotApi] Fetching adapters failed: {e}")
