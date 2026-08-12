@@ -90,13 +90,15 @@ function renderBotsGrid() {
                     </div>
                 </div>
 
-
                 <div class="bot-features-summary" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.78rem; margin: 4px 0;">
                     <span class="badge ${decEnabled ? 'badge-success' : 'badge-secondary'}">
                         小模型判断: ${decEnabled ? '开启' : '关闭'}
                     </span>
                     <span class="badge ${replyEnabled ? 'badge-success' : 'badge-secondary'}">
                         大模型回复: ${replyEnabled ? '开启' : '关闭'}
+                    </span>
+                    <span class="badge badge-info">
+                        人格: ${escapeHtml(bot.llm_reply_conf?.persona_id || 'default')}
                     </span>
                     <span class="badge ${ttsEnabled ? 'badge-info' : 'badge-secondary'}">
                         TTS 语音: ${ttsEnabled ? escapeHtml(bot.tts_config?.provider_type || '已开启') : '未开启'}
@@ -187,7 +189,7 @@ function openBotEditModal(botName = null) {
             enabled: true,
             provider_ids: [],
             provider_selection_mode: 'fallback',
-            llm_reply_prompt: ''
+            persona_id: 'default'
         },
         tts_config: {
             enabled: false,
@@ -248,9 +250,8 @@ function openBotEditModal(botName = null) {
         selectedValues: bot.llm_reply_conf?.provider_ids || []
     });
 
-
     document.getElementById('bot-form-reply-mode').value = bot.llm_reply_conf?.provider_selection_mode || 'fallback';
-    document.getElementById('bot-form-reply-prompt').value = bot.llm_reply_conf?.llm_reply_prompt || '';
+    renderPersonaSelectOptions(bot.llm_reply_conf?.persona_id || 'default');
 
     // 4. TTS Conf
     document.getElementById('bot-form-tts-enabled').checked = bot.tts_config?.enabled === true;
@@ -272,6 +273,33 @@ function openBotEditModal(botName = null) {
     } else {
         modal.classList.add('show');
     }
+}
+
+/**
+ * Render persona selection dropdown in bot edit modal.
+ */
+function renderPersonaSelectOptions(selectedPersonaId = 'default') {
+    const el = document.getElementById('bot-form-reply-persona');
+    if (!el) return;
+
+    const personas = stateBotMetadata.personas || [];
+    let optionsHtml = '';
+    let found = false;
+
+    personas.forEach(p => {
+        const pName = p.name || 'default';
+        const isSelected = pName === selectedPersonaId ? 'selected' : '';
+        if (pName === selectedPersonaId) found = true;
+        let toolCountInfo = p.tools === null || p.tools === undefined ? '全能力无限制' : (Array.isArray(p.tools) ? `${p.tools.length} 个可用工具` : '未知');
+        let label = `${pName} (${toolCountInfo})`;
+        optionsHtml += `<option value="${escapeHtml(pName)}" ${isSelected}>${escapeHtml(label)}</option>`;
+    });
+
+    if (selectedPersonaId && !found) {
+        optionsHtml += `<option value="${escapeHtml(selectedPersonaId)}" selected>${escapeHtml(selectedPersonaId)} (未在系统注册)</option>`;
+    }
+
+    el.innerHTML = optionsHtml;
 }
 
 /**
@@ -713,7 +741,7 @@ async function saveBotFromModal() {
             enabled: document.getElementById('bot-form-reply-enabled').checked,
             provider_ids: replySelectedProviders,
             provider_selection_mode: document.getElementById('bot-form-reply-mode').value,
-            llm_reply_prompt: document.getElementById('bot-form-reply-prompt').value,
+            persona_id: document.getElementById('bot-form-reply-persona')?.value || 'default',
         },
         tts_config: {
             enabled: document.getElementById('bot-form-tts-enabled').checked,

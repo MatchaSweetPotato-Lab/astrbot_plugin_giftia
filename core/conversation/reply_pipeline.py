@@ -319,6 +319,21 @@ class ReplyPipeline:
         logger.debug(f"[Giftia] 触发大模型回复,构造回复提示词：{user_prompt}")
 
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
+        persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
+
+        persona = None
+        persona_tools = None
+        if hasattr(self.plugin.context, "persona_manager") and self.plugin.context.persona_manager:
+            persona = self.plugin.context.persona_manager.get_persona_v3_by_id(persona_id)
+
+        if not persona:
+            err_msg = f"[Giftia] {bot_name} 绑定的 AstrBot 人格 '{persona_id}' 在 AstrBot 中不存在或已被删除，请重新在控制台配置机器人人格。"
+            logger.error(err_msg)
+            raise ValueError(err_msg)
+
+        system_prompt = str(persona.get("prompt") or "")
+        persona_tools = persona.get("tools")
+
         provider_ids = llm_reply_conf.get("provider_ids")
         if not provider_ids:
             old_provider_id = llm_reply_conf.get("provider_id")
@@ -345,11 +360,12 @@ class ReplyPipeline:
             event=event,
             group_or_user_id=group_or_user_id,
             provider_ids=provider_ids,
-            system_prompt=llm_reply_conf.get("llm_reply_prompt"),
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             use_source_tools=self.plugin.tools_config.get("use_source_tools", False),
             force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
             enabled_features=bot_conf.get("enabled_interactive_features"),
+            persona_tools=persona_tools,
             tts_instruction=(
                 build_tts_xml_instructions(
                     self.plugin.tts_manager.provider_type(bot_conf),

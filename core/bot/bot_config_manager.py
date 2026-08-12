@@ -47,7 +47,7 @@ DEFAULT_BOT_CONFIG = {
         "enabled": True,
         "provider_ids": [],
         "provider_selection_mode": "fallback",
-        "llm_reply_prompt": "",
+        "persona_id": "default",
     },
     "tts_config": {
         "enabled": False,
@@ -151,7 +151,7 @@ class BotConfigManager:
             "enabled": bool(raw_reply.get("enabled", True)),
             "provider_ids": [str(p).strip() for p in raw_reply.get("provider_ids") or [] if p],
             "provider_selection_mode": str(raw_reply.get("provider_selection_mode") or "fallback"),
-            "llm_reply_prompt": str(raw_reply.get("llm_reply_prompt") or ""),
+            "persona_id": str(raw_reply.get("persona_id") or "default").strip(),
         }
 
         # tts_config

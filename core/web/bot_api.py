@@ -184,10 +184,11 @@ class BotApi:
 
     def _get_available_metadata(self) -> dict:
 
-        """汇总可用的 LLM 提供商、TTS 提供商、消息适配器列表和内置交互功能。"""
+        """汇总可用的 LLM 提供商、TTS 提供商、消息适配器列表、人格列表和内置交互功能。"""
         llm_providers = []
         tts_providers = []
         adapters = []
+        personas = []
 
         giftia = getattr(self, "giftia", None)
         context = getattr(giftia, "context", None) if giftia else None
@@ -196,12 +197,35 @@ class BotApi:
             self._extract_providers_from_config(context, llm_providers, tts_providers)
             self._extract_providers_from_runtime(context, llm_providers, tts_providers)
             adapters = self._extract_platform_adapters(context)
+            if hasattr(context, "persona_manager") and context.persona_manager:
+                try:
+                    pm = context.persona_manager
+                    v3_list = getattr(pm, "personas_v3", []) or []
+                    for p in v3_list:
+                        if isinstance(p, dict):
+                            p_name = str(p.get("name") or "").strip()
+                            if p_name and not any(x["name"] == p_name for x in personas):
+                                personas.append({
+                                    "name": p_name,
+                                    "prompt": str(p.get("prompt") or ""),
+                                    "tools": p.get("tools"),
+                                })
+                except Exception as e:
+                    logger.warning(f"[Giftia BotApi] Fetching personas failed: {e}")
 
-        logger.info(f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters")
+        if not any(x["name"] == "default" for x in personas):
+            personas.insert(0, {
+                "name": "default",
+                "prompt": "You are a helpful and friendly assistant.",
+                "tools": None,
+            })
+
+        logger.info(f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters, {len(personas)} personas")
         return {
             "llm_providers": llm_providers,
             "tts_providers": tts_providers,
             "adapters": adapters,
+            "personas": personas,
             "interactive_features": INTERACTIVE_FEATURES_METADATA,
         }
 
