@@ -52,7 +52,7 @@
 - **启用大模型回复功能 (`enabled`)**: 是否启用大模型回复。
 - **大模型回复提供商 (`provider_ids`)**: 你的核心回复大模型，支持配置多个以自动降级或随机轮询。
 - **多提供商选择模式 (`provider_selection_mode`)**: 支持 `fallback`（按顺序降级尝试）或 `random`（随机打乱顺序使用）。
-- **大模型回复系统提示词 (`llm_reply_prompt`)**: 核心人设提示词（模版见 [天童爱丽丝-大模型回复.md](prompt_example/character/天童爱丽丝-大模型回复.md) 或 [流萤-大模型回复.md](prompt_example/character/流萤-大模型回复.md)）。
+- **关联 AstrBot 人格 (`persona_id`)**: 直接绑定 AstrBot 控制台的人格配置，回复时自动抽取该人格的 System Prompt 以及工具能力限制 (`tools`)。
 
 ### 4. 媒体转述配置 (`caption_config`)
 - **启用图片转述 (`image_caption_enabled`)** / **启用音频转述 (`audio_caption_enabled`)**: 是否开启对多媒体消息的自动多模态识别与文字翻译。

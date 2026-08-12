@@ -215,6 +215,7 @@ class CallLLM:
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
         is_qq_official: bool = False,
+        persona_tools: list[str] | None = None,
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
@@ -276,6 +277,17 @@ class CallLLM:
                         for tool in tools_set.tools[:]:
                             if not tool.active:
                                 tools_set.remove_tool(tool.name)
+
+                        if persona_tools is not None:
+                            if isinstance(persona_tools, (list, tuple, set)):
+                                allowed_names = {str(name).strip() for name in persona_tools if name}
+                                for tool in tools_set.tools[:]:
+                                    if tool.name not in allowed_names:
+                                        tools_set.remove_tool(tool.name)
+                                logger.info(
+                                    f"[Giftia] 经过人格工具限制过滤 ({len(allowed_names)} 个在白名单)，剩余 {len(tools_set.tools)} 个可用工具"
+                                )
+
                         logger.debug(
                             f"\n<native_tools count={len(tools_set.tools)}>\n"
                             + "\n".join(

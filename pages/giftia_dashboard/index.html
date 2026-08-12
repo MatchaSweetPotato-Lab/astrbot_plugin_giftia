@@ -1195,8 +1195,10 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>大模型回复系统提示词 (Persona & Prompt)</label>
-                        <textarea id="bot-form-reply-prompt" rows="4" placeholder="输入控制角色设定、语气词、行为规范的 Prompt..."></textarea>
+                        <label>关联 AstrBot 人格 (Persona) <span class="info-tooltip" data-tooltip="绑定 AstrBot 控制台配置的人格，回复时将继承该人格的 System Prompt 与工具限制"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <select id="bot-form-reply-persona" class="form-control">
+                            <!-- Dynamically populated from metadata.personas -->
+                        </select>
                     </div>
                 </div>
 
