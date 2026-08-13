@@ -600,7 +600,11 @@ class Giftia(Star):
                     send_chain = []
                     message_obj = getattr(event, "message_obj", None)
                     message_id_attr = getattr(message_obj, "message_id", None) if message_obj else None
-                    if message_id_attr:
+
+                    # 判定是否需要引用回复（读取回调传入的 should_quote 标记）
+                    should_quote = bool(kwargs.get("should_quote", False))
+
+                    if message_id_attr and should_quote:
                         send_chain.append(Reply(id=str(message_id_attr)))
                     send_chain.extend(media_comps)
 
