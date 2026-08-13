@@ -79,6 +79,10 @@ export function getScopedFilterParams(viewKey) {
             return {
                 bot_name: document.getElementById("profile-bot-name").value
             };
+        case "tokenLogs":
+            return {
+                bot_name: document.getElementById("token-bot-name")?.value || ""
+            };
         default:
             return {};
     }
