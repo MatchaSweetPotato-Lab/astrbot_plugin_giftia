@@ -598,10 +598,11 @@ class Giftia(Star):
                 if len(media_comps) > 0:
                     logger.info(f"[Giftia] 后台绘图/媒体生成完成，正在直接发送生成的媒体组件...")
                     send_chain = []
-                    message_obj = getattr(event, "message_obj", None)
-                    message_id_attr = getattr(message_obj, "message_id", None) if message_obj else None
-                    if message_id_attr:
-                        send_chain.append(Reply(id=str(message_id_attr)))
+                    if kwargs.get("should_quote"):
+                        message_obj = getattr(event, "message_obj", None)
+                        message_id_attr = getattr(message_obj, "message_id", None) if message_obj else None
+                        if message_id_attr:
+                            send_chain.append(Reply(id=str(message_id_attr)))
                     send_chain.extend(media_comps)
 
                     sent_by_direct_action = False
