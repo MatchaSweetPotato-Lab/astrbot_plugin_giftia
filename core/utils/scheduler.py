@@ -93,7 +93,7 @@ class Scheduler:
         """
         删除定时任务
         """
-        if task_id == "system_r2_backup_message":
+        if task_id == "system_r2_backup_message" or str(task_id).startswith("system_"):
             logger.warning(f"禁止删除系统定时任务: {task_id}")
             return f"禁止删除系统定时任务: {task_id}"
         job = self.scheduler.get_job(task_id)
@@ -108,6 +108,72 @@ class Scheduler:
         else:
             logger.warning(f"尝试删除不存在的定时任务: {task_id}")
             return f"尝试删除不存在的定时任务: {task_id}"
+
+    def update_job(
+        self,
+        task_id: str,
+        time_expr: str,
+        remind_message: str | None = None,
+    ) -> tuple[bool, str]:
+        """
+        更新定时任务的时间规则和提醒内容
+        """
+        if str(task_id).startswith("system_"):
+            logger.warning(f"禁止修改系统定时任务: {task_id}")
+            return False, f"禁止修改系统定时任务: {task_id}"
+
+        job = self.scheduler.get_job(task_id)
+        if not job:
+            logger.warning(f"尝试修改不存在的定时任务: {task_id}")
+            return False, f"未找到指定的定时任务: {task_id}"
+
+        if job.kwargs and job.kwargs.get("system_job", False):
+            logger.warning(f"禁止修改系统定时任务: {task_id}")
+            return False, f"禁止修改系统定时任务: {task_id}"
+
+        func_name = job.name
+        if job.name and "|" in job.name:
+            parts = job.name.split("|", 1)
+            func_name = parts[0]
+
+        clean_time_expr = time_expr.strip()
+        # 智能识别触发器类型
+        trigger = None
+        try:
+            run_date = datetime.fromisoformat(clean_time_expr)
+            trigger = DateTrigger(run_date=run_date)
+        except ValueError:
+            try:
+                trigger = CronTrigger.from_crontab(clean_time_expr)
+            except ValueError:
+                logger.error(
+                    f"任务 {task_id} 时间格式错误 (既不是合法的日期时间也不是合法的 Cron): {clean_time_expr}"
+                )
+                return (
+                    False,
+                    f"时间规则格式错误 (既不是合法的日期时间也不是合法的 Cron 表达式): {clean_time_expr}",
+                )
+
+        new_kwargs = dict(job.kwargs or {})
+        if remind_message is not None:
+            new_kwargs["remind_message"] = remind_message.strip()
+
+        try:
+            self.scheduler.add_job(
+                job_proxy,
+                trigger,
+                args=list(job.args) if job.args else [func_name],
+                kwargs=new_kwargs,
+                id=task_id,
+                name=f"{func_name}|{clean_time_expr}",
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+            logger.info(f"修改定时任务成功: {task_id} (时间规则: {clean_time_expr})")
+            return True, "修改定时任务成功"
+        except Exception as e:
+            logger.error(f"修改定时任务 {task_id} 失败: {e}")
+            return False, f"修改定时任务失败: {e}"
 
     def _format_job(self, job) -> str:
         func_name = job.name

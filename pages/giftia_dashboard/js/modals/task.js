@@ -208,7 +208,21 @@ window.fetchAndRenderScheduledTasks = async function(bot, group, scheduledList) 
         const schedRes = await window.apiGet("/scheduled_tasks", { bot_name: bot, group_or_user_id: group });
         if (schedRes.status === "success" && schedRes.data) {
             window.scheduledTasksCachedData = schedRes.data;
-            window.renderScheduledTaskList(schedRes.data.items || []);
+            const items = schedRes.data.items || [];
+            window.renderScheduledTaskList(items);
+
+            const schedTab = document.querySelector('.task-board-main-tab[data-main-tab="scheduled"]');
+            if (schedTab) {
+                const countBadge = schedTab.querySelector('.task-tab-count');
+                if (countBadge) {
+                    countBadge.textContent = items.length;
+                } else {
+                    const span = document.createElement('span');
+                    span.className = 'task-tab-count';
+                    span.textContent = items.length;
+                    schedTab.appendChild(span);
+                }
+            }
         } else {
             scheduledList.innerHTML = `<div class="task-board-empty">加载定时任务失败: ${window.escapeHtml(schedRes.message || "")}</div>`;
         }
@@ -232,6 +246,19 @@ window.renderTaskBoardModal = function(data) {
     const completedCount = stats.completed || 0;
     const archivedCount = (stats.canceled || 0) + (stats.expired || 0);
     const totalCount = stats.total || 0;
+
+    const shortTab = document.querySelector('.task-board-main-tab[data-main-tab="short"]');
+    if (shortTab) {
+        const countBadge = shortTab.querySelector('.task-tab-count');
+        if (countBadge) {
+            countBadge.textContent = activeCount;
+        } else {
+            const span = document.createElement('span');
+            span.className = 'task-tab-count';
+            span.textContent = activeCount;
+            shortTab.appendChild(span);
+        }
+    }
 
     const tabElements = document.querySelectorAll(".task-board-tab");
     tabElements.forEach(tab => {
@@ -388,10 +415,10 @@ window.renderScheduledTaskList = function(items) {
         return;
     }
 
-    list.innerHTML = items.map(job => {
+    list.innerHTML = items.map((job, index) => {
         const taskIdArg = encodeURIComponent(job.task_id || "");
         const creator = job.user_name || job.user_id || "系统/LLM";
-        const contentText = job.remind_message || job.func_name || "无详细说明";
+        const contentText = job.remind_message || job.func_name || "";
 
         return `
             <div class="task-board-card scheduled-task-card">
@@ -405,23 +432,24 @@ window.renderScheduledTaskList = function(items) {
                     </div>
                 </div>
                 <div class="task-card-body">
-                    <div class="scheduled-task-content">
-                        <strong>提醒/任务内容：</strong>
-                        <div class="scheduled-task-text">${window.escapeHtml(contentText)}</div>
-                    </div>
+                    <textarea class="task-card-textarea" id="scheduled-task-content-${index}" placeholder="提醒/任务内容...">${window.escapeHtml(contentText)}</textarea>
                 </div>
                 <div class="task-card-footer">
                     <div class="task-card-footer-left">
                         <div class="task-card-control-group">
                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                             时间规则:
-                            <span class="scheduled-time-expr">${window.escapeHtml(job.time_expr || "单次/固定")}</span>
+                            <input class="task-card-input-text scheduled-time-input" id="scheduled-task-time-${index}" type="text" value="${window.escapeHtml(job.time_expr || '')}" placeholder="Cron (如 0 8 * * *) 或 ISO时间">
                         </div>
                         <div class="task-card-dates">
                             <span>下次执行: ${window.formatDate(job.next_run_time)}</span>
                         </div>
                     </div>
                     <div class="task-card-actions">
+                        <button class="task-card-btn task-card-btn-primary" onclick="window.saveScheduledTaskItem(${index}, '${taskIdArg}')">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                            保存
+                        </button>
                         <button class="task-card-btn task-card-btn-danger" onclick="window.deleteScheduledTaskItem('${taskIdArg}')">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                             删除
@@ -431,6 +459,45 @@ window.renderScheduledTaskList = function(items) {
             </div>
         `;
     }).join("");
+};
+
+window.saveScheduledTaskItem = async function(index, taskIdEncoded) {
+    const bot = document.getElementById("task-board-bot").value;
+    const group = document.getElementById("task-board-group").value;
+    const taskId = decodeURIComponent(taskIdEncoded);
+    const contentEl = document.getElementById(`scheduled-task-content-${index}`);
+    const timeEl = document.getElementById(`scheduled-task-time-${index}`);
+
+    if (!contentEl || !timeEl) return;
+    const remindMessage = contentEl.value.trim();
+    const timeExpr = timeEl.value.trim();
+
+    if (!remindMessage) {
+        window.showToast("定时任务提醒内容不能为空");
+        return;
+    }
+    if (!timeExpr) {
+        window.showToast("时间规则不能为空");
+        return;
+    }
+
+    try {
+        const res = await window.apiPost("/scheduled_tasks/update", {
+            bot_name: bot,
+            group_or_user_id: group,
+            task_id: taskId,
+            remind_message: remindMessage,
+            time_expr: timeExpr
+        });
+        if (res.status === "success") {
+            window.showToast("定时任务已更新");
+            await window.refreshScheduledTasks();
+        } else {
+            window.showToast(`更新失败: ${res.message}`);
+        }
+    } catch (e) {
+        window.showToast(`发生错误: ${e.message}`);
+    }
 };
 
 window.saveTaskBoardItem = async function(index, taskIdEncoded) {

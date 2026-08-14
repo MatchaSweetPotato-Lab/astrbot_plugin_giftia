@@ -184,6 +184,12 @@ class WebUIManager:
             desc="Get scheduled tasks list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/scheduled_tasks/update",
+            view_handler=self.web_api.update_scheduled_task,
+            methods=["POST"],
+            desc="Update scheduled task content and time expression",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/scheduled_tasks/delete",
             view_handler=self.web_api.delete_scheduled_task,
             methods=["POST"],
