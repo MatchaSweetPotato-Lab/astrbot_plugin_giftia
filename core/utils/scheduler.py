@@ -159,15 +159,14 @@ class Scheduler:
             new_kwargs["remind_message"] = remind_message.strip()
 
         try:
-            self.scheduler.add_job(
-                job_proxy,
-                trigger,
-                args=list(job.args) if job.args else [func_name],
-                kwargs=new_kwargs,
-                id=task_id,
+            self.scheduler.modify_job(
+                task_id,
                 name=f"{func_name}|{clean_time_expr}",
-                replace_existing=True,
-                misfire_grace_time=3600,
+                kwargs=new_kwargs,
+            )
+            self.scheduler.reschedule_job(
+                task_id,
+                trigger=trigger,
             )
             logger.info(f"修改定时任务成功: {task_id} (时间规则: {clean_time_expr})")
             return True, "修改定时任务成功"
