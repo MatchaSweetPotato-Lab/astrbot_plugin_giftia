@@ -208,3 +208,30 @@ body.modal-open {
         white-space: nowrap;
     }
 }
+
+/* Bot Config Modal Layout Adjustments */
+#bot-edit-modal .modal-body {
+    min-height: min(24rem, 50vh);
+    max-height: 75vh;
+    overflow-y: auto;
+}
+
+.bot-subtab-content {
+    min-height: min(20rem, 42vh);
+    padding-bottom: 1.5rem;
+}
+
+@media (max-width: 768px), (max-height: 600px) {
+    #bot-edit-modal .modal-body {
+        min-height: min(16rem, 40vh);
+        max-height: 70vh;
+    }
+
+    .bot-subtab-content {
+        min-height: min(13rem, 35vh);
+        padding-bottom: 0.75rem;
+    }
+}
+
+
+
