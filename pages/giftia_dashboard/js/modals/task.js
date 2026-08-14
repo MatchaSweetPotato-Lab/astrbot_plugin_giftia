@@ -201,6 +201,20 @@ window.refreshTaskBoardModal = async function() {
     }
 };
 
+function updateTabCount(selector, count) {
+    const tab = document.querySelector(selector);
+    if (!tab) return;
+    const countBadge = tab.querySelector('.task-tab-count');
+    if (countBadge) {
+        countBadge.textContent = count;
+    } else {
+        const span = document.createElement('span');
+        span.className = 'task-tab-count';
+        span.textContent = count;
+        tab.appendChild(span);
+    }
+}
+
 window.fetchAndRenderScheduledTasks = async function(bot, group, scheduledList) {
     scheduledList = scheduledList || document.getElementById("scheduled-task-list");
     if (!bot || !group || !scheduledList) return;
@@ -210,19 +224,7 @@ window.fetchAndRenderScheduledTasks = async function(bot, group, scheduledList) 
             window.scheduledTasksCachedData = schedRes.data;
             const items = schedRes.data.items || [];
             window.renderScheduledTaskList(items);
-
-            const schedTab = document.querySelector('.task-board-main-tab[data-main-tab="scheduled"]');
-            if (schedTab) {
-                const countBadge = schedTab.querySelector('.task-tab-count');
-                if (countBadge) {
-                    countBadge.textContent = items.length;
-                } else {
-                    const span = document.createElement('span');
-                    span.className = 'task-tab-count';
-                    span.textContent = items.length;
-                    schedTab.appendChild(span);
-                }
-            }
+            updateTabCount('.task-board-main-tab[data-main-tab="scheduled"]', items.length);
         } else {
             scheduledList.innerHTML = `<div class="task-board-empty">加载定时任务失败: ${window.escapeHtml(schedRes.message || "")}</div>`;
         }
@@ -247,18 +249,7 @@ window.renderTaskBoardModal = function(data) {
     const archivedCount = (stats.canceled || 0) + (stats.expired || 0);
     const totalCount = stats.total || 0;
 
-    const shortTab = document.querySelector('.task-board-main-tab[data-main-tab="short"]');
-    if (shortTab) {
-        const countBadge = shortTab.querySelector('.task-tab-count');
-        if (countBadge) {
-            countBadge.textContent = activeCount;
-        } else {
-            const span = document.createElement('span');
-            span.className = 'task-tab-count';
-            span.textContent = activeCount;
-            shortTab.appendChild(span);
-        }
-    }
+    updateTabCount('.task-board-main-tab[data-main-tab="short"]', activeCount);
 
     const tabElements = document.querySelectorAll(".task-board-tab");
     tabElements.forEach(tab => {
