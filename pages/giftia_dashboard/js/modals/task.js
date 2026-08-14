@@ -449,26 +449,32 @@ window.renderScheduledTaskList = function(items) {
     }).join("");
 };
 
+function findTaskCard(target, taskIdArg, cardSelector = ".task-board-card") {
+    let card = null;
+    let taskId = "";
+    if (target && target.nodeType) {
+        card = target.closest(cardSelector);
+        taskId = card ? (card.getAttribute("data-task-id") || "") : decodeURIComponent(taskIdArg || "");
+    } else if (typeof target === "string") {
+        taskId = decodeURIComponent(target);
+        card = document.querySelector(`${cardSelector}[data-task-id="${CSS.escape(taskId)}"]`);
+    } else if (typeof target === "number") {
+        taskId = decodeURIComponent(taskIdArg || "");
+        const legacyId = cardSelector.includes("scheduled") ? `scheduled-task-content-${target}` : `task-board-content-${target}`;
+        const legacyEl = document.getElementById(legacyId);
+        if (legacyEl) card = legacyEl.closest(cardSelector);
+    }
+    if (!card && taskId) {
+        card = document.querySelector(`${cardSelector}[data-task-id="${CSS.escape(taskId)}"]`);
+    }
+    return { card, taskId };
+}
+
 window.saveScheduledTaskItem = async function(target, taskIdArg) {
     const bot = document.getElementById("task-board-bot").value;
     const group = document.getElementById("task-board-group").value;
     
-    let card = null;
-    let taskId = "";
-    if (target && target.nodeType) {
-        card = target.closest(".scheduled-task-card");
-        taskId = card ? (card.getAttribute("data-task-id") || "") : decodeURIComponent(taskIdArg || "");
-    } else if (typeof target === "string") {
-        taskId = decodeURIComponent(target);
-        card = document.querySelector(`.scheduled-task-card[data-task-id="${CSS.escape(taskId)}"]`);
-    } else if (typeof target === "number") {
-        taskId = decodeURIComponent(taskIdArg || "");
-        const legacyEl = document.getElementById(`scheduled-task-content-${target}`);
-        if (legacyEl) card = legacyEl.closest(".scheduled-task-card");
-    }
-    if (!card && taskId) {
-        card = document.querySelector(`.scheduled-task-card[data-task-id="${CSS.escape(taskId)}"]`);
-    }
+    const { card, taskId } = findTaskCard(target, taskIdArg, ".scheduled-task-card");
     if (!card) return;
 
     const contentEl = card.querySelector(".scheduled-task-content-input") || card.querySelector(".task-card-textarea");
@@ -510,22 +516,7 @@ window.saveTaskBoardItem = async function(target, taskIdArg) {
     const bot = document.getElementById("task-board-bot").value;
     const group = document.getElementById("task-board-group").value;
     
-    let card = null;
-    let taskId = "";
-    if (target && target.nodeType) {
-        card = target.closest(".task-board-card");
-        taskId = card ? (card.getAttribute("data-task-id") || "") : decodeURIComponent(taskIdArg || "");
-    } else if (typeof target === "string") {
-        taskId = decodeURIComponent(target);
-        card = document.querySelector(`.short-task-card[data-task-id="${CSS.escape(taskId)}"]`);
-    } else if (typeof target === "number") {
-        taskId = decodeURIComponent(taskIdArg || "");
-        const legacyEl = document.getElementById(`task-board-content-${target}`);
-        if (legacyEl) card = legacyEl.closest(".task-board-card");
-    }
-    if (!card && taskId) {
-        card = document.querySelector(`.task-board-card[data-task-id="${CSS.escape(taskId)}"]`);
-    }
+    const { card, taskId } = findTaskCard(target, taskIdArg, ".short-task-card");
     if (!card) return;
 
     const contentEl = card.querySelector(".short-task-content-input") || card.querySelector(".task-card-textarea");
