@@ -86,22 +86,27 @@
     border-left: 3px solid var(--primary);
 }
 
-.scheduled-task-content {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 13px;
-}
-
-.scheduled-task-text {
+.scheduled-time-input {
     background-color: var(--card-bg);
     border: 1px solid var(--border-color);
-    padding: 8px 12px;
-    border-radius: 6px;
-    line-height: 1.5;
     color: var(--font-color);
-    white-space: pre-wrap;
-    word-break: break-word;
+    font-size: 12px;
+    font-family: "JetBrains Mono", "SF Mono", Monaco, Menlo, Consolas, monospace;
+    border-radius: 6px;
+    padding: 4px 8px;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    min-width: 170px;
+}
+
+.scheduled-time-input:hover {
+    border-color: var(--font-secondary);
+}
+
+.scheduled-time-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary-light);
 }
 
 .scheduled-time-expr {
@@ -118,7 +123,8 @@ html[data-theme="dark"] .task-tab-count {
     background-color: rgba(255, 255, 255, 0.08);
 }
 
-.task-board-tab.active .task-tab-count {
+.task-board-tab.active .task-tab-count,
+.task-board-main-tab.active .task-tab-count {
     background-color: var(--primary-light);
     color: var(--primary);
 }
@@ -577,7 +583,8 @@ html[data-theme="dark"] .task-card-textarea:hover {
     }
 
     .task-card-select,
-    .task-card-input-date {
+    .task-card-input-date,
+    .scheduled-time-input {
         flex: 1;
         min-height: 38px;
         font-size: 13px;

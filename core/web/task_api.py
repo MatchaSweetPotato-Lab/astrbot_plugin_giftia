@@ -169,6 +169,45 @@ class TaskApi:
             logger.error(f"[Giftia API] get_scheduled_tasks error: {e}")
             return error_response(f"获取定时任务列表失败: {str(e)}")
 
+    async def update_scheduled_task(self):
+        """Update scheduled task content and time expression with session ownership verification."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            task_id = body.get("task_id")
+            time_expr = body.get("time_expr")
+            remind_message = body.get("remind_message")
+
+            if not bot_name or not group_or_user_id or not task_id:
+                return error_response("缺少必要参数")
+            if time_expr is None or str(time_expr).strip() == "":
+                return error_response("时间规则不能为空")
+            if remind_message is None or str(remind_message).strip() == "":
+                return error_response("任务内容不能为空")
+            if not hasattr(self.giftia, "task_manager"):
+                return error_response("定时任务调度器不可用")
+
+            # 会话隔离校验：验证该定时任务是否确实属于指定的 Bot 与会话
+            session_jobs = self.giftia.task_manager.get_session_jobs_data(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+            )
+            if not any(job["task_id"] == task_id for job in session_jobs):
+                return error_response("指定的定时任务不存在或无权修改")
+
+            ok, res_msg = self.giftia.task_manager.update_job(
+                task_id=task_id,
+                time_expr=str(time_expr).strip(),
+                remind_message=str(remind_message).strip(),
+            )
+            if not ok:
+                return error_response(res_msg)
+            return json_response({"status": "success", "message": res_msg})
+        except Exception as e:
+            logger.error(f"[Giftia API] update_scheduled_task error: {e}")
+            return error_response(f"更新定时任务失败: {str(e)}")
+
     async def delete_scheduled_task(self):
         """Delete a single scheduled task for a session with session ownership verification."""
         try:
