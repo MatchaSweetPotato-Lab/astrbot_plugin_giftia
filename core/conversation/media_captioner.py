@@ -414,11 +414,16 @@ class MediaCaptioner:
                     target_video_file = str(compressed_output)
                     actual_size = os.path.getsize(target_video_file)
 
-        # 2. 强抓原生视频全量字节包转 Base64 (data:video/mp4;base64,...)
+        # 2. 发送前校验目标视频文件是否存在且非空
+        if not os.path.exists(target_video_file) or os.path.getsize(target_video_file) == 0:
+            logger.warning(f"[Giftia] 目标视频文件不存在或为空: {target_video_file}")
+            return f"视频 [{media_caption.hash_val}] 文件不存在或内容为空，无法查看。"
+
+        # 3. 强抓原生视频全量字节包转 Base64 (data:video/mp4;base64,...)
         try:
             video_raw_bytes = Path(target_video_file).read_bytes()
             video_b64_str = base64.b64encode(video_raw_bytes).decode("utf-8")
-            # 3. 发送前严格校验：最终 Base64 编码数据量不得超过 20MB 网关上限
+            # 4. 发送前严格校验：最终 Base64 编码数据量不得超过 20MB 网关上限
             if len(video_b64_str) > VIDEO_MAX_PAYLOAD_BYTES:
                 return f"视频 [{media_caption.hash_val}] 数据量过大 ({format_file_size(len(video_b64_str))})，超出视觉模型单次接收上限 (20MB)，无法直接查看。请提示用户发送更短的视频片段。"
             video_data_url = f"data:video/mp4;base64,{video_b64_str}"
