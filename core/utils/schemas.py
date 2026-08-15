@@ -1,10 +1,19 @@
 from dataclasses import dataclass, field
+from enum import Enum
 import re
 
 from astrbot.core.message.components import BaseMessageComponent
 
 FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音|视频):([^\]\s]+)\]")
 FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
+
+class ImageSendType(int, Enum):
+    """图片发送模式"""
+
+    NORMAL = 0  # 普通大图
+    STICKER = 1  # 小图表情
+
 
 
 class FeatureKey:

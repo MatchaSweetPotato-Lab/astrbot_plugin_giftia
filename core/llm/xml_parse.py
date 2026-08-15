@@ -627,7 +627,7 @@ class XmlParse:
     async def _load_sticker_image(
         self, sticker_id: str, xml_str: str = ""
     ) -> Image | None:
-        """加载表情包并标记为小图表情 (sub_type=1)"""
+        """加载表情包图片"""
         if not sticker_id:
             return None
         local_path = self.emoji_manager.get_sticker_path(sticker_id)
@@ -642,7 +642,4 @@ class XmlParse:
                 logger.error(
                     f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
                 )
-        if img:
-            img.sub_type = 1
-            img.subType = 1
         return img

@@ -12,6 +12,8 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from .schemas import ImageSendType
+
 
 class AIoCQHTTPAction:
     """
@@ -25,18 +27,22 @@ class AIoCQHTTPAction:
         self,
         event: AstrMessageEvent,
         message_chain: list[BaseMessageComponent],
+        image_type: ImageSendType = ImageSendType.STICKER,
     ) -> tuple[bool, int | None]:
         """发送消息
         Args:
             event: 消息事件
             message_chain: 消息链
+            image_type: 图片发送模式 (默认为表情包小图)
         """
 
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
         ):
             try:
-                message_data = await self._msg_chain_to_data(message_chain)
+                message_data = await self._msg_chain_to_data(
+                    message_chain, image_type=image_type
+                )
                 group_id = event.get_group_id()
                 if group_id:
                     resp = await event.bot.send_group_msg(
@@ -434,6 +440,7 @@ class AIoCQHTTPAction:
     async def _msg_chain_to_data(
         self,
         message_chain: list[BaseMessageComponent],
+        image_type: ImageSendType = ImageSendType.STICKER,
     ) -> list:
         """
         将消息链转换为aiocqhttp的数据结构
@@ -463,13 +470,8 @@ class AIoCQHTTPAction:
                     "file": f"base64://{bs64}",
                 }
                 if isinstance(component, Image):
-                    # 同时兼容NapCat/Lagrange/go-cqhttp的命名规范
-                    sub_type = getattr(component, "sub_type", None)
-                    if sub_type is None:
-                        sub_type = getattr(component, "subType", None)
-
-                    if sub_type == 1:
-                        # 显式标记为表情包/小图
+                    if image_type == ImageSendType.STICKER:
+                        # 显式标记为表情包/小图 (同时兼容NapCat/Lagrange/go-cqhttp的命名规范)
                         data_dict["subType"] = 1
                         data_dict["sub_type"] = 1
                         data_dict["subtype"] = 1

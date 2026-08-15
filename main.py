@@ -36,7 +36,7 @@ from .core.utils.scheduler import Scheduler
 from .core.utils.task_board import TaskBoardManager
 from .core.utils.tools_func import ToolsFunc
 from .core.web.webui_manager import WebUIManager
-from .core.utils.schemas import MessageData, XmlLlmResult
+from .core.utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
 
 class Giftia(Star):
@@ -610,7 +610,9 @@ class Giftia(Star):
                     message_id = None
 
                     if event.get_platform_name() == "aiocqhttp" and hasattr(self, "aiocqhttp"):
-                        success, message_id = await self.aiocqhttp.send_message(event, send_chain)
+                        success, message_id = await self.aiocqhttp.send_message(
+                            event, send_chain, image_type=ImageSendType.NORMAL
+                        )
                         if success:
                             sent_by_direct_action = True
                     elif hasattr(self, "qq_official") and self.qq_official.is_qq_official(event):
