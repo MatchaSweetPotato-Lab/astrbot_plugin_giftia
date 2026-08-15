@@ -46,7 +46,6 @@ class ReplyPipeline:
             "get_message_contexts",
             "task_board_actions",
             "tts_segments",
-            "recaption_requests",
             "set_call_names",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
@@ -197,7 +196,7 @@ class ReplyPipeline:
                     sent_messages.append(msg.content)
 
         caption_config = self.plugin.get_caption_config(bot_conf)
-        media_captions = await self.media_captioner.transcribe_media_if_deferred(
+        media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
             recent_messages=recent_messages,
             caption_config=caption_config,
@@ -461,7 +460,6 @@ class ReplyPipeline:
             or len(llm_result.all_tasks) > 0
             or len(llm_result.search_histories) > 0
             or len(llm_result.get_message_contexts) > 0
-            or (hasattr(llm_result, "recaption_requests") and len(llm_result.recaption_requests) > 0)
         ):
             logger.debug(f"{bot_name} llm step {times + 1} ...")
             async for chunk in self.dispatch_llm_reply_loop(

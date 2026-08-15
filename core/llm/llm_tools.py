@@ -20,7 +20,7 @@ TOOLS_NAMESPACE = [
     "get_message_context",
     "search_user_profile",
     "inspect_forward_message",
-    "inspect_video",
+    "inspect_media",
 ]
 
 
@@ -479,18 +479,20 @@ class InspectForwardMessageTool(FunctionTool):
 
         from ..conversation.media_captioner import MediaCaptioner
 
-        caption_config = dict(plugin.get_caption_config(plugin.bot_map.get(bot_name, {})))
-        caption_config["max_deferred_captions"] = min(max_media, len(media_ids))
-        fake_content = " ".join(
-            f"[图片:{media_id}]" for media_id in media_ids[:max_media]
-        )
-        return await MediaCaptioner(plugin).transcribe_media_if_deferred(
-            bot_name=bot_name,
-            recent_messages=[
-                MessageData(content=fake_content, media_id_list=media_ids[:max_media])
-            ],
-            caption_config=caption_config,
-        )
+        captioner = MediaCaptioner(plugin)
+        captions = []
+        for media_id in media_ids[:max_media]:
+            cap = await plugin.data_cache.get_caption_by_hash(media_id)
+            if cap and getattr(cap, "is_captioned", False):
+                captions.append(cap)
+            else:
+                cap_obj, _ = await captioner.inspect_media(
+                    hash_val=media_id,
+                    bot_name=bot_name,
+                )
+                if cap_obj and getattr(cap_obj, "is_captioned", False):
+                    captions.append(cap_obj)
+        return captions
 
     def _raw_threshold(self, plugin) -> int:
         return self._clean_int(
@@ -643,12 +645,12 @@ class InspectForwardMessageTool(FunctionTool):
 
 
 @dataclass
-class InspectVideoTool(FunctionTool):
+class InspectMediaTool(FunctionTool):
     plugin: Any = None
-    name: str = "inspect_video"
+    name: str = "inspect_media"
     description: str = (
-        "按 media_id 查看当前会话中 [视频:media_id] 的画面内容。如果视频较长且用户问的是后半段，"
-        "可通过 start_time 指定切片起始秒数（默认为 0 秒）。"
+        "按 media_id 查看当前会话中未转述的历史媒体（图片/语音/视频），或对已有媒体提出具体问题重新深入查看。"
+        "如果目标为较长视频，可通过 start_time 指定切片起始秒数（默认为 0 秒）。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -656,15 +658,15 @@ class InspectVideoTool(FunctionTool):
             "properties": {
                 "media_id": {
                     "type": "string",
-                    "description": "视频消息占位符 [视频:media_id] 中的 16 位哈希 ID。",
-                },
-                "start_time": {
-                    "type": "integer",
-                    "description": "视频截取起始时间(秒)，默认 0。",
+                    "description": "媒体占位符 [图片:media_id]、[语音:media_id] 或 [视频:media_id] 中的 16 位哈希 ID。",
                 },
                 "question": {
                     "type": "string",
-                    "description": "希望能特别关注的观察指令或具体问题（例如：'查看 15 秒出现的文字'、'查看人物衣服颜色'）。可选填。",
+                    "description": "希望能特别关注的观察指令或具体问题（例如：'查看图片中的招牌文字'、'听语音中的背景音乐'、'查看 15 秒出现的画面'）。可选填。",
+                },
+                "start_time": {
+                    "type": "integer",
+                    "description": "若为视频，可指定截取起始时间(秒)，默认 0。",
                 },
             },
             "required": ["media_id"],
@@ -694,18 +696,15 @@ class InspectVideoTool(FunctionTool):
         if not media_id:
             return "请求参数错误：未提供 media_id"
 
-        media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
-        if not media_caption:
-            return f"未找到 media_id 为 [{media_id}] 的视频数据记录"
-
-        caption_result = await MediaCaptioner(self.plugin).transcribe_video_media(
-            media_caption,
-            start_time=start_time,
+        caption_obj, result_str = await MediaCaptioner(self.plugin).inspect_media(
+            hash_val=media_id,
             question=question,
+            start_time=start_time,
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
-        return f"视频 [{media_id}] 分析转述结果:\n{caption_result}"
+        media_type = getattr(caption_obj, "media_type", "media") if caption_obj else "media"
+        return f"媒体 [{media_id}] ({media_type}) 分析转述结果:\n{result_str}"
 
 
 def remove_tools(context: Context):

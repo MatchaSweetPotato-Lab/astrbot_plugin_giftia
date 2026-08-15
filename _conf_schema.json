@@ -51,10 +51,10 @@
             },
             "video_caption_provider_ids": {
                 "type": "list",
-                "description": "视频转述提供商（按优先级多选）",
+                "description": "视频转述提供商（仅支持谷歌系，按优先级多选）",
                 "_special": "select_providers",
                 "default": [],
-                "hint": "选择用于视频转述的多模态提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则复用图片转述提供商或默认提供商。"
+                "hint": "目前只支持谷歌系的多模态模型，原生视频理解，非抽帧！！！选择用于视频转述的多模态提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则复用图片转述提供商或默认提供商。"
             },
             "video_max_file_size_mb": {
                 "description": "视频处理最大文件大小(MB)",
@@ -69,16 +69,10 @@
                 "hint": "视频时长不超过该阈值时直接转述，超过该阈值时需要指定起始时间由Bot使用工具进行切片转述。"
             },
             "defer_caption_enabled": {
-                "description": "按需延迟媒体转述",
+                "description": "非活跃时媒体不自动转述",
                 "type": "bool",
                 "default": true,
-                "hint": "在群组未活跃或机器人未被直接召唤时，不立刻调用大模型进行媒体（图片/语音）转述，直到决定回复时再按需补全转述，极大减少Token消耗。"
-            },
-            "max_deferred_captions": {
-                "description": "单次补全转述上限",
-                "type": "int",
-                "default": 5,
-                "hint": "当触发按需补全转述时，一次回复流程中最多对多少个未转述的媒体进行转述（避免上下文内未转述媒体过多时单次产生过多LLM调用）。"
+                "hint": "开启后，群聊在非活跃监听状态下收到的图片/语音不自动调用大模型转述，仅下载缓存并保留占位符 ID，Bot 在需要时可通过工具主动查看，极大减少 Token 消耗与唤醒延迟。"
             }
         }
     },
@@ -290,11 +284,11 @@
                 "default": 20,
                 "hint": "合并转发节点数不超过该值时直接返回原文，超过时才生成并复用总结"
             },
-            "inspect_video_enabled": {
-                "description": "启用视频查看与切片分析工具",
+            "inspect_media_enabled": {
+                "description": "启用多媒体按需查看工具",
                 "type": "bool",
                 "default": true,
-                "hint": "允许AI在需要时按media_id和起始时间切片查看视频内容"
+                "hint": "允许AI在需要时按 media_id 查看未转述的历史媒体（图片/语音/视频）或对已有媒体定向提问。"
             },
             "active_user_brief_limit": {
                 "description": "活跃用户摘要数量",

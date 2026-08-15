@@ -197,11 +197,6 @@ def build_xml_instructions(
             "- **退群**: `<leave/>`。退出当前群聊（请极度谨慎使用）。"
         )
 
-    if is_enabled(FeatureKey.RECAPTION):
-        interactive_lines.append(
-            '- **重新转述媒体**: `<recaption media_id="媒体ID">你想确定的问题或关注点</recaption>`。当其他人对某个媒体内容和你有争议时，可使用此标签自主选择该媒体重新进行转述。'
-        )
-
     if interactive_lines:
         prompt_lines.append("")
         prompt_lines.append("## 可用的可选互动与功能标签")

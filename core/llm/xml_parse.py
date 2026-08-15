@@ -442,19 +442,6 @@ class XmlParse:
                             f"Add sticker数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
-                elif tag_name == "recaption":
-                    media_id = self._attr_str(child, "media_id", "")
-                    question = child.get_text(strip=True)
-                    if media_id:
-                        result.recaption_requests.append({
-                            "media_id": media_id,
-                            "question": question,
-                        })
-                    else:
-                        logger.error(
-                            f"Recaption数据不完整，缺少media_id: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
-
 
             return result
         except Exception as e:

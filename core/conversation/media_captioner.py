@@ -28,13 +28,12 @@ class MediaCaptioner:
             return False
         return bool(caption_config.get("image_caption_enabled", True))
 
-    async def transcribe_media_if_deferred(
+    async def get_cached_media_captions(
         self, bot_name: str, recent_messages: list, caption_config: dict, group_or_user_id: str = ""
     ) -> list[MediaCaption]:
         """
-        根据近期消息中的媒体ID，如果未转述，进行懒加载转述，并缓存。
+        根据近期消息中的媒体ID，仅读取本地已有缓存的转述结果并添加表情包标记，不触发任何阻塞的延迟转述。
         """
-        # 先取所有消息的media_id，按从新到旧的顺序去重获取，确保越新的媒体越优先转述
         hash_vals = []
         seen_media = set()
         for msg in reversed(recent_messages):
@@ -44,101 +43,23 @@ class MediaCaptioner:
                     seen_media.add(media_id)
                     hash_vals.append(media_id)
 
-        try:
-            max_deferred = int(caption_config.get("max_deferred_captions", 5))
-        except (TypeError, ValueError):
-            max_deferred = 5
-        max_deferred = max(0, max_deferred)
-        deferred_count = 0
-
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:
             media_caption = await self.plugin.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
                 if not self._caption_enabled(media_caption, caption_config):
                     continue
-                # If the media caption has not been transcribed yet, transcribe it now
-                if not getattr(media_caption, "is_captioned", True):
-                    if deferred_count < max_deferred:
-                        deferred_count += 1
-                        logger.info(
-                            f"[Giftia] 延迟转述触发: hash={hash_val}, type={media_caption.media_type}"
-                        )
-                        try:
-                            cache_file = (
-                                StarTools.get_data_dir("astrbot_plugin_giftia")
-                                / "media_cache"
-                                / hash_val
-                            )
-                            if media_caption.media_type == "audio":
-                                audio_urls = (
-                                    [str(cache_file)]
-                                    if cache_file.exists()
-                                    else [media_caption.url]
-                                )
-                                if audio_urls and audio_urls[0]:
-                                    transcribed = await self.plugin.call_llm.call_llm_audio_caption(
-                                        audio_urls,
-                                        bot_name=bot_name,
-                                        group_or_user_id=group_or_user_id,
-                                    )
-                                    if transcribed:
-                                        media_caption.genre = transcribed.genre
-                                        media_caption.character = transcribed.character
-                                        media_caption.source = transcribed.source
-                                        media_caption.text = transcribed.text
-                                        media_caption.caption = transcribed.caption
-                                        media_caption.is_captioned = True
-                                        await self.plugin.data_cache.update_caption(
-                                            media_caption
-                                        )
-                            else:  # image media
-                                image_bytes = None
-                                if cache_file.exists():
-                                    try:
-                                        image_bytes = cache_file.read_bytes()
-                                    except Exception as e:
-                                        logger.error(f"[Giftia] 读取图片缓存失败: {e}")
-                                if not image_bytes and media_caption.url:
-                                    image_bytes = (
-                                        await self.plugin.http_manager.download_media(
-                                            media_caption.url
-                                        )
-                                    )
-                                if image_bytes:
-                                    base64s, is_animated = await asyncio.to_thread(
-                                        self.plugin.http_manager.handle_image,
-                                        image_bytes,
-                                    )
-                                    if base64s:
-                                        transcribed = await self.plugin.call_llm.call_llm_image_caption(
-                                            base64s,
-                                            bot_name=bot_name,
-                                            group_or_user_id=group_or_user_id,
-                                        )
-                                        if transcribed:
-                                            media_caption.genre = transcribed.genre
-                                            media_caption.character = (
-                                                transcribed.character
-                                            )
-                                            media_caption.source = transcribed.source
-                                            media_caption.text = transcribed.text
-                                            media_caption.caption = transcribed.caption
-                                            media_caption.is_captioned = True
-                                            await self.plugin.data_cache.update_caption(
-                                                media_caption
-                                            )
-                        except Exception as e:
-                            logger.error(
-                                f"[Giftia] 延迟转述处理失败: {e}", exc_info=True
-                            )
-
-                if await self.plugin.emoji_manager.has_sticker(bot_name, hash_val):
-                    media_caption = copy.copy(media_caption)
-                    media_caption.caption += " (你已收藏此表情包)"
-                media_captions.append(media_caption)
+                # 仅添加已经成功转述完成的记录
+                if getattr(media_caption, "is_captioned", False):
+                    if await self.plugin.emoji_manager.has_sticker(bot_name, hash_val):
+                        media_caption = copy.copy(media_caption)
+                        media_caption.caption = (media_caption.caption or "") + " (你已收藏此表情包)"
+                    media_captions.append(media_caption)
 
         return media_captions
+
+    # 兼容旧调用名
+    transcribe_media_if_deferred = get_cached_media_captions
 
     async def analyze_and_add_stickers(
         self,
@@ -224,27 +145,46 @@ class MediaCaptioner:
                         bot_name=bot_name, media_id=sticker_id, sticker=sticker
                     )
 
-    async def retranscribe_media_with_question(
-        self, bot_name: str, hash_val: str, question: str, group_or_user_id: str = ""
-    ) -> MediaCaption | None:
+    async def inspect_media(
+        self,
+        hash_val: str,
+        question: str = "",
+        start_time: int = 0,
+        bot_name: str = "",
+        group_or_user_id: str = "",
+    ) -> tuple[MediaCaption | None, str]:
         """
-        强制针对给定的 media_id (hash_val) 和额外关注的问题，进行重新转述，并更新缓存与数据库。
+        统一查看/重新转述媒体（图片/语音/视频）。
+        返回 (MediaCaption 对象, 格式化的文字结论)。
         """
         media_caption = await self.plugin.data_cache.get_caption_by_hash(hash_val)
         if not media_caption:
-            logger.warning(f"[Giftia] 重新转述失败：未找到对应的媒体缓存 hash={hash_val}")
-            return None
+            logger.warning(f"[Giftia] inspect_media 失败：未找到对应的媒体缓存 hash={hash_val}")
+            return None, f"未找到 media_id 为 [{hash_val}] 的媒体数据记录"
 
+        media_type = str(getattr(media_caption, "media_type", "") or "image").lower()
         logger.info(
-            f"[Giftia] 重新转述处理 (bot_name={bot_name}): hash={hash_val}, type={media_caption.media_type}, question={question}"
+            f"[Giftia] inspect_media 处理: bot_name={bot_name}, hash={hash_val}, type={media_type}, question={question}, start_time={start_time}"
         )
+
         try:
+            if media_type == "video":
+                caption_text = await self.transcribe_video_media(
+                    media_caption=media_caption,
+                    start_time=start_time,
+                    question=question,
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                )
+                return media_caption, caption_text
+
             cache_file = (
                 StarTools.get_data_dir("astrbot_plugin_giftia")
                 / "media_cache"
                 / hash_val
             )
-            if media_caption.media_type == "audio":
+
+            if media_type == "audio":
                 audio_urls = (
                     [str(cache_file)]
                     if cache_file.exists()
@@ -252,7 +192,10 @@ class MediaCaptioner:
                 )
                 if audio_urls and audio_urls[0]:
                     transcribed = await self.plugin.call_llm.call_llm_audio_caption(
-                        audio_urls, question=question, bot_name=bot_name, group_or_user_id=group_or_user_id
+                        audio_urls,
+                        question=question,
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
                     )
                     if transcribed:
                         media_caption.genre = transcribed.genre
@@ -262,17 +205,18 @@ class MediaCaptioner:
                         media_caption.caption = transcribed.caption
                         media_caption.is_captioned = True
                         await self.plugin.data_cache.update_caption(media_caption)
-                        return media_caption
-            elif media_caption.media_type == "video":
-                caption_text = await self.transcribe_video_media(
-                    media_caption,
-                    start_time=0,
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                )
-                media_caption.caption = caption_text
-                return media_caption
-            elif media_caption.media_type == "image":  # image media
+
+                        parts = []
+                        if media_caption.caption:
+                            parts.append(f"描述: {media_caption.caption}")
+                        if media_caption.text:
+                            parts.append(f"语音文字: {media_caption.text}")
+                        if media_caption.genre:
+                            parts.append(f"类型: {media_caption.genre}")
+                        return media_caption, "；".join(parts) if parts else "语音转述完成但无有效文本"
+                return media_caption, "语音文件缺失或转述失败"
+
+            else:  # image media
                 image_bytes = None
                 if cache_file.exists():
                     try:
@@ -280,19 +224,20 @@ class MediaCaptioner:
                     except Exception as e:
                         logger.error(f"[Giftia] 读取图片缓存失败: {e}")
                 if not image_bytes and media_caption.url:
-                    image_bytes = (
-                        await self.plugin.http_manager.download_media(
-                            media_caption.url
-                        )
+                    image_bytes = await self.plugin.http_manager.download_media(
+                        media_caption.url
                     )
                 if image_bytes:
-                    base64s, is_animated = await asyncio.to_thread(
+                    base64s, _is_animated = await asyncio.to_thread(
                         self.plugin.http_manager.handle_image,
                         image_bytes,
                     )
                     if base64s:
                         transcribed = await self.plugin.call_llm.call_llm_image_caption(
-                            base64s, question=question, bot_name=bot_name, group_or_user_id=group_or_user_id
+                            base64s,
+                            question=question,
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
                         )
                         if transcribed:
                             media_caption.genre = transcribed.genre
@@ -302,11 +247,38 @@ class MediaCaptioner:
                             media_caption.caption = transcribed.caption
                             media_caption.is_captioned = True
                             await self.plugin.data_cache.update_caption(media_caption)
-                            return media_caption
+
+                            parts = []
+                            if media_caption.caption:
+                                parts.append(f"画面描述: {media_caption.caption}")
+                            if media_caption.text:
+                                parts.append(f"文字: {media_caption.text}")
+                            if media_caption.genre:
+                                parts.append(f"类型: {media_caption.genre}")
+                            if media_caption.character:
+                                parts.append(f"人物: {media_caption.character}")
+                            if media_caption.source:
+                                parts.append(f"来源: {media_caption.source}")
+                            return media_caption, "；".join(parts) if parts else "图片转述完成但无有效信息"
+                return media_caption, "图片文件获取失败或无法解析"
+
         except Exception as e:
-            logger.error(f"[Giftia] 重新转述处理失败: {e}", exc_info=True)
-            raise e
-        return None
+            logger.error(f"[Giftia] inspect_media 处理失败: {e}", exc_info=True)
+            return media_caption, f"媒体分析失败: {e}"
+
+    async def retranscribe_media_with_question(
+        self, bot_name: str, hash_val: str, question: str, group_or_user_id: str = ""
+    ) -> MediaCaption | None:
+        """
+        兼容旧接口：强制针对给定的 media_id (hash_val) 和额外关注的问题重新转述。
+        """
+        media_caption, _ = await self.inspect_media(
+            hash_val=hash_val,
+            question=question,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+        )
+        return media_caption
 
     async def transcribe_video_media(
         self,
