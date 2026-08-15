@@ -225,9 +225,9 @@ function openBotEditModal(botName = null) {
     // 2. Decision Conf
     document.getElementById('bot-form-dec-enabled').checked = bot.decision_conf?.enabled !== false;
 
-    // Initialize Tag Select for Decision Providers
-    decProvidersTagSelect = new TagSelectComponent('bot-form-dec-providers', {
-        placeholder: '点击或检索选择小模型提供商...',
+    // Initialize Priority Select for Decision Providers
+    decProvidersTagSelect = new PrioritySelectComponent('bot-form-dec-providers', {
+        placeholder: '检索或输入小模型提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.decision_conf?.provider_ids || []
     });
@@ -243,9 +243,9 @@ function openBotEditModal(botName = null) {
     // 3. Reply Conf
     document.getElementById('bot-form-reply-enabled').checked = bot.llm_reply_conf?.enabled !== false;
 
-    // Initialize Tag Select for Reply Providers
-    replyProvidersTagSelect = new TagSelectComponent('bot-form-reply-providers', {
-        placeholder: '点击或检索选择大模型回复提供商...',
+    // Initialize Priority Select for Reply Providers
+    replyProvidersTagSelect = new PrioritySelectComponent('bot-form-reply-providers', {
+        placeholder: '检索或输入大模型回复提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.provider_ids || []
     });
