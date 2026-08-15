@@ -11,7 +11,13 @@ from astrbot.api.message_components import Image, Reply
 from astrbot.core.star.star_tools import StarTools
 
 from ..utils.schemas import MediaCaption, XmlLlmResult, extract_media_ids
-from ..utils.video_utils import check_ffmpeg_available, clip_video_ffmpeg, format_duration, format_file_size
+from ..utils.video_utils import (
+    check_ffmpeg_available,
+    clip_video_ffmpeg,
+    compress_video_ffmpeg,
+    format_duration,
+    format_file_size,
+)
 
 
 class MediaCaptioner:
@@ -335,21 +341,46 @@ class MediaCaptioner:
                 target_video_file = str(clip_output)
                 clip_info_str = f" (切片区间: {start_time}s ~ {start_time + threshold}s)"
 
-        # 拦截保护：检查目标视频/切片文件大小，防止超大视频爆内存
-        max_size_mb = int(caption_config.get("video_max_file_size_mb", 50))
-        max_size_bytes = max_size_mb * 1024 * 1024
+        # 1. 默认智能压制：如果目标视频/切片体积大于 15MB，自动调用 ffmpeg 压制为 720p/CRF 28，避免 Base64 膨胀导致 HTTP 413 Payload Too Large
+        auto_compress_threshold_bytes = 15 * 1024 * 1024
         if os.path.exists(target_video_file):
             actual_size = os.path.getsize(target_video_file)
-            if actual_size > max_size_bytes:
-                logger.warning(
-                    f"[Giftia] 视频文件 ({format_file_size(actual_size)}) 超出转述限制 ({max_size_mb}MB)，取消读取"
+            if actual_size > auto_compress_threshold_bytes:
+                compressed_output = cache_dir / f"{Path(target_video_file).stem}_compressed.mp4"
+                logger.info(
+                    f"[Giftia] 视频文件体积 ({format_file_size(actual_size)}) 超过 15MB 安全阈值，触发 ffmpeg 智能压制 (720p/CRF 28)"
                 )
-                return f"[视频文件体积 ({format_file_size(actual_size)}) 超过系统转述限制 ({max_size_mb}MB)，无法读取转述]"
+                if not compressed_output.exists():
+                    compressed_ok = await compress_video_ffmpeg(
+                        input_path=target_video_file,
+                        output_path=str(compressed_output),
+                    )
+                    if compressed_ok:
+                        target_video_file = str(compressed_output)
+                        actual_size = os.path.getsize(target_video_file)
+                        logger.info(
+                            f"[Giftia] 视频智能压制完成，压制后体积: {format_file_size(actual_size)}"
+                        )
+                else:
+                    target_video_file = str(compressed_output)
+                    actual_size = os.path.getsize(target_video_file)
 
-        # 强抓原生视频全量字节包转 Base64 (data:video/mp4;base64,...)
+        # 2. 发送前严格大小校验：如果压制后依然超过 20MB（视觉模型内联接收上限），直接返回工具结果告知 Bot 无法查看
+        max_safe_bytes = 20 * 1024 * 1024
+        if os.path.exists(target_video_file):
+            actual_size = os.path.getsize(target_video_file)
+            if actual_size > max_safe_bytes:
+                logger.warning(
+                    f"[Giftia] 视频文件 ({format_file_size(actual_size)}) 压制后仍超出视觉模型单次接收上限 (20MB)，拒绝发送"
+                )
+                return f"视频 [{media_caption.hash_val}] 体积过大 ({format_file_size(actual_size)})，经压制后仍超出视觉模型单次接收上限 (20MB)，无法直接查看。请提示用户发送更短的视频片段。"
+
+        # 3. 强抓原生视频全量字节包转 Base64 (data:video/mp4;base64,...)
         try:
             video_raw_bytes = Path(target_video_file).read_bytes()
             video_b64_str = base64.b64encode(video_raw_bytes).decode("utf-8")
+            if len(video_b64_str) > 28 * 1024 * 1024:
+                return f"视频 [{media_caption.hash_val}] Base64 编码数据量过大 ({format_file_size(len(video_b64_str))})，超出网关限制，无法直接查看。"
             video_data_url = f"data:video/mp4;base64,{video_b64_str}"
         except Exception as e:
             logger.error(f"[Giftia] 视频文件读取或编码 Base64 失败: {e}")
