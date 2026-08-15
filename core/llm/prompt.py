@@ -255,7 +255,7 @@ def process_media_captions_for_prompt(
                             f"[语音:{hash_val}]", f"[语音:{hash_val}][描述:{formatted}]"
                         )
 
-    # 剩余未内联的媒体（仅保留已有转述内容的媒体）
+    # 剩余未内联的媒体（仅保留已有转述内容的图片/语音媒体；视频转述不自动注入提示词注脚，以防上下文膨胀）
     remaining_captions = []
     if media_captions:
         for caption in media_captions:

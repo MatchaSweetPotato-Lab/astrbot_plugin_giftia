@@ -30,7 +30,9 @@ class MediaCaptioner:
         if media_type == "audio":
             return bool(caption_config.get("audio_caption_enabled", True))
         elif media_type == "video":
-            # 视频不触发全局被动/延迟自动转述，仅在 Bot 主动调用 inspect_video 工具时按需切片转述
+            # 设计用意：视频不触发全局被动监听/回复前自动转述，且不自动注入到回复提示词的媒体注脚区。
+            # 避免长视频或多切片内容占用大量对话上下文窗口（防止 Token 消耗过大与上下文膨胀）。
+            # 视频内容仅在 Bot 明确需要时，通过 inspect_media 工具按需切片与定向提问查看。
             return False
         return bool(caption_config.get("image_caption_enabled", True))
 
@@ -294,7 +296,13 @@ class MediaCaptioner:
         bot_name: str = "",
         group_or_user_id: str = "",
     ) -> str:
-        """对视频进行缓存、切片并调用 LLM 进行转述理解"""
+        """
+        对视频进行缓存、切片并调用 LLM 进行转述理解。
+
+        【设计意图与说明】：
+        1. 视频转述结果不会自动注入到 Bot 回复提示词的媒体注脚区，避免长视频或多次切片的详尽转述占用宝贵的对话上下文窗口。
+        2. 视频转述通过 inspect_media 工具按需实时调用，允许 Bot 在多轮交互中针对不同时间区间（start_time）或具体观察重点（question）深入查看。
+        """
         caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
         threshold = int(caption_config.get("video_clip_threshold_seconds", 30))
 

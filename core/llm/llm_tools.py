@@ -662,7 +662,7 @@ class InspectMediaTool(FunctionTool):
                 },
                 "question": {
                     "type": "string",
-                    "description": "希望能特别关注的观察指令或具体问题（例如：'查看图片中的招牌文字'、'听语音中的背景音乐'、'查看 15 秒出现的画面'）。可选填。",
+                    "description": "希望能特别关注的观察指令或具体问题。可选填。",
                 },
                 "start_time": {
                     "type": "integer",
