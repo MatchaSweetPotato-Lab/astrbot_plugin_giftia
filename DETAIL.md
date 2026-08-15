@@ -57,7 +57,7 @@
 ### 4. 媒体转述配置 (`caption_config`)
 - **启用图片转述 (`image_caption_enabled`)** / **启用音频转述 (`audio_caption_enabled`)**: 是否开启对多媒体消息的自动多模态识别与文字翻译。
 - **图片/音频转述提供商 (`image_caption_provider_ids` / `audio_caption_provider_ids`)**: 用于执行多模态转述的大模型通道。
-- **按需延迟媒体转述 (`defer_caption_enabled`)**: 开启后，仅在确定需要回复时，才会调用大模型补全本次会话涉及的图片/语音转述，大幅降低盲目识别带来的 Token 开销。
+- **非活跃时媒体不自动转述 (`defer_caption_enabled`)**: 开启后，在非活跃群聊中收到的图片/语音消息不立刻调用大模型转述，仅下载缓存并保留占位符 ID，Bot 在需要时可通过 `inspect_media` 工具主动查看，彻底消除唤醒时的多模态延迟并大幅节省 Token。
 
 ### 5. 记忆检索配置 (`memory_config`)
 - **启用嵌入模型 (`embedding_conf.enabled`)**: 是否启用本地或外部 Embedding 提供商，开启后才能使用长期记忆检索功能。

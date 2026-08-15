@@ -254,16 +254,16 @@ def process_media_captions_for_prompt(
                         msg.content = msg.content.replace(
                             f"[语音:{hash_val}]", f"[语音:{hash_val}][描述:{formatted}]"
                         )
-                elif hash_val not in caption_map:
-                    # 缺失的媒体替换为 generic 占位符
-                    msg.content = msg.content.replace(f"[图片:{hash_val}]", "[图片]")
-                    msg.content = msg.content.replace(f"[语音:{hash_val}]", "[语音]")
 
-    # 剩余未内联的媒体
+    # 剩余未内联的媒体（仅保留已有转述内容的图片/语音媒体；视频转述不自动注入提示词注脚，以防上下文膨胀）
     remaining_captions = []
     if media_captions:
         for caption in media_captions:
-            if caption and caption.hash_val not in inline_hashes:
+            if (
+                caption
+                and caption.hash_val not in inline_hashes
+                and (getattr(caption, "is_captioned", True) or getattr(caption, "caption", ""))
+            ):
                 remaining_captions.append(caption)
 
     return copied_messages, remaining_captions

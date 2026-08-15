@@ -7,6 +7,10 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# 视频转述核心体积阈值常量
+VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024   # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
+VIDEO_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024             # 20 MB：发往视觉模型的最终 Base64 请求体安全上限
+
 
 def check_ffmpeg_available() -> bool:
     """检查 ffmpeg 是否可用"""
@@ -347,7 +351,9 @@ async def clip_video_ffmpeg(
         logger.warning("[VideoUtils] ffmpeg 未找到，无法执行视频切片。")
         return False
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg",
         "-ss", str(max(0, start_time)),
@@ -372,4 +378,53 @@ async def clip_video_ffmpeg(
             return False
     except Exception as e:
         logger.error(f"[VideoUtils] 执行 ffmpeg 异常: {e}")
+        return False
+
+
+async def compress_video_ffmpeg(
+    input_path: str,
+    output_path: str,
+    max_width: int = 720,
+    crf: int = 28,
+    preset: str = "fast",
+) -> bool:
+    """
+    使用 ffmpeg 将高码率/大体积视频智能压缩（等比缩小至 720p 并使用 H.264 CRF 28 与 AAC 64k 音频压制），
+    防止 Base64 数据流过大引发 HTTP 413 Payload Too Large。
+    """
+    if not check_ffmpeg_available():
+        logger.warning("[VideoUtils] ffmpeg 未找到，无法执行视频压缩。")
+        return False
+
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-i", input_path,
+        "-vf", f"scale='min({max_width},iw)':-2",
+        "-c:v", "libx264",
+        "-crf", str(crf),
+        "-preset", preset,
+        "-c:a", "aac",
+        "-b:a", "64k",
+        "-movflags", "+faststart",
+        "-y",
+        output_path,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True
+        else:
+            logger.error(f"[VideoUtils] ffmpeg 压缩失败, exit_code={proc.returncode}, err={stderr.decode(errors='ignore')}")
+            return False
+    except Exception as e:
+        logger.error(f"[VideoUtils] 执行 ffmpeg 压缩异常: {e}")
         return False

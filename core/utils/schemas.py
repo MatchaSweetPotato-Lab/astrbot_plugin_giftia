@@ -27,7 +27,6 @@ class FeatureKey:
     TASK_BOARD = "task_board"
     STICKER = "sticker"
     MEMORY_QUERY_DELETE = "memory_query_delete"
-    RECAPTION = "recaption"
     SET_CALL_NAME = "set_call_name"
     LEAVE = "leave"
 
@@ -203,7 +202,6 @@ FLAT_CLOSABLE_TAGS = [
     "tts",
     "decision",
     "caption",
-    "recaption",
     "set_call_name",
 ]
 
@@ -278,8 +276,6 @@ class XmlLlmResult:
     task_board_actions: list[dict] = field(default_factory=list)
     # TTS 语音输出
     tts_segments: list[TTSRequest] = field(default_factory=list)
-    # 重新转述媒体请求
-    recaption_requests: list[dict] = field(default_factory=list)
     # 修改用户称呼请求
     set_call_names: list[SetCallNameRequest] = field(default_factory=list)
     # 保留 message / tts 在 LLM XML 中的出现顺序

@@ -129,53 +129,6 @@ class ToolExecutor:
                         f"# 消息上下文(ID:{item['message_id']})\n" + "\n".join(lines)
                     )
 
-        # 4.5. 重新转述媒体
-        if hasattr(llm_result, "recaption_requests") and llm_result.recaption_requests:
-            for req in llm_result.recaption_requests:
-                media_id = req["media_id"]
-                question = req["question"]
-                logger.info(f"[Giftia] 收到重新转述请求: media_id={media_id}, question={question}")
-                try:
-                    updated_caption = await self.media_captioner.retranscribe_media_with_question(
-                        bot_name=bot_name,
-                        hash_val=media_id,
-                        question=question,
-                        group_or_user_id=group_or_user_id,
-                    )
-                    if updated_caption:
-                        parts = []
-                        if updated_caption.caption:
-                            parts.append(f"描述: {updated_caption.caption}")
-                        if updated_caption.text:
-                            parts.append(f"文字: {updated_caption.text}")
-                        if updated_caption.genre:
-                            parts.append(f"类型: {updated_caption.genre}")
-                        if updated_caption.character:
-                            parts.append(f"角色: {updated_caption.character}")
-                        if updated_caption.source:
-                            parts.append(f"来源: {updated_caption.source}")
-                        
-                        detail = "；".join(parts) if parts else "无详细转述内容"
-                        other_data.append(
-                            f"# 重新转述媒体结果 (ID: {media_id})\n"
-                            f"重新转述成功，最新转述内容已同步更新至缓存和数据库：\n{detail}"
-                        )
-                        success_logs.append(
-                            f"<tool_call name=recaption args={{'media_id': '{media_id}', 'question': '{question}'}} status='finished'>\n"
-                            f"重新转述成功：{detail}\n"
-                            f"</tool_call>"
-                        )
-                    else:
-                        other_data.append(
-                            f"# 重新转述媒体结果 (ID: {media_id})\n"
-                            f"重新转述失败：未在缓存或数据库中找到对应的媒体，请确认 media_id 是否正确。"
-                        )
-                except Exception as e:
-                    other_data.append(
-                        f"# 重新转述媒体结果 (ID: {media_id})\n"
-                        f"重新转述执行发生错误: {e}"
-                    )
-
         # 5. 执行函数/MCP工具调用
         image_base64 = []
         if len(llm_result.tools_to_call) > 0:

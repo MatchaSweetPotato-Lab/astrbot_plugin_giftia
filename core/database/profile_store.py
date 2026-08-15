@@ -7,16 +7,12 @@ class ProfileStoreMixin:
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> str | None:
-        """获取用户画像"""
-        async with self.conn.execute(
-            """
-            SELECT profile FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
-            """,
-            (user_id, group_or_user_id, bot_name),
-        ) as cursor:
-            row = await cursor.fetchone()
-        return row["profile"] if row else None
+        """获取用户画像（通过结构化记录组装）"""
+        record = await self.get_user_profile_record(bot_name, group_or_user_id, user_id)
+        if not record:
+            return None
+        parts = [f"{k}：{v}" for k, v in record.items() if v and k not in ("aliases", "relation", "title")]
+        return "\n".join(parts) if parts else None
 
     async def get_user_aliases(
         self,
@@ -269,7 +265,6 @@ class ProfileStoreMixin:
         async with self.conn.execute(
             """
             SELECT
-                up.profile,
                 up.call_name,
                 up.aliases,
                 up.personality,
@@ -321,7 +316,6 @@ class ProfileStoreMixin:
                 up.user_id,
                 up.group_or_user_id,
                 up.bot_name,
-                up.profile,
                 up.call_name,
                 up.personality,
                 up.interests,
@@ -359,7 +353,6 @@ class ProfileStoreMixin:
                       AND ua.alias LIKE ?
                 )
                 OR up.title LIKE ?
-                OR up.profile LIKE ?
                 OR up.personality LIKE ?
                 OR up.interests LIKE ?
                 OR up.attitude LIKE ?
@@ -428,7 +421,6 @@ class ProfileStoreMixin:
         bot_name: str,
         group_or_user_id: str,
         user_id: str,
-        profile: str | None = None,
         relation: int | None = None,
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
@@ -444,8 +436,6 @@ class ProfileStoreMixin:
         ]
         profile_fields = profile_fields or {}
         update_fields = ["updated_at=excluded.updated_at"]
-        if profile is not None:
-            update_fields.insert(-1, "profile=excluded.profile")
         for column in profile_columns:
             if column in profile_fields:
                 update_fields.insert(-1, f"{column}=excluded.{column}")
@@ -460,7 +450,6 @@ class ProfileStoreMixin:
                 user_id,
                 group_or_user_id,
                 bot_name,
-                profile,
                 call_name,
                 aliases,
                 personality,
@@ -473,7 +462,7 @@ class ProfileStoreMixin:
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
                 {update_clause}
             """,
@@ -481,7 +470,6 @@ class ProfileStoreMixin:
                 user_id,
                 group_or_user_id,
                 bot_name,
-                profile if profile is not None else "",
                 profile_fields.get("call_name"),
                 None,
                 profile_fields.get("personality"),
@@ -606,9 +594,9 @@ class ProfileStoreMixin:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, profile, relation, title, created_at, updated_at)
+            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, relation, title, created_at, updated_at)
             VALUES (
-                ?, ?, ?, '', ?,
+                ?, ?, ?, ?,
                 (
                     SELECT title
                     FROM relations
@@ -646,9 +634,9 @@ class ProfileStoreMixin:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, profile, relation, title, created_at, updated_at)
+            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, relation, title, created_at, updated_at)
             VALUES (
-                ?, ?, ?, '',
+                ?, ?, ?,
                 (
                     SELECT relation
                     FROM relations

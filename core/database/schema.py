@@ -138,7 +138,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 group_or_user_id TEXT NOT NULL,
-                profile TEXT,
                 call_name TEXT,
                 aliases TEXT,
                 personality TEXT,

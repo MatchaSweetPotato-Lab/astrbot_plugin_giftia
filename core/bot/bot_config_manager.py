@@ -18,7 +18,6 @@ INTERACTIVE_FEATURES_METADATA = [
     {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
     {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
     {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},
-    {"key": FeatureKey.RECAPTION, "label": "重新转述媒体", "note": ""},
     {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},
     {"key": FeatureKey.LEAVE, "label": "主动退群", "note": "仅OneBot"},
 ]
