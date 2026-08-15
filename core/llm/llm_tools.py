@@ -1,3 +1,4 @@
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
 from ..conversation.media_captioner import MediaCaptioner
-from ..utils.schemas import MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
+from ..utils.schemas import MediaCaption, MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -480,19 +481,25 @@ class InspectForwardMessageTool(FunctionTool):
         from ..conversation.media_captioner import MediaCaptioner
 
         captioner = MediaCaptioner(plugin)
-        captions = []
-        for media_id in media_ids[:max_media]:
-            cap = await plugin.data_cache.get_caption_by_hash(media_id)
-            if cap and getattr(cap, "is_captioned", False):
-                captions.append(cap)
-            else:
+
+        async def _resolve_media_caption(media_id: str) -> MediaCaption | None:
+            try:
+                cap = await plugin.data_cache.get_caption_by_hash(media_id)
+                if cap and getattr(cap, "is_captioned", False):
+                    return cap
                 cap_obj, _ = await captioner.inspect_media(
                     hash_val=media_id,
                     bot_name=bot_name,
                 )
                 if cap_obj and getattr(cap_obj, "is_captioned", False):
-                    captions.append(cap_obj)
-        return captions
+                    return cap_obj
+            except Exception as e:
+                logger.warning(f"[Giftia] 转发媒体 [{media_id}] 解析转述失败: {e}")
+            return None
+
+        tasks = [_resolve_media_caption(media_id) for media_id in media_ids[:max_media]]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        return [c for c in results if c is not None]
 
     def _raw_threshold(self, plugin) -> int:
         return self._clean_int(

@@ -12,6 +12,9 @@ from astrbot.core.star.star_tools import StarTools
 
 from ..utils.schemas import MediaCaption, XmlLlmResult, extract_media_ids
 from ..utils.video_utils import (
+    VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES,
+    VIDEO_MAX_BASE64_BYTES,
+    VIDEO_MAX_SAFE_BYTES,
     check_ffmpeg_available,
     clip_video_ffmpeg,
     compress_video_ffmpeg,
@@ -175,6 +178,41 @@ class MediaCaptioner:
             f"[Giftia] inspect_media 处理: bot_name={bot_name}, hash={hash_val}, type={media_type}, question={question}, start_time={start_time}"
         )
 
+        # 性能与开销优化：若没有特定关注问题 (question 为空) 且为默认起始时间 (start_time == 0)，
+        # 且该媒体此前已经完成过转述，则直接复用已有的转述结果，避免重复触发视觉/音频大模型。
+        if (
+            not question
+            and start_time == 0
+            and getattr(media_caption, "is_captioned", False)
+            and getattr(media_caption, "caption", "")
+        ):
+            logger.info(
+                f"[Giftia] inspect_media 命中已有转述缓存，直接复用: hash={hash_val}, type={media_type}"
+            )
+            parts = []
+            if media_type == "video":
+                return media_caption, media_caption.caption
+            elif media_type == "audio":
+                if media_caption.caption:
+                    parts.append(f"描述: {media_caption.caption}")
+                if media_caption.text:
+                    parts.append(f"语音文字: {media_caption.text}")
+                if media_caption.genre:
+                    parts.append(f"类型: {media_caption.genre}")
+                return media_caption, "；".join(parts) if parts else media_caption.caption
+            else:  # image
+                if media_caption.caption:
+                    parts.append(f"画面描述: {media_caption.caption}")
+                if media_caption.text:
+                    parts.append(f"文字: {media_caption.text}")
+                if media_caption.genre:
+                    parts.append(f"类型: {media_caption.genre}")
+                if media_caption.character:
+                    parts.append(f"人物: {media_caption.character}")
+                if media_caption.source:
+                    parts.append(f"来源: {media_caption.source}")
+                return media_caption, "；".join(parts) if parts else media_caption.caption
+
         try:
             if media_type == "video":
                 caption_text = await self.transcribe_video_media(
@@ -302,7 +340,12 @@ class MediaCaptioner:
         【设计意图与说明】：
         1. 视频转述结果不会自动注入到 Bot 回复提示词的媒体注脚区，避免长视频或多次切片的详尽转述占用宝贵的对话上下文窗口。
         2. 视频转述通过 inspect_media 工具按需实时调用，允许 Bot 在多轮交互中针对不同时间区间（start_time）或具体观察重点（question）深入查看。
+        3. 若没有指定 question 且为默认起始时间 0，若已存在转述结论则直接秒级复用，避免重复触发视觉模型。
         """
+        # 缓存命中复用：若无 question 且 start_time == 0，若已转述过则直接返回已有转述结论
+        if not question and start_time == 0 and getattr(media_caption, "is_captioned", False) and getattr(media_caption, "caption", ""):
+            return media_caption.caption
+
         caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
         threshold = int(caption_config.get("video_clip_threshold_seconds", 30))
 
@@ -350,10 +393,9 @@ class MediaCaptioner:
                 clip_info_str = f" (切片区间: {start_time}s ~ {start_time + threshold}s)"
 
         # 1. 默认智能压制：如果目标视频/切片体积大于 15MB，自动调用 ffmpeg 压制为 720p/CRF 28，避免 Base64 膨胀导致 HTTP 413 Payload Too Large
-        auto_compress_threshold_bytes = 15 * 1024 * 1024
         if os.path.exists(target_video_file):
             actual_size = os.path.getsize(target_video_file)
-            if actual_size > auto_compress_threshold_bytes:
+            if actual_size > VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES:
                 compressed_output = cache_dir / f"{Path(target_video_file).stem}_compressed.mp4"
                 logger.info(
                     f"[Giftia] 视频文件体积 ({format_file_size(actual_size)}) 超过 15MB 安全阈值，触发 ffmpeg 智能压制 (720p/CRF 28)"
@@ -374,10 +416,9 @@ class MediaCaptioner:
                     actual_size = os.path.getsize(target_video_file)
 
         # 2. 发送前严格大小校验：如果压制后依然超过 20MB（视觉模型内联接收上限），直接返回工具结果告知 Bot 无法查看
-        max_safe_bytes = 20 * 1024 * 1024
         if os.path.exists(target_video_file):
             actual_size = os.path.getsize(target_video_file)
-            if actual_size > max_safe_bytes:
+            if actual_size > VIDEO_MAX_SAFE_BYTES:
                 logger.warning(
                     f"[Giftia] 视频文件 ({format_file_size(actual_size)}) 压制后仍超出视觉模型单次接收上限 (20MB)，拒绝发送"
                 )
@@ -387,7 +428,7 @@ class MediaCaptioner:
         try:
             video_raw_bytes = Path(target_video_file).read_bytes()
             video_b64_str = base64.b64encode(video_raw_bytes).decode("utf-8")
-            if len(video_b64_str) > 28 * 1024 * 1024:
+            if len(video_b64_str) > VIDEO_MAX_BASE64_BYTES:
                 return f"视频 [{media_caption.hash_val}] Base64 编码数据量过大 ({format_file_size(len(video_b64_str))})，超出网关限制，无法直接查看。"
             video_data_url = f"data:video/mp4;base64,{video_b64_str}"
         except Exception as e:
