@@ -8,9 +8,8 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 # 视频转述核心体积阈值常量
-VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 15 * 1024 * 1024  # 15 MB：超过此大小自动触发 ffmpeg 720p 智能压制
-VIDEO_MAX_SAFE_BYTES = 20 * 1024 * 1024                # 20 MB：视觉模型单次内联接收文件大小安全上限
-VIDEO_MAX_BASE64_BYTES = 28 * 1024 * 1024              # 28 MB：Base64 字符串数据量上限
+VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024   # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
+VIDEO_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024             # 20 MB：发往视觉模型的最终 Base64 请求体安全上限
 
 
 def check_ffmpeg_available() -> bool:
