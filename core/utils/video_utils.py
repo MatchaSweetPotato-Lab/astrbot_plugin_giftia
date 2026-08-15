@@ -347,7 +347,9 @@ async def clip_video_ffmpeg(
         logger.warning("[VideoUtils] ffmpeg 未找到，无法执行视频切片。")
         return False
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg",
         "-ss", str(max(0, start_time)),
@@ -390,7 +392,9 @@ async def compress_video_ffmpeg(
         logger.warning("[VideoUtils] ffmpeg 未找到，无法执行视频压缩。")
         return False
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg",
         "-i", input_path,
