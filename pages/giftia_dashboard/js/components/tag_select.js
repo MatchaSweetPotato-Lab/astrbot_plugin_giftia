@@ -118,7 +118,8 @@ class TagSelectComponent {
                 e.preventDefault();
                 const term = this.searchTerm.trim();
                 if (term) {
-                    this.addValue(term);
+                    const optId = this.resolveOptionId(term);
+                    this.addValue(optId);
                     this.searchTerm = '';
                     this.render();
                     this.rebindAndFocus();
@@ -149,25 +150,44 @@ class TagSelectComponent {
             }
         });
 
-        // Outside Click Listener
-        if (this.documentClickHandler) {
-            document.removeEventListener('click', this.documentClickHandler);
-        }
+        // Outside Click Listener setup
         this.documentClickHandler = (e) => {
             if (this.container && !this.container.contains(e.target)) {
                 this.setOpen(false);
             }
         };
-        document.addEventListener('click', this.documentClickHandler);
     }
 
     destroy() {
+        this.setOpen(false);
         if (this.documentClickHandler) {
             document.removeEventListener('click', this.documentClickHandler);
             this.documentClickHandler = null;
         }
     }
 
+    resolveOptionId(term) {
+        if (!term) return '';
+        const cleanTerm = term.trim();
+        if (!cleanTerm) return '';
+        const lower = cleanTerm.toLowerCase();
+
+        const exactId = this.availableOptions.find(o => (o.id || '').toLowerCase() === lower);
+        if (exactId) return exactId.id;
+
+        const exactName = this.availableOptions.find(o => (o.name || '').toLowerCase() === lower);
+        if (exactName) return exactName.id;
+
+        const matched = this.availableOptions.filter(o =>
+            (o.id || '').toLowerCase().includes(lower) ||
+            (o.name || '').toLowerCase().includes(lower)
+        );
+        if (matched.length === 1) {
+            return matched[0].id;
+        }
+
+        return cleanTerm;
+    }
 
     rebindAndFocus() {
         this.bindEvents();
@@ -179,10 +199,17 @@ class TagSelectComponent {
     }
 
     setOpen(open) {
+        if (this.isOpen === open) return;
         this.isOpen = open;
         const dropdown = this.container.querySelector('.tag-select-dropdown');
         if (dropdown) {
             dropdown.style.display = open ? 'block' : 'none';
+        }
+
+        if (open) {
+            if (this.documentClickHandler) document.addEventListener('click', this.documentClickHandler);
+        } else {
+            if (this.documentClickHandler) document.removeEventListener('click', this.documentClickHandler);
         }
     }
 
