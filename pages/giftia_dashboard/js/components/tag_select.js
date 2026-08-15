@@ -118,7 +118,8 @@ class TagSelectComponent {
                 e.preventDefault();
                 const term = this.searchTerm.trim();
                 if (term) {
-                    this.addValue(term);
+                    const optId = this.resolveOptionId(term);
+                    this.addValue(optId);
                     this.searchTerm = '';
                     this.render();
                     this.rebindAndFocus();
@@ -149,25 +150,28 @@ class TagSelectComponent {
             }
         });
 
-        // Outside Click Listener
-        if (this.documentClickHandler) {
-            document.removeEventListener('click', this.documentClickHandler);
-        }
+        // Outside Click Listener setup
         this.documentClickHandler = (e) => {
             if (this.container && !this.container.contains(e.target)) {
                 this.setOpen(false);
             }
         };
-        document.addEventListener('click', this.documentClickHandler);
     }
 
     destroy() {
+        this.setOpen(false);
         if (this.documentClickHandler) {
             document.removeEventListener('click', this.documentClickHandler);
             this.documentClickHandler = null;
         }
     }
 
+    resolveOptionId(term) {
+        if (typeof window.resolveOptionId === 'function') {
+            return window.resolveOptionId(term, this.availableOptions);
+        }
+        return (term || '').trim();
+    }
 
     rebindAndFocus() {
         this.bindEvents();
@@ -179,10 +183,17 @@ class TagSelectComponent {
     }
 
     setOpen(open) {
+        if (this.isOpen === open) return;
         this.isOpen = open;
         const dropdown = this.container.querySelector('.tag-select-dropdown');
         if (dropdown) {
             dropdown.style.display = open ? 'block' : 'none';
+        }
+
+        if (open) {
+            if (this.documentClickHandler) document.addEventListener('click', this.documentClickHandler);
+        } else {
+            if (this.documentClickHandler) document.removeEventListener('click', this.documentClickHandler);
         }
     }
 
