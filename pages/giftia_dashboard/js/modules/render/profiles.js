@@ -78,7 +78,6 @@ export function renderUserProfiles(items) {
     }
 
     container.innerHTML = items.map(item => {
-        const encodedProfile = encodeURIComponent(item.profile || "");
         const structured = {
             call_name: item.call_name || "",
             personality: item.personality || "",
@@ -88,7 +87,7 @@ export function renderUserProfiles(items) {
             extra: item.extra || ""
         };
         const encodedStructured = encodeURIComponent(JSON.stringify(structured));
-        const profileHtml = window.renderProfileCard(item.profile || "", {
+        const profileHtml = window.renderProfileCard("", {
             call_name: item.call_name,
             aliases: item.aliases,
             personality: item.personality,
@@ -130,7 +129,7 @@ export function renderUserProfiles(items) {
                         更新时间: ${window.formatDate(item.updated_at || item.created_at)}
                     </div>
                     <div class="profile-card-actions">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
                         <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
                         <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
                     </div>

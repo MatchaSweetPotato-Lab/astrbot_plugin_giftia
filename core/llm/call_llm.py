@@ -100,33 +100,15 @@ class CallLLM:
         self.plugin = plugin
         self.sticker_analysis_prompt = DEFAULT_STICKER_ANALYSIS_PROMPT
         # 图片转述配置
-        image_caption_provider_ids = caption_config.get("image_caption_provider_ids")
-        if not image_caption_provider_ids:
-            old_image_provider_id = caption_config.get("image_caption_provider_id")
-            if old_image_provider_id:
-                image_caption_provider_ids = [
-                    old_image_provider_id
-                ] + caption_config.get("image_caption_fallback_provider_ids", [])
-            else:
-                image_caption_provider_ids = []
+        image_caption_provider_ids = caption_config.get("image_caption_provider_ids") or []
         self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
         self.image_caption_prompt = DEFAULT_IMAGE_CAPTION_PROMPT
         # 音频转述配置
-        audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids")
-        if not audio_caption_provider_ids:
-            old_audio_provider_id = caption_config.get("audio_caption_provider_id")
-            if old_audio_provider_id:
-                audio_caption_provider_ids = [
-                    old_audio_provider_id
-                ] + caption_config.get("audio_caption_fallback_provider_ids", [])
-            else:
-                audio_caption_provider_ids = []
+        audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids") or []
         self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
         self.audio_caption_prompt = DEFAULT_AUDIO_CAPTION_PROMPT
         # 视频转述配置
-        video_caption_provider_ids = caption_config.get("video_caption_provider_ids")
-        if not video_caption_provider_ids:
-            video_caption_provider_ids = self.image_caption_provider_ids
+        video_caption_provider_ids = caption_config.get("video_caption_provider_ids") or []
         self.video_caption_provider_ids = [p for p in video_caption_provider_ids if p]
         self.video_caption_prompt = DEFAULT_VIDEO_CAPTION_PROMPT
 

@@ -1,8 +1,7 @@
 // Giftia Dashboard Modals - User & Group Profiles & Aliases Actions
 
 // 1. Edit User Profile
-window.openEditUserProfileModal = function(bot, group, user, profileEncoded, relation, titleEncoded, structuredEncoded) {
-    const profile = decodeURIComponent(profileEncoded || "");
+window.openEditUserProfileModal = function(bot, group, user, relation, titleEncoded, structuredEncoded) {
     const title = decodeURIComponent(titleEncoded || "");
     let structured = {};
     if (structuredEncoded) {
@@ -23,7 +22,6 @@ window.openEditUserProfileModal = function(bot, group, user, profileEncoded, rel
     document.getElementById("edit-user-prof-attitude").value = structured.attitude || "";
     document.getElementById("edit-user-prof-agreements").value = structured.agreements || "";
     document.getElementById("edit-user-prof-extra").value = structured.extra || "";
-    document.getElementById("edit-user-prof-text").value = profile;
     window.openModal("edit-user-profile-modal");
 };
 
@@ -33,7 +31,6 @@ window.submitEditUserProfile = async function() {
     const user = document.getElementById("edit-user-prof-user").value;
     const relationVal = document.getElementById("edit-user-prof-relation").value;
     const title = document.getElementById("edit-user-prof-title").value.trim();
-    const profile = document.getElementById("edit-user-prof-text").value.trim();
     const callName = document.getElementById("edit-user-prof-call-name").value.trim();
     const personality = document.getElementById("edit-user-prof-personality").value.trim();
     const interests = document.getElementById("edit-user-prof-interests").value.trim();
@@ -48,7 +45,6 @@ window.submitEditUserProfile = async function() {
             bot_name: bot,
             group_or_user_id: group,
             user_id: user,
-            profile: profile,
             relation: relation,
             title: title,
             call_name: callName,

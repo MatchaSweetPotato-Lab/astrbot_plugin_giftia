@@ -68,9 +68,6 @@ class MediaCaptioner:
 
         return media_captions
 
-    # 兼容旧调用名
-    transcribe_media_if_deferred = get_cached_media_captions
-
     async def analyze_and_add_stickers(
         self,
         event: AstrMessageEvent,
@@ -214,6 +211,8 @@ class MediaCaptioner:
 
         try:
             if media_type == "video":
+                if not getattr(self.plugin.call_llm, "video_caption_provider_ids", None):
+                    return media_caption, "未配置视频转述模型 (video_caption_provider_ids)，无法查看视频。"
                 caption_text = await self.transcribe_video_media(
                     media_caption=media_caption,
                     start_time=start_time,
@@ -230,6 +229,8 @@ class MediaCaptioner:
             )
 
             if media_type == "audio":
+                if not getattr(self.plugin.call_llm, "audio_caption_provider_ids", None):
+                    return media_caption, "未配置语音转述模型 (audio_caption_provider_ids)，无法查看语音。"
                 audio_urls = (
                     [str(cache_file)]
                     if cache_file.exists()
@@ -262,6 +263,8 @@ class MediaCaptioner:
                 return media_caption, "语音文件缺失或转述失败"
 
             else:  # image media
+                if not getattr(self.plugin.call_llm, "image_caption_provider_ids", None):
+                    return media_caption, "未配置图片转述模型 (image_caption_provider_ids)，无法查看图片。"
                 image_bytes = None
                 if cache_file.exists():
                     try:
@@ -310,20 +313,6 @@ class MediaCaptioner:
         except Exception as e:
             logger.error(f"[Giftia] inspect_media 处理失败: {e}", exc_info=True)
             return media_caption, f"媒体分析失败: {e}"
-
-    async def retranscribe_media_with_question(
-        self, bot_name: str, hash_val: str, question: str, group_or_user_id: str = ""
-    ) -> MediaCaption | None:
-        """
-        兼容旧接口：强制针对给定的 media_id (hash_val) 和额外关注的问题重新转述。
-        """
-        media_caption, _ = await self.inspect_media(
-            hash_val=hash_val,
-            question=question,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-        )
-        return media_caption
 
     async def transcribe_video_media(
         self,

@@ -41,7 +41,7 @@ class ProfileApi:
                 conditions.append("up.user_id = ?")
                 params.append(user_id)
             if search:
-                like_fields = ["up.profile"] + [
+                like_fields = [
                     f"up.{field}" for field in USER_PROFILE_FIELD_KEYS
                 ]
                 alias_exists = """
@@ -76,7 +76,7 @@ class ProfileApi:
             # Query data
             data_sql = f"""
                 SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id,
-                       up.profile, up.call_name, up.personality,
+                       up.call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
                        up.created_at, up.updated_at,
                        COALESCE(up.relation, r.relation) AS relation,
@@ -98,7 +98,6 @@ class ProfileApi:
                             "bot_name": r["bot_name"],
                             "group_or_user_id": r["group_or_user_id"],
                             "user_id": r["user_id"],
-                            "profile": r["profile"],
                             "call_name": r["call_name"] or "",
                             "aliases": await self.giftia.db.get_user_aliases_text(
                                 bot_name=r["bot_name"],
@@ -229,7 +228,6 @@ class ProfileApi:
             bot_name = body.get("bot_name")
             group_or_user_id = body.get("group_or_user_id")
             user_id = body.get("user_id")
-            profile = body.get("profile")
             relation = body.get("relation")
             title = body.get("title")
             profile_fields = {
@@ -252,7 +250,6 @@ class ProfileApi:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
-                profile=profile,
                 relation=parsed_relation,
                 title=parsed_title,
                 profile_fields=profile_fields,
