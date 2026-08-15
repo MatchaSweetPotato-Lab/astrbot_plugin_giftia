@@ -147,27 +147,10 @@ class XmlParse:
                             elif content.name == "sticker":
                                 sticker_id = self._attr_str(content, "sticker_id", "")
                                 if sticker_id:
-                                    local_path = self.emoji_manager.get_sticker_path(
-                                        sticker_id
+                                    img = await self._load_sticker_image(
+                                        sticker_id, xml_str
                                     )
-                                    img = None
-                                    if local_path:
-                                        img = Image.fromFileSystem(str(local_path))
-                                    else:
-                                        media_caption = (
-                                            await self.data_cache.get_caption_by_hash(
-                                                sticker_id
-                                            )
-                                        )
-                                        if media_caption and media_caption.url:
-                                            img = Image.fromURL(media_caption.url)
-                                        else:
-                                            logger.error(
-                                                f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
-                                            )
                                     if img:
-                                        img.sub_type = 1
-                                        img.subType = 1
                                         sub_chain.append(img)
                                         result.send_stickers.append(sticker_id)
                                         sub_log += f" [图片:{sticker_id}]"
@@ -213,23 +196,8 @@ class XmlParse:
                     sticker_id = self._attr_str(child, "sticker_id", "")
                     if sticker_id:
                         before_msg_count = len(result.msg_chains)
-                        local_path = self.emoji_manager.get_sticker_path(sticker_id)
-                        img = None
-                        if local_path:
-                            img = Image.fromFileSystem(str(local_path))
-                        else:
-                            media_caption = await self.data_cache.get_caption_by_hash(
-                                sticker_id
-                            )
-                            if media_caption and media_caption.url:
-                                img = Image.fromURL(media_caption.url)
-                            else:
-                                logger.error(
-                                    f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
-                                )
+                        img = await self._load_sticker_image(sticker_id, xml_str)
                         if img:
-                            img.sub_type = 1
-                            img.subType = 1
                             result.msg_chains.append([img])
                         if len(result.msg_chains) > before_msg_count:
                             result.send_stickers.append(sticker_id)
@@ -655,3 +623,26 @@ class XmlParse:
             return int(val_str)
         except ValueError:
             return default
+
+    async def _load_sticker_image(
+        self, sticker_id: str, xml_str: str = ""
+    ) -> Image | None:
+        """加载表情包并标记为小图表情 (sub_type=1)"""
+        if not sticker_id:
+            return None
+        local_path = self.emoji_manager.get_sticker_path(sticker_id)
+        img = None
+        if local_path:
+            img = Image.fromFileSystem(str(local_path))
+        else:
+            media_caption = await self.data_cache.get_caption_by_hash(sticker_id)
+            if media_caption and media_caption.url:
+                img = Image.fromURL(media_caption.url)
+            else:
+                logger.error(
+                    f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
+                )
+        if img:
+            img.sub_type = 1
+            img.subType = 1
+        return img
