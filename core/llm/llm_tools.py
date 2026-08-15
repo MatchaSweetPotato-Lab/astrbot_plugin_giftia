@@ -498,8 +498,14 @@ class InspectForwardMessageTool(FunctionTool):
             return None
 
         tasks = [_resolve_media_caption(media_id) for media_id in media_ids[:max_media]]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-        return [c for c in results if c is not None]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        valid_captions = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning(f"[Giftia] 转发媒体并发解析异常: {r}")
+            elif r is not None:
+                valid_captions.append(r)
+        return valid_captions
 
     def _raw_threshold(self, plugin) -> int:
         return self._clean_int(
