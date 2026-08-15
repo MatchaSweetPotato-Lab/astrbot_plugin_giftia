@@ -167,26 +167,10 @@ class TagSelectComponent {
     }
 
     resolveOptionId(term) {
-        if (!term) return '';
-        const cleanTerm = term.trim();
-        if (!cleanTerm) return '';
-        const lower = cleanTerm.toLowerCase();
-
-        const exactId = this.availableOptions.find(o => (o.id || '').toLowerCase() === lower);
-        if (exactId) return exactId.id;
-
-        const exactName = this.availableOptions.find(o => (o.name || '').toLowerCase() === lower);
-        if (exactName) return exactName.id;
-
-        const matched = this.availableOptions.filter(o =>
-            (o.id || '').toLowerCase().includes(lower) ||
-            (o.name || '').toLowerCase().includes(lower)
-        );
-        if (matched.length === 1) {
-            return matched[0].id;
+        if (typeof window.resolveOptionId === 'function') {
+            return window.resolveOptionId(term, this.availableOptions);
         }
-
-        return cleanTerm;
+        return (term || '').trim();
     }
 
     rebindAndFocus() {

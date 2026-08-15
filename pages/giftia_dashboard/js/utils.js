@@ -376,3 +376,47 @@ window.formatDuration = function(seconds) {
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
+/**
+ * Match an input search term against a list of candidate options and resolve to the best matching option ID.
+ * Hierarchy: Exact ID -> Exact Name -> Unique Match by (id, name, type) -> Fallback to raw trimmed term.
+ *
+ * @param {string} term Input string from user
+ * @param {Array<{id: string, name?: string, type?: string}>} availableOptions Candidate list
+ * @returns {string} Resolved option ID or cleaned custom term
+ */
+window.resolveOptionId = function(term, availableOptions = []) {
+    if (!term) return '';
+    const cleanTerm = String(term).trim();
+    if (!cleanTerm) return '';
+    const lower = cleanTerm.toLowerCase();
+
+    if (!Array.isArray(availableOptions) || availableOptions.length === 0) {
+        return cleanTerm;
+    }
+
+    // 1. Exact ID match (case-insensitive)
+    const exactId = availableOptions.find(o => (o && o.id ? String(o.id).toLowerCase() : '') === lower);
+    if (exactId && exactId.id) return exactId.id;
+
+    // 2. Exact Name match (case-insensitive)
+    const exactName = availableOptions.find(o => (o && o.name ? String(o.name).toLowerCase() : '') === lower);
+    if (exactName && exactName.id) return exactName.id;
+
+    // 3. Single matching candidate in options list
+    const matched = availableOptions.filter(o => {
+        if (!o) return false;
+        const id = o.id ? String(o.id).toLowerCase() : '';
+        const name = o.name ? String(o.name).toLowerCase() : '';
+        const type = o.type ? String(o.type).toLowerCase() : '';
+        return id.includes(lower) || name.includes(lower) || type.includes(lower);
+    });
+
+    if (matched.length === 1 && matched[0].id) {
+        return matched[0].id;
+    }
+
+    // 4. Fallback to custom term string
+    return cleanTerm;
+};
+
+

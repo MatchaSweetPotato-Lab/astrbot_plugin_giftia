@@ -212,31 +212,10 @@ class PrioritySelectComponent {
      * Resolve an input term to an existing option ID or return the clean custom term.
      */
     resolveProviderId(term) {
-        if (!term) return '';
-        const cleanTerm = term.trim();
-        if (!cleanTerm) return '';
-        const lower = cleanTerm.toLowerCase();
-
-        // 1. Exact ID match (case-insensitive)
-        const exactId = this.availableOptions.find(o => (o.id || '').toLowerCase() === lower);
-        if (exactId) return exactId.id;
-
-        // 2. Exact Name match (case-insensitive)
-        const exactName = this.availableOptions.find(o => (o.name || '').toLowerCase() === lower);
-        if (exactName) return exactName.id;
-
-        // 3. Single matching candidate in options list
-        const matched = this.availableOptions.filter(o =>
-            (o.id || '').toLowerCase().includes(lower) ||
-            (o.name || '').toLowerCase().includes(lower) ||
-            (o.type || '').toLowerCase().includes(lower)
-        );
-        if (matched.length === 1) {
-            return matched[0].id;
+        if (typeof window.resolveOptionId === 'function') {
+            return window.resolveOptionId(term, this.availableOptions);
         }
-
-        // 4. Fallback to custom term string
-        return cleanTerm;
+        return (term || '').trim();
     }
 
     /**
