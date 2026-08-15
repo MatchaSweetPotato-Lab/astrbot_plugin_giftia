@@ -150,9 +150,9 @@ class XmlParse:
                                     local_path = self.emoji_manager.get_sticker_path(
                                         sticker_id
                                     )
+                                    img = None
                                     if local_path:
                                         img = Image.fromFileSystem(str(local_path))
-                                        sub_chain.append(img)
                                     else:
                                         media_caption = (
                                             await self.data_cache.get_caption_by_hash(
@@ -161,13 +161,16 @@ class XmlParse:
                                         )
                                         if media_caption and media_caption.url:
                                             img = Image.fromURL(media_caption.url)
-                                            sub_chain.append(img)
                                         else:
                                             logger.error(
                                                 f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
                                             )
-                                    result.send_stickers.append(sticker_id)
-                                    sub_log += f" [图片:{sticker_id}]"
+                                    if img:
+                                        img.sub_type = 1
+                                        img.subType = 1
+                                        sub_chain.append(img)
+                                        result.send_stickers.append(sticker_id)
+                                        sub_log += f" [图片:{sticker_id}]"
                                 else:
                                     logger.error(
                                         f"Sticker组件缺少sticker_id属性: {content.attrs}, xml_str: {xml_str[:1000]}"
@@ -211,20 +214,23 @@ class XmlParse:
                     if sticker_id:
                         before_msg_count = len(result.msg_chains)
                         local_path = self.emoji_manager.get_sticker_path(sticker_id)
+                        img = None
                         if local_path:
                             img = Image.fromFileSystem(str(local_path))
-                            result.msg_chains.append([img])
                         else:
                             media_caption = await self.data_cache.get_caption_by_hash(
                                 sticker_id
                             )
                             if media_caption and media_caption.url:
                                 img = Image.fromURL(media_caption.url)
-                                result.msg_chains.append([img])
                             else:
                                 logger.error(
                                     f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
                                 )
+                        if img:
+                            img.sub_type = 1
+                            img.subType = 1
+                            result.msg_chains.append([img])
                         if len(result.msg_chains) > before_msg_count:
                             result.send_stickers.append(sticker_id)
                             result.msg_logs.append(f"[图片:{sticker_id}]")
