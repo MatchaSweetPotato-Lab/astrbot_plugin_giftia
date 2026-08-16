@@ -307,7 +307,7 @@ DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT = """# 角色与目标
 
 # 输出要求
 只输出需要更新的 XML 标签。如果没有任何画像或关系需要更新，请只输出：
-`<profile>无</profile>`"""
+`<summary_user_profile>无</summary_user_profile>`"""
 
 
 DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT = """# 角色与目标
