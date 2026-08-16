@@ -1,6 +1,20 @@
-name: astrbot_plugin_giftia # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: 🤍Giftia🤍 # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
-desc: 赋予AI人格与记忆，以时间沉淀情感，用记忆塑造行为。 # 插件简短描述
-version: v0.0.1 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Sukafon && e.e. # 作者
-repo: https://github.com/sukafon/astrbot_plugin_giftia # 插件的仓库地址
+name: astrbot_plugin_giftia
+display_name: 🤍Giftia🤍
+desc: 赋予 AI 人格与记忆，以时间沉淀情感，用记忆塑造行为。
+version: 0.0.1
+author: Sukafon && e.e.
+repo: https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia
+astrbot_version: ">=4.10.0"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+tags:
+  - 记忆
+  - 人格
+  - RAG
+  - 拟人
+  - 聊天
+  - 多模态
+  - WebUI
+  - 好感度
+  - TTS
