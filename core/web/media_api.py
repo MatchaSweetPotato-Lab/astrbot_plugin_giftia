@@ -112,7 +112,7 @@ class MediaApi:
             target_file = (target_dir / hash_val).resolve()
             if target_file.is_relative_to(target_dir):
                 return target_file
-        except (ValueError, Exception):
+        except (ValueError, OSError):
             return None
         return None
 
