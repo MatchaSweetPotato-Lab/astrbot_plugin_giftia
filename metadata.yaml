@@ -1,22 +1,6 @@
 name: astrbot_plugin_giftia
 display_name: 🤍Giftia🤍
 short_desc: 赋予 AI 人格与记忆，以时间沉淀情感，用记忆塑造行为。
-desc: |
-  **Giftia** 是一款面向 AstrBot 的高性能、专注于群聊与拟人交互场景的人格与记忆沉淀插件。
-
-  > “赋予 AI 人格与记忆，以时间沉淀情感，用记忆塑造行为。”
-
-  ### 核心特性
-  - **长短期记忆体系 (RAG)**：基于向量检索（LanceDB / FastEmbed / Rerank）与后台静默总结，自动提炼聊天记录并持久化沉淀。
-  - **小模型接话决策**：支持低延迟小模型预判群聊上下文、主动插嘴接话、兴趣关键词监听与独立概率触发。
-  - **动态画像与好感度**：自动维护用户画像、群画像、关系头衔与好感度动态演变，让 Bot 拥有真实的性格与羁绊。
-  - **低消耗媒体转述**：支持图片、语音与视频智能转述，具备非活跃群聊延迟转述（Defer Caption）机制，大幅节省 Token 与降低延迟。
-  - **独立可视化控制台**：配备全功能 WebUI Dashboard，支持多机器人实例隔离、配置热更、记忆与缓存可视化管理。
-  - **多模型降级与工具生态**：支持大模型提供商自动 Fallback / 轮询，内置戳一戳、复读、点赞等交互工具及 TTS 语音播报。
-
-  ### 使用说明
-  - 推荐在 AstrBot 面板中关闭原生 AI 对话总开关，由 Giftia 完全接管对话与接话决策。
-  - 支持通过插件 WebUI 仪表盘进行可视化机器人管理与提示词配置。
 version: 0.0.1
 author: Sukafon && e.e.
 repo: https://github.com/sukafon/astrbot_plugin_giftia
