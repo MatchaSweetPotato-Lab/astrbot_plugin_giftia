@@ -108,13 +108,17 @@ class MediaApi:
         cache_dir = self._get_cache_dir().resolve()
         target_dir = (cache_dir / "thumbnails").resolve() if is_thumbnail else cache_dir
 
+        # Ensure the target directory itself cannot escape the main cache root (e.g. via symlinks)
+        if not target_dir.is_relative_to(cache_dir):
+            return None
+
         try:
             target_file = (target_dir / hash_val).resolve()
             if target_file.is_relative_to(target_dir):
                 return target_file
+            return None
         except (ValueError, OSError):
             return None
-        return None
 
     # ── Caption CRUD ────────────────────────────────────────────────────
 
