@@ -672,7 +672,6 @@ def build_user_profile_block(
 ) -> str:
     parts = []
 
-    legacy_profile = ""
     if isinstance(user_profile, dict):
         structured_lines = []
         for field, label in USER_PROFILE_FIELDS:
@@ -681,12 +680,8 @@ def build_user_profile_block(
                 structured_lines.append(f"{label}：{value}")
         if structured_lines:
             parts.append("\n".join(structured_lines))
-        legacy_profile = user_profile.get("profile") or ""
-    else:
-        legacy_profile = user_profile or ""
-
-    if not parts:
-        profile_text = normalize_profile_text(legacy_profile)
+    elif user_profile:
+        profile_text = normalize_profile_text(user_profile)
         if profile_text:
             parts.append(profile_text)
 

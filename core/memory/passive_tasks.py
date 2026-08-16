@@ -249,28 +249,21 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 continue
 
             profile_fields = {}
-            legacy_profile = None
             if has_profile_content:
                 profile_fields = self._parse_session_profile_fields(profile_content)
-                if not profile_fields and not self._has_any_profile_field_tag(
-                    profile_content
-                ):
-                    legacy_profile = profile_content
 
             if (
                 not profile_fields
-                and legacy_profile is None
                 and title is None
                 and not relation_updates
             ):
                 continue
 
-            if profile_fields or legacy_profile is not None or title is not None:
+            if profile_fields or title is not None:
                 await self.plugin.data_cache.set_user_profile(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     user_id=resolved_user_id,
-                    profile=legacy_profile,
                     title=title,
                     profile_fields=profile_fields,
                 )

@@ -104,10 +104,6 @@ class PassiveContextMixin:
         if structured_lines:
             parts.append("结构化画像:\n" + "\n".join(structured_lines))
 
-        legacy_profile = normalize_profile_text(record.get("profile"))
-        if legacy_profile and not has_any_structured_field:
-            parts.append("历史画像参考:\n" + legacy_profile)
-
         relation_parts = []
         title = record.get("title") if include_relation_title else None
         relation = record.get("relation") if include_relation_score else None
