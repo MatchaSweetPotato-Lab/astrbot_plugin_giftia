@@ -1,4 +1,5 @@
 import mimetypes
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -88,6 +89,32 @@ class MediaApi:
         from astrbot.core.star.star_tools import StarTools
 
         return StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+
+    @classmethod
+    def _is_valid_hash(cls, hash_val: str | None) -> bool:
+        """Validate that hash_val is a safe, alphanumeric identifier without path traversal characters."""
+        if not hash_val or not isinstance(hash_val, str):
+            return False
+        # Allow alphanumeric, underscore, and hyphen (1-64 chars), strictly forbidding slashes, dots, or control chars
+        return bool(re.fullmatch(r"^[a-zA-Z0-9_\-]{1,64}$", hash_val))
+
+    def _resolve_cache_file(
+        self, hash_val: str, is_thumbnail: bool = False
+    ) -> Path | None:
+        """Safely resolve media cache file path ensuring it stays strictly inside the designated directory."""
+        if not self._is_valid_hash(hash_val):
+            return None
+
+        cache_dir = self._get_cache_dir().resolve()
+        target_dir = (cache_dir / "thumbnails").resolve() if is_thumbnail else cache_dir
+
+        try:
+            target_file = (target_dir / hash_val).resolve()
+            if target_file.is_relative_to(target_dir):
+                return target_file
+        except (ValueError, Exception):
+            return None
+        return None
 
     # ── Caption CRUD ────────────────────────────────────────────────────
 
@@ -186,6 +213,8 @@ class MediaApi:
 
             if not hash_val:
                 return error_response("缺少 hash_val 参数")
+            if not self._is_valid_hash(hash_val):
+                return error_response("无效的 hash_val 参数", status_code=400)
 
             # Fetch existing cache to verify and update
             media_caption = await self.giftia.data_cache.get_caption_by_hash(hash_val)
@@ -237,6 +266,8 @@ class MediaApi:
 
             if not hash_val:
                 return error_response("缺少 hash_val 参数")
+            if not self._is_valid_hash(hash_val):
+                return error_response("无效的 hash_val 参数", status_code=400)
 
             # Delete from DB
             await self.giftia.db.conn.execute(
@@ -249,13 +280,12 @@ class MediaApi:
 
             # Remove from local persistent disk cache
             try:
-                cache_dir = self._get_cache_dir()
-                cache_file = cache_dir / hash_val
-                if cache_file.exists():
+                cache_file = self._resolve_cache_file(hash_val)
+                if cache_file and cache_file.is_file():
                     cache_file.unlink()
                 # Also delete thumbnail if exists
-                thumb_file = cache_dir / "thumbnails" / hash_val
-                if thumb_file.exists():
+                thumb_file = self._resolve_cache_file(hash_val, is_thumbnail=True)
+                if thumb_file and thumb_file.is_file():
                     thumb_file.unlink()
             except Exception as e:
                 logger.error(f"[Giftia API] delete_media file error: {e}")
@@ -272,8 +302,8 @@ class MediaApi:
         try:
             from astrbot.api.web import file_response
 
-            cache_file = self._get_cache_dir() / hash_val
-            if not cache_file.exists():
+            cache_file = self._resolve_cache_file(hash_val)
+            if not cache_file or not cache_file.is_file():
                 return error_response("文件不存在或已被删除", status_code=404)
 
             media_caption = None
@@ -294,8 +324,8 @@ class MediaApi:
         try:
             import base64
 
-            cache_file = self._get_cache_dir() / hash_val
-            if not cache_file.exists():
+            cache_file = self._resolve_cache_file(hash_val)
+            if not cache_file or not cache_file.is_file():
                 return error_response("文件不存在或已被删除", status_code=404)
 
             media_caption = None
@@ -320,7 +350,6 @@ class MediaApi:
             file_size = cache_file.stat().st_size
 
             # 音频文件 < 1KB 视为不完整（基本只剩头部）
-            media_type = getattr(media_caption, "media_type", None)
             is_too_small = media_type in ("audio", "voice") and file_size < 1024
 
             with open(cache_file, "rb") as f:
@@ -353,8 +382,8 @@ class MediaApi:
         try:
             import base64
 
-            cache_file = self._get_cache_dir() / hash_val
-            if not cache_file.exists():
+            cache_file = self._resolve_cache_file(hash_val)
+            if not cache_file or not cache_file.is_file():
                 return error_response("文件不存在或已被删除", status_code=404)
 
             media_caption = None
@@ -371,8 +400,10 @@ class MediaApi:
 
             # If it's an image, try to load/generate thumbnail
             if content_type and content_type.startswith("image/"):
-                thumb_dir = cache_file.parent / "thumbnails"
-                thumb_file = thumb_dir / hash_val
+                thumb_file = self._resolve_cache_file(hash_val, is_thumbnail=True)
+                if not thumb_file:
+                    return error_response("无效的媒体标识", status_code=400)
+                thumb_dir = thumb_file.parent
                 use_thumbnail = False
 
                 try:
@@ -547,14 +578,12 @@ class MediaApi:
                 rows = await cursor.fetchall()
                 matching_hashes = [r["hash_val"] for r in rows if r["hash_val"]]
 
-            cache_dir = self._get_cache_dir()
-
             cleaned_count = 0
             freed_bytes = 0
 
             for hash_val in matching_hashes:
-                cache_file = cache_dir / hash_val
-                if cache_file.exists():
+                cache_file = self._resolve_cache_file(hash_val)
+                if cache_file and cache_file.is_file():
                     file_size = cache_file.stat().st_size
                     cleaned_count += 1
                     freed_bytes += file_size
@@ -567,8 +596,8 @@ class MediaApi:
                             )
                         # Also delete thumbnail if exists
                         try:
-                            thumb_file = cache_dir / "thumbnails" / hash_val
-                            if thumb_file.exists():
+                            thumb_file = self._resolve_cache_file(hash_val, is_thumbnail=True)
+                            if thumb_file and thumb_file.is_file():
                                 thumb_file.unlink()
                         except Exception as thumb_err:
                             logger.error(
