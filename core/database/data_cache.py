@@ -332,9 +332,6 @@ class DataCache:
         )
         if record:
             self.user_profile_records[fmt_key] = record
-            profile = record.get("profile")
-            if profile:
-                self.user_profiles[fmt_key] = profile
         return record
 
     async def set_user_profile(

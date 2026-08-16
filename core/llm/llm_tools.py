@@ -201,11 +201,6 @@ class SearchUserProfileTool(FunctionTool):
             if value:
                 lines.append(f"- {label}：{value}")
 
-        legacy_profile = normalize_profile_text(item.get("profile"))
-        if legacy_profile:
-            lines.append("- 旧画像参考：")
-            lines.extend(f"  {line}" for line in legacy_profile.splitlines())
-
         return "\n".join(lines)
 
     async def call(
