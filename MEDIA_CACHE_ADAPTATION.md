@@ -11,7 +11,7 @@
 为了保障拟人化聊天、记忆沉淀与多模态转述的稳定性，Giftia 插件内部实现了一套独立的**持久化媒体缓存与哈希索引机制**：
 
 1. **自动持久化缓存**：所有经过消息管线的媒体文件（图片、音频、视频）都会被下载并持久化保存至 Giftia 专属的数据目录下。
-2. **唯一哈希索引**：为每个媒体生成 16 位十六进制的稳定哈希 ID（例如 `a1b2c3d4e5f67890`）。
+2. **唯一哈希索引**：为每个媒体生成 16 位十六进制的稳定哈希 ID（例如 `a1b2c3d4e5f67890`，基于 xxHash3 算法截取前 16 位）。
 3. **上下文占位符替换**：Bot 在对话上下文中看到的媒体消息均被规范化为 `[图片:哈希ID]`、`[语音:哈希ID]` 或 `[视频:哈希ID]` 格式。
 
 ---
@@ -20,13 +20,13 @@
 
 当 AstrBot 启用了 Giftia，大模型在决策并调用其他插件注册的 LLM Tools（如生图、图生图、表情包制作、OCR、识图等）时：
 - 大模型传入工具参数的图片/媒体标识，通常会直接携带上下文中的 16 位哈希 ID，或者形如 `[图片:a1b2c3d4e5f67890]` 的占位符文本。
-- 如果第三方插件仅支持常规 `http(s)://` 链接或本地绝对应路径，会导致无法识别该参数并报错（如提示“文件不存在”或“无效的图片地址”）。
+- 如果第三方插件仅支持常规 `http(s)://` 链接或本地绝对路径，会导致无法识别该参数并报错（如提示“文件不存在”或“无效的图片地址”）。
 
 ---
 
 ## 适配方案与代码示例
 
-第三方插件只需在解析入参时，增加对 16 位哈希 ID 的识别并从 Giftia 缓存目录中读取文件即可完成无缝兼容。
+第三方插件只需在解析入参时，增加对哈希 ID 的识别并从 Giftia 缓存目录中读取文件即可完成无缝兼容。
 
 ### 1. 媒体缓存存储路径
 
@@ -44,16 +44,17 @@ giftia_cache_dir: Path = StarTools.get_data_dir("astrbot_plugin_giftia") / "medi
 
 ### 2. 通用媒体解析辅助函数
 
-以下是一个推荐的通用解析函数，可同时兼容 Giftia 哈希 ID、占位符、网络 URL、本地文件路径及 Base64 字符串：
+以下是一个推荐的通用解析函数，已内置对 Giftia 哈希 ID、占位符、网络 URL、本地文件路径及 Base64 数据的完整解析与解码处理：
 
 ```python
+import base64
 import os
 import re
-import urllib.parse
+import tempfile
 from pathlib import Path
 from astrbot.core.star.star_tools import StarTools
 
-# 匹配 16 位十六进制哈希或占位符
+# 匹配 16 位哈希或占位符（正则支持 16~64 位 Hex 以向前兼容平台 MD5/SHA256 文件名，索引时截取前 16 位）
 HASH_PATTERN = re.compile(r"(?:\[(?:图片|语音|视频):)?([a-fA-F0-9]{16,64})\]?")
 
 def resolve_media_to_path(media_input: str) -> Path | str | None:
@@ -62,9 +63,9 @@ def resolve_media_to_path(media_input: str) -> Path | str | None:
     
     支持格式：
     1. Giftia 媒体哈希 ID (如 "a1b2c3d4e5f67890" 或 "[图片:a1b2c3d4e5f67890]")
-    2. 网络 URL (以 http:// 或 https:// 开头)
-    3. 本地文件绝对路径 / 相对路径
-    4. file:// 协议路径
+    2. 本地文件绝对路径 / 相对路径 (含 file:// 协议)
+    3. Base64 编码数据 (支持 base64:// 前缀或 data:image/...;base64, 前缀，自动解码为临时文件)
+    4. 网络 URL (以 http:// 或 https:// 开头)
     """
     if not media_input or not isinstance(media_input, str):
         return None
@@ -76,10 +77,27 @@ def resolve_media_to_path(media_input: str) -> Path | str | None:
     if os.path.exists(local_path):
         return Path(local_path)
     
-    # 2. 检查是否为 Giftia 媒体哈希 ID
+    # 2. 检查是否为 Base64 编码数据（转存为临时文件供读取）
+    b64_content = None
+    if media_input.startswith("base64://"):
+        b64_content = media_input[9:]
+    elif media_input.startswith("data:image/") and ";base64," in media_input:
+        b64_content = media_input.split(";base64,", 1)[1]
+    
+    if b64_content:
+        try:
+            data = base64.b64decode(b64_content)
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".tmp")
+            temp_file.write(data)
+            temp_file.close()
+            return Path(temp_file.name)
+        except Exception:
+            pass
+
+    # 3. 检查是否为 Giftia 媒体哈希 ID（Giftia 标准哈希为 16 位，截取前 16 位检索缓存）
     match = HASH_PATTERN.search(media_input)
     if match:
-        hash_val = match.group(1).lower()
+        hash_val = match.group(1).lower()[:16]
         giftia_cache_file = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache" / hash_val
         if giftia_cache_file.exists():
             return giftia_cache_file
@@ -89,7 +107,7 @@ def resolve_media_to_path(media_input: str) -> Path | str | None:
         if fallback_path.exists():
             return fallback_path
     
-    # 3. 如果是网络 URL，直接返回由下游处理或自行下载
+    # 4. 如果是网络 URL，直接返回由下游处理或自行下载
     if media_input.startswith(("http://", "https://")):
         return media_input
     
