@@ -5,7 +5,7 @@ from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import At
+from astrbot.api.message_components import At, Node, Nodes, Plain
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.utils.session_lock import session_lock_manager
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
@@ -15,6 +15,8 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
 
+from ..utils.message_media import format_node_components
+from ..utils.notice_parse import NoticeParseResult
 from ..utils.qq_official_action import is_qq_official
 from ..utils.schemas import XmlLlmResult
 from .action_dispatcher import ActionDispatcher
@@ -56,8 +58,14 @@ class ChatManager:
                         logger.error(f"处理撤回消息失败: {e}")
                 return
 
-        # 3. 跳过机器人自己的发言
-        if event.get_sender_id() == event.get_self_id():
+        # 3. 跳过机器人自己的发言（通知类事件除外）
+        raw_msg = getattr(msg_obj, "raw_message", None) if msg_obj else None
+        post_type = (
+            raw_msg.get("post_type", "")
+            if hasattr(raw_msg, "get")
+            else getattr(raw_msg, "post_type", "")
+        ) if raw_msg else ""
+        if post_type != "notice" and event.get_sender_id() == event.get_self_id():
             logger.debug(f"{event.platform_meta.id} 消息为机器人自己的消息，跳过处理")
             return
 
@@ -213,6 +221,60 @@ class ChatManager:
             )
             return
 
+        # 检查是否为系统通知类事件，若是则统一在此处更新禁言状态，并跳过 LLM 回复（贴表情除外）
+        notice_result: NoticeParseResult | None = getattr(event, "_notice_result", None)
+        if notice_result is None:
+            raw_msg = getattr(getattr(event, "message_obj", None), "raw_message", None)
+            if (
+                raw_msg
+                and hasattr(self.plugin, "message_parser")
+                and hasattr(self.plugin.message_parser, "notice_parser")
+            ):
+                notice_result = await self.plugin.message_parser.notice_parser.parse_notice(
+                    event, raw_msg, bot_name
+                )
+                setattr(event, "_notice_result", notice_result)
+
+        if notice_result and notice_result.is_notice:
+            # 禁言事件：更新缓存并根据条件触发告状
+            if notice_result.is_ban_event:
+                if notice_result.is_all_member_ban:
+                    if hasattr(self.plugin, "data_cache"):
+                        self.plugin.data_cache.set_bot_muted(bot_name, notice_result.group_id, -1)
+                        logger.info(
+                            f"[Giftia] 群 {notice_result.group_id} 开启全员禁言，Bot {bot_name} 进入静默状态"
+                        )
+                elif notice_result.is_target_self:
+                    if hasattr(self.plugin, "data_cache"):
+                        self.plugin.data_cache.set_bot_muted(
+                            bot_name, notice_result.group_id, notice_result.duration
+                        )
+                        logger.info(
+                            f"[Giftia] Bot {bot_name} 在群 {notice_result.group_id} 被禁言 {notice_result.duration} 秒，进入静默状态"
+                        )
+
+                if notice_result.is_all_member_ban or notice_result.is_target_self:
+                    asyncio.create_task(
+                        self.report_ban_to_stronghold(
+                            bot_name=bot_name,
+                            event=event,
+                            notice_result=notice_result,
+                        )
+                    )
+            # 解禁事件：更新缓存
+            elif notice_result.is_lift_ban_event:
+                if (notice_result.is_all_member_ban or notice_result.is_target_self) and hasattr(self.plugin, "data_cache"):
+                    self.plugin.data_cache.lift_bot_mute(bot_name, notice_result.group_id)
+                    logger.info(
+                        f"[Giftia] 群 {notice_result.group_id} 禁言已解除，Bot {bot_name} 恢复正常发言状态"
+                    )
+
+            if notice_result.role == "system":
+                logger.debug(
+                    f"{bot_name} 系统通知事件({notice_result.notice_type or notice_result.sub_type})已记录入库，跳过 LLM 自动回复"
+                )
+                return
+
         # 5. 调用决策引擎进行发言判断
         (
             should_reply,
@@ -332,6 +394,17 @@ class ChatManager:
         remind_message: str,
     ):
         """处理定时任务调度提醒"""
+        # 检查是否处于禁言静默状态
+        if (
+            group_id
+            and hasattr(self.plugin, "data_cache")
+            and self.plugin.data_cache.is_bot_muted(bot_name, str(group_id))
+        ):
+            logger.info(
+                f"[Giftia] Bot {bot_name} 在群 {group_id} 处于禁言静默状态，跳过定时任务提醒"
+            )
+            return
+
         reply_key = f"{bot_name}:{group_or_user_id}"
         bot_conf = self.plugin.get_bot_config(bot_name)
         async with session_lock_manager.acquire_lock(unified_msg_origin):
@@ -456,3 +529,136 @@ class ChatManager:
         mock_event.get_sender_name = MagicMock(return_value=sender_name)
         mock_event.unified_msg_origin = unified_msg_origin
         return mock_event
+
+    async def report_ban_to_stronghold(
+        self,
+        bot_name: str,
+        event: AstrMessageEvent,
+        notice_result: NoticeParseResult | None = None,
+        raw_event: dict | None = None,
+    ):
+        """当 Bot 被禁言时，向预先设置的据点会话告状并发送前20条消息合并转发"""
+        try:
+            # 1. 检查是否配置了据点
+            if not hasattr(self.plugin, "data_cache"):
+                return
+            stronghold = await self.plugin.data_cache.get_stronghold()
+            if not stronghold or not stronghold.get("unified_msg_origin"):
+                logger.debug("[Giftia] 未设置通知据点，跳过禁言告状")
+                return
+
+            if notice_result is None and raw_event:
+                if hasattr(self.plugin, "message_parser") and hasattr(self.plugin.message_parser, "notice_parser"):
+                    notice_result = await self.plugin.message_parser.notice_parser.parse_notice(
+                        event, raw_event, bot_name
+                    )
+
+            if not notice_result:
+                return
+
+            # 只有在 ban 且 (目标是Bot自己 或 全员禁言) 时才触发告状（解禁时不触发告状）
+            if not notice_result.is_ban_event or not (
+                notice_result.is_target_self or notice_result.is_all_member_ban
+            ):
+                return
+
+            group_id = notice_result.group_id or str(event.get_group_id() or "")
+            # 避免向当前已被禁言的群聊重复发送
+            stronghold_origin = stronghold.get("unified_msg_origin")
+            stronghold_group = str(stronghold.get("group_id") or "")
+            if stronghold_group and stronghold_group == group_id:
+                logger.warning(
+                    f"[Giftia] 通知据点正是当前被禁言群 {group_id}，无法在该群发送告状消息"
+                )
+                return
+
+            # 3. 解析群名称与操作者名称
+            group_name = ""
+            if (
+                hasattr(event, "bot")
+                and hasattr(event.bot, "get_group_info")
+                and group_id.isdigit()
+            ):
+                try:
+                    info = await event.bot.get_group_info(
+                        group_id=int(group_id), no_cache=False
+                    )
+                    if isinstance(info, dict):
+                        group_name = info.get("group_name", "")
+                except Exception:
+                    pass
+            group_display = (
+                f"【{group_name}】({group_id})"
+                if group_name
+                else f"群聊({group_id})"
+            )
+
+            op_display = (
+                notice_result.operator_ref
+                or notice_result.operator_id
+                or "管理员"
+            )
+
+            # 4. 构造告状文本
+            if notice_result.is_all_member_ban:
+                complaint_text = f"呜呜呜~我在{group_display}被【{op_display}】开启全员禁言了！"
+            else:
+                from ..utils.notice_parse import NoticeParser
+
+                dur_text = NoticeParser.format_duration(notice_result.duration)
+                complaint_text = f"呜呜呜~我在{group_display}被【{op_display}】禁言了（时长：{dur_text}）！"
+
+            # 5. 发送告状文本
+            logger.info(
+                f"[Giftia] 正在向据点 {stronghold_origin} 发送禁言告状: {complaint_text}"
+            )
+            await self.plugin.context.send_message(
+                stronghold_origin, MessageChain([Plain(complaint_text)])
+            )
+
+            # 6. 获取禁言前 20 条真实聊天消息并构造合并转发（排除系统通知消息）
+            recent_msgs = await self.plugin.db.get_messages(
+                group_or_user_id=group_id, bot_name=bot_name, limit=40
+            )
+            # 过滤系统通知，确保转发的全为真实用户与Bot的聊天记录
+            chat_msgs = [
+                m
+                for m in (recent_msgs or [])
+                if str(getattr(m, "user_id", "") or "").lower() != "system"
+                and getattr(m, "role", "") != "system"
+                and not str(getattr(m, "content", "") or "").startswith(
+                    "【系统消息】"
+                )
+            ]
+            # 截取案发前最新的 20 条消息（切片修复）
+            recent_chat_msgs = chat_msgs[-20:]
+
+            if recent_chat_msgs:
+                nodes = []
+                media_cache_map: dict = {}
+                for msg in recent_chat_msgs:
+                    u_id = str(msg.user_id or "10000")
+                    u_name = str(msg.nickname or msg.user_id or "用户")
+                    content_str = msg.content or ""
+                    node_components = await format_node_components(
+                        content_str,
+                        db=self.plugin.db,
+                        media_cache_map=media_cache_map,
+                    )
+                    nodes.append(
+                        Node(
+                            uin=u_id,
+                            name=u_name,
+                            content=node_components,
+                        )
+                    )
+                if nodes:
+                    await self.plugin.context.send_message(
+                        stronghold_origin, MessageChain([Nodes(nodes)])
+                    )
+                    logger.info(
+                        f"[Giftia] 已向据点 {stronghold_origin} 发送禁言前 {len(nodes)} 条线索消息合并转发"
+                    )
+        except Exception as e:
+            logger.error(f"[Giftia] 向据点发送禁言告状失败: {e}", exc_info=True)
+

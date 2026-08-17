@@ -3,6 +3,7 @@ import copy
 import inspect
 import random
 import re
+import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -20,8 +21,13 @@ class AIoCQHTTPAction:
     这个类用于处理AIOCQHTTP的互动
     """
 
-    def __init__(self, sticker_summaries: list[str] | None = None):
+    def __init__(
+        self,
+        sticker_summaries: list[str] | None = None,
+        plugin=None,
+    ):
         self.sticker_summaries = sticker_summaries or ["图片"]
+        self.plugin = plugin
 
     async def send_message(
         self,
@@ -59,11 +65,52 @@ class AIoCQHTTPAction:
                     logger.error(f"[Giftia] 发送消息失败: {resp}")
                     return True, None
             except Exception as e:
+                # 兜底自愈机制：若捕获到被禁言异常（如离线/重启期间被禁言未收到 notice 事件），
+                # 主动查询群成员禁言剩余时间并更新静默状态，实现故障自愈并阻断后续重复报错。
+                if self._is_mute_or_ban_error(e):
+                    group_id = event.get_group_id()
+                    if (
+                        group_id
+                        and hasattr(self, "plugin")
+                        and self.plugin
+                        and hasattr(self.plugin, "data_cache")
+                    ):
+                        bot_name = self.plugin.adapter_id_map.get(
+                            event.platform_meta.id
+                        )
+                        if bot_name:
+                            duration = 600
+                            try:
+                                info = await event.bot.get_group_member_info(
+                                    group_id=int(group_id),
+                                    user_id=int(event.get_self_id()),
+                                    no_cache=True,
+                                )
+                                shut_up = int(info.get("shut_up_timestamp", 0) or 0)
+                                now = int(time.time())
+                                if shut_up > now:
+                                    duration = shut_up - now
+                            except Exception:
+                                pass
+                            self.plugin.data_cache.set_bot_muted(
+                                bot_name, str(group_id), duration
+                            )
+                            logger.warning(
+                                f"[Giftia] 消息发送被拒绝（账号已被禁言），Bot {bot_name} 在群 {group_id} 进入静默状态（约 {int(duration)} 秒）"
+                            )
                 logger.error(f"[Giftia] 发送消息失败: {e}")
                 return False, None
         else:
             logger.warning("[Giftia] 发送消息失败: 当前仅支持aiocqhttp平台")
             return False, None
+
+    def _is_mute_or_ban_error(self, exc: Exception) -> bool:
+        """检查异常是否为 OneBot 禁言错误（ActionFailed.retcode == 1200）。
+
+        作为【冷启动与自愈兜底】：当 Bot 离线重启期间被禁言未收到通知时，
+        在首次发消息被拒时感知 retcode == 1200 并自动进入静默，防止后续持续报错。
+        """
+        return getattr(exc, "retcode", None) == 1200
 
     @staticmethod
     def _unwrap_action_response(payload) -> dict:

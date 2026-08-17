@@ -83,6 +83,25 @@ class DecisionEngine:
         bot_conf = self.plugin.bot_map[bot_name]
         decision_conf = bot_conf.get("decision_conf", {})
 
+        group_id = event.get_group_id()
+        if (
+            group_id
+            and hasattr(self.plugin, "data_cache")
+            and self.plugin.data_cache.is_bot_muted(bot_name, str(group_id))
+        ):
+            remaining = self.plugin.data_cache.get_bot_mute_remaining(
+                bot_name, str(group_id)
+            )
+            rem_str = (
+                "全员禁言"
+                if remaining == float("inf")
+                else f"剩余约 {int(remaining)} 秒"
+            )
+            logger.info(
+                f"[Giftia] Bot {bot_name} 在群 {group_id} 处于禁言静默状态（{rem_str}），跳过回复决策"
+            )
+            return False, None, False, None
+
         is_just_at = any(
             isinstance(c, At) and str(c.qq) == event.get_self_id()
             for c in event.get_messages()

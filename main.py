@@ -1,12 +1,14 @@
 import asyncio
 import json
+import re
 from collections import defaultdict
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain, Reply, Image, Video
+from astrbot.api.message_components import Plain, Reply, Image, Video, Node, Nodes
 from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
+from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.utils.session_lock import session_lock_manager
 
 from .core.bot.bot_config_manager import BotConfigManager
@@ -143,7 +145,9 @@ class Giftia(Star):
         sticker_summaries = self.sticker_config.get(
             "sticker_summaries", ["这是一张表情包"]
         )
-        self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
+        self.aiocqhttp = AIoCQHTTPAction(
+            sticker_summaries=sticker_summaries, plugin=self
+        )
         self.qq_official = QQOfficialAction(sticker_summaries=sticker_summaries)
 
         # 缓存
@@ -493,24 +497,32 @@ class Giftia(Star):
         ):
             yield chunk
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("设置据点")
+    async def set_stronghold(self, event: AstrMessageEvent):
+        """将当前会话设置为通知据点（唯一，新设置会覆盖旧据点）"""
+        async for chunk in self.cmd_handler.set_stronghold(event):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("退群")
+    async def leave_group(self, event: AstrMessageEvent, group_id: str):
+        """退出指定群聊：/退群 <群号>"""
+        async for chunk in self.cmd_handler.leave_group(event, group_id):
+            yield chunk
+
     # ==================== 消息事件接收 ====================
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
     async def on_message(self, event: AstrMessageEvent):
-        """接收消息事件"""
-        # 忽略机器人自身发送的消息（例如平台回显/echo事件）
-        try:
-            if event.get_sender_id() == event.get_self_id():
-                return
-        except Exception:
-            pass
-
+        """接收消息事件入口"""
         # 如果是官方 QQ 平台消息，记录引用映射
         if hasattr(self, "qq_official") and self.qq_official.is_qq_official(event):
             msg_id, msg_idx = self.qq_official.extract_msg_id_and_idx(event)
             if msg_id and msg_idx:
                 self.qq_official.record_msg_mapping(msg_id, msg_idx)
 
+        # 统一由 chat_manager 处理消息/通知生命周期与过滤
         await self.chat_manager.handle_message(event)
 
     async def remind_task(
@@ -589,7 +601,19 @@ class Giftia(Star):
         bot_conf = self.bot_map.get(bot_name, {})
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
+        group_id = event.get_group_id()
         reply_key = f"{bot_name}:{group_or_user_id}"
+
+        # 检查是否处于禁言静默状态
+        if (
+            group_id
+            and hasattr(self, "data_cache")
+            and self.data_cache.is_bot_muted(bot_name, str(group_id))
+        ):
+            logger.warning(
+                f"[Giftia] Bot {bot_name} 在群 {group_id} 处于禁言静默状态，跳过绘图结果发送与唤醒"
+            )
+            return
 
         # 使用系统内置会话锁排队，确保等当前发言结束后再发送媒体和激活回复
         async with session_lock_manager.acquire_lock(event.unified_msg_origin):
