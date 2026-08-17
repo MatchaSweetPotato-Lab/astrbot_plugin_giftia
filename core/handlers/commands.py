@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import json
 import time
 from pathlib import Path
@@ -424,5 +425,93 @@ caption: {media_caption.caption}"""
         )
 
         yield await event.send(MessageChain([Plain(result)]))
+
+    async def set_stronghold(self, event: AstrMessageEvent):
+        """将当前会话设置为通知据点（唯一，覆盖旧据点）"""
+        unified_origin = event.unified_msg_origin
+        group_id = event.get_group_id()
+        sender_id = event.get_sender_id()
+        is_group = bool(group_id)
+        session_id = group_id if is_group else sender_id
+        platform_name = event.get_platform_name()
+        adapter_id = getattr(getattr(event, "platform_meta", None), "id", "")
+        self_id = event.get_self_id()
+
+        # 获取显示名称
+        display_name = f"群聊({group_id})" if is_group else f"私聊({sender_id})"
+        if is_group:
+            try:
+                group_obj = await event.get_group(group_id)
+                if group_obj and getattr(group_obj, "group_name", None):
+                    display_name = f"群聊【{group_obj.group_name}】({group_id})"
+            except Exception:
+                pass
+        else:
+            sender_name = event.get_sender_name()
+            if sender_name:
+                display_name = f"私聊【{sender_name}】({sender_id})"
+
+        stronghold_data = {
+            "unified_msg_origin": unified_origin,
+            "platform_name": platform_name,
+            "adapter_id": adapter_id,
+            "group_id": group_id or "",
+            "user_id": sender_id if not is_group else "",
+            "is_group": is_group,
+            "session_id": session_id,
+            "self_id": self_id,
+            "display_name": display_name,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        await self.plugin.data_cache.set_stronghold(stronghold_data)
+        yield await event.send(
+            MessageChain(
+                [
+                    Plain(
+                        f"已成功将当前会话 {display_name} 设置为通知据点！\n当机器人被禁言时，将自动在此处告状并同步现场线索。"
+                    )
+                ]
+            )
+        )
+
+    async def leave_group(self, event: AstrMessageEvent, group_id: str):
+        """退出指定群聊：/退群 <群号>"""
+        group_id_str = str(group_id or "").strip()
+        if not group_id_str:
+            yield await event.send(
+                MessageChain([Plain("请输入要退出的群号，例如：/退群 123456789")])
+            )
+            return
+
+        is_qq_official = (
+            hasattr(self.plugin, "qq_official")
+            and self.plugin.qq_official.is_qq_official(event)
+        )
+        if is_qq_official:
+            err_msg = await self.plugin.qq_official.group_leave(
+                event, group_id_str
+            )
+        else:
+            try:
+                g_id_int = int(group_id_str)
+                err_msg = await self.plugin.aiocqhttp.group_leave(
+                    event, g_id_int
+                )
+            except ValueError:
+                yield await event.send(
+                    MessageChain([Plain(f"群号格式错误: {group_id_str}，群号必须为纯数字")])
+                )
+                return
+
+        if err_msg:
+            yield await event.send(
+                MessageChain([Plain(f"退出群聊 {group_id_str} 失败: {err_msg}")])
+            )
+        else:
+            yield await event.send(
+                MessageChain([Plain(f"已成功退出群聊 {group_id_str}！")])
+            )
+
 
 

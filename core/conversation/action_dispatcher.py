@@ -402,6 +402,17 @@ class ActionDispatcher:
             )
             return
 
+        group_id = event.get_group_id()
+        if (
+            group_id
+            and hasattr(self.plugin, "data_cache")
+            and self.plugin.data_cache.is_bot_muted(bot_name, str(group_id))
+        ):
+            logger.info(
+                f"[Giftia] Bot {bot_name} 在群 {group_id} 处于禁言静默状态，拦截所有动作派发"
+            )
+            return
+
         bot_conf = self.plugin.get_bot_config(bot_name)
         if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
             self.plugin.tts_manager.preprocess_signatures(llm_result, bot_conf)

@@ -6,10 +6,14 @@ import re
 import urllib.parse
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from xxhash import xxh3_64_hexdigest
 
 from astrbot.api import logger
+from astrbot.api.message_components import Image, Plain, Video
+from astrbot.core.message.components import BaseMessageComponent
+from astrbot.core.star.star_tools import StarTools
 
 from ..database.data_cache import DataCache, is_temp_or_local_path
 from ..llm.call_llm import CallLLM
@@ -655,3 +659,92 @@ class MessageMediaFormatter:
             # 缓存
             await self.data_cache.set_caption(media_caption)
             return hash_val, media_caption
+
+
+async def format_node_components(
+    content_str: str,
+    db: Any = None,
+    media_cache_map: dict[str, BaseMessageComponent] | None = None,
+) -> list[BaseMessageComponent]:
+    """将消息文本及媒体标签 [图片:hash] [视频:hash] [语音:hash] 解析为可发送的 AstrBot 消息组件"""
+    if not content_str:
+        return [Plain("[无内容]")]
+
+    if media_cache_map is None:
+        media_cache_map = {}
+
+    cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+
+    # 匹配所有媒体标签 [图片:xxx], [视频:xxx], [语音:xxx]
+    media_tag_pattern = re.compile(r"(\[(?:图片|语音|视频):[^\]\s]+\])")
+    tokens = media_tag_pattern.split(content_str)
+    components: list[BaseMessageComponent] = []
+
+    for token in tokens:
+        if not token:
+            continue
+
+        img_match = re.match(r"^\[图片:([^\]\s]+)\]$", token)
+        video_match = re.match(r"^\[视频:([^\]\s]+)\]$", token)
+        audio_match = re.match(r"^\[语音:([^\]\s]+)\]$", token)
+
+        if img_match:
+            hash_val = img_match.group(1)
+            cached_comp = media_cache_map.get(f"img_{hash_val}")
+            if cached_comp:
+                components.append(cached_comp)
+                continue
+
+            cache_file = cache_dir / hash_val
+            comp: BaseMessageComponent
+            if cache_file.is_file():
+                comp = Image.fromFileSystem(str(cache_file))
+            elif db and hasattr(db, "get_media_caption_by_hash"):
+                try:
+                    caption = await db.get_media_caption_by_hash(hash_val)
+                    if caption and caption.url:
+                        comp = Image.fromURL(caption.url)
+                    else:
+                        comp = Plain("[图片]")
+                except Exception:
+                    comp = Plain("[图片]")
+            else:
+                comp = Plain("[图片]")
+
+            media_cache_map[f"img_{hash_val}"] = comp
+            components.append(comp)
+
+        elif video_match:
+            hash_val = video_match.group(1)
+            cached_comp = media_cache_map.get(f"vid_{hash_val}")
+            if cached_comp:
+                components.append(cached_comp)
+                continue
+
+            cache_file = cache_dir / hash_val
+            comp_v: BaseMessageComponent
+            if cache_file.is_file():
+                comp_v = Video.fromFileSystem(str(cache_file))
+            elif db and hasattr(db, "get_media_caption_by_hash"):
+                try:
+                    caption = await db.get_media_caption_by_hash(hash_val)
+                    if caption and caption.url:
+                        comp_v = Video.fromURL(caption.url)
+                    else:
+                        comp_v = Plain("[视频]")
+                except Exception:
+                    comp_v = Plain("[视频]")
+            else:
+                comp_v = Plain("[视频]")
+
+            media_cache_map[f"vid_{hash_val}"] = comp_v
+            components.append(comp_v)
+
+        elif audio_match:
+            # 语音消息不支持合并转发，占位即可
+            components.append(Plain("[语音]"))
+        else:
+            components.append(Plain(token))
+
+    return components or [Plain("[无内容]")]
+

@@ -65,6 +65,12 @@ class DataCache:
         self.group_profiles: dict[str, str] = {}
         self.bot_status: dict[str, Status] = {}
 
+        # 禁言静默状态缓存 bot_name:group_id -> expire_timestamp
+        self.muted_status: dict[str, float] = {}
+
+        # 告状据点配置缓存
+        self.stronghold: dict | None = None
+
         # 关系缓存
         self.relations: dict[
             str, tuple[int, str]
@@ -251,6 +257,78 @@ class DataCache:
             bot_name=bot_name,
             group_or_user_id=group_id,
             status=current_status,
+        )
+
+    def set_bot_muted(
+        self, bot_name: str, group_id: str, duration: int | float
+    ) -> None:
+        """设置指定群组中 Bot 的禁言状态。
+
+        Args:
+            bot_name: 机器人名称
+            group_id: 群号
+            duration: 禁言时长（秒）。若 < 0（如 -1）表示全员禁言等无限期禁言；若 == 0 则解除禁言。
+        """
+        fmt_key = f"{bot_name}:{group_id}"
+        if duration > 0:
+            self.muted_status[fmt_key] = time.time() + float(duration)
+        elif duration < 0:
+            self.muted_status[fmt_key] = float("inf")
+        else:
+            self.lift_bot_mute(bot_name, group_id)
+
+    def lift_bot_mute(self, bot_name: str, group_id: str) -> None:
+        """解除指定群组中 Bot 的禁言状态。"""
+        fmt_key = f"{bot_name}:{group_id}"
+        self.muted_status.pop(fmt_key, None)
+
+    def is_bot_muted(self, bot_name: str, group_id: str) -> bool:
+        """检查 Bot 在指定群组中是否处于禁言静默期。如果已过禁言期，自动解除并返回 False。"""
+        fmt_key = f"{bot_name}:{group_id}"
+        expire_time = self.muted_status.get(fmt_key)
+        if expire_time is None:
+            return False
+        if time.time() < expire_time:
+            return True
+        self.muted_status.pop(fmt_key, None)
+        return False
+
+    def get_bot_mute_remaining(self, bot_name: str, group_id: str) -> float:
+        """获取 Bot 在指定群组中的剩余禁言秒数。若未禁言返回 0.0，若为全员禁言返回 inf。"""
+        fmt_key = f"{bot_name}:{group_id}"
+        expire_time = self.muted_status.get(fmt_key)
+        if expire_time is None:
+            return 0.0
+        if expire_time == float("inf"):
+            return float("inf")
+        remaining = expire_time - time.time()
+        if remaining <= 0:
+            self.muted_status.pop(fmt_key, None)
+            return 0.0
+        return remaining
+
+    async def get_stronghold(self) -> dict | None:
+        """获取告状据点配置"""
+        if self.stronghold is not None:
+            return self.stronghold
+        val = await self.db.get_kv_data("stronghold_target")
+        if val:
+            try:
+                if isinstance(val, str):
+                    self.stronghold = json.loads(val)
+                elif isinstance(val, dict):
+                    self.stronghold = val
+            except Exception as e:
+                logger.error(f"[Giftia] 解析据点配置失败: {e}")
+                self.stronghold = None
+        return self.stronghold
+
+    async def set_stronghold(self, stronghold_data: dict) -> None:
+        """设置告状据点配置（覆盖更新）"""
+        self.stronghold = stronghold_data
+        await self.db.upsert_kv_data(
+            "stronghold_target",
+            json.dumps(stronghold_data, ensure_ascii=False),
         )
 
     async def get_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
