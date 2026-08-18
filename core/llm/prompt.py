@@ -92,6 +92,7 @@ def build_decision_prompt(
     short_tasks: list[ShortTask] | None = None,
     short_task_limit: int = 3,
     message_truncate_limit: int = 1500,
+    media_captions: list[MediaCaption] | None = None,
 ) -> str:
     # 1. Get original platform nickname for the current user
     curr_nickname = ""
@@ -103,56 +104,51 @@ def build_decision_prompt(
                 curr_nickname = msg.nickname
                 break
 
+    # 合并近期消息与当前消息进行统一的频次与内联处理
+    all_messages = []
+    if recent_messages:
+        all_messages.extend(recent_messages)
+    if current_message:
+        all_messages.append(current_message)
+
+    processed_messages, _ = process_media_captions_for_prompt(
+        messages=all_messages,
+        media_captions=media_captions or [],
+        force_inline_all=True,
+    )
+
     # Apply call names using the helper
-    copied_recent = _apply_call_names_to_messages(
-        messages=recent_messages,
+    processed_messages = _apply_call_names_to_messages(
+        messages=processed_messages,
         user_id=user_id,
         user_profile=user_profile,
         active_user_briefs=active_user_briefs,
     )
 
-    copied_current = None
-    if current_message:
-        copied_current = _apply_call_names_to_messages(
-            messages=[current_message],
-            user_id=user_id,
-            user_profile=user_profile,
-            active_user_briefs=active_user_briefs,
-        )[0]
+    # 拆分回 recent_messages 和 current_message
+    copied_recent = (
+        processed_messages[: len(recent_messages)] if recent_messages else []
+    )
+    copied_current = (
+        processed_messages[len(recent_messages) :][0] if current_message else None
+    )
 
     user_prompt = []
-    # 时间
-    user_prompt.append(
-        f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"
-    )
-    # 群数据
+    # 1. 静态前缀区：群基础数据与群画像/群规（最稳固，优先命中前缀缓存）
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
-    # 机器人状态
-    if bot_status:
-        user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     # 群画像
     group_profile_text = normalize_profile_text(group_profile)
     if group_profile_text:
         user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
-    # 用户画像
-    user_profile_block = build_user_profile_block(
-        user_id=user_id,
-        user_profile=user_profile,
-        user_relation=user_relation,
-        nickname=curr_nickname,
-    )
-    if user_profile_block:
-        user_prompt.append(user_profile_block)
-    # 窗口内其他活跃用户摘要
-    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
-    if active_user_briefs_block:
-        user_prompt.append(active_user_briefs_block)
-    # 短期任务看板
+
+    # 2. 半静态上下文区：任务看板、活跃成员摘要、合并转发索引与历史消息
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
     if task_board_block:
         user_prompt.append(task_board_block)
-    # 合并转发消息内容
+    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
+    if active_user_briefs_block:
+        user_prompt.append(active_user_briefs_block)
     decision_messages = []
     if copied_recent:
         decision_messages.extend(copied_recent)
@@ -169,11 +165,26 @@ def build_decision_prompt(
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
         )
-    # 当前消息
+
+    # 3. 动态触发区：当前发言人画像、机器人当前状态、当前消息与当前时间戳
+    user_profile_block = build_user_profile_block(
+        user_id=user_id,
+        user_profile=user_profile,
+        user_relation=user_relation,
+        nickname=curr_nickname,
+    )
+    if user_profile_block:
+        user_prompt.append(user_profile_block)
+    if bot_status:
+        user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     if copied_current:
         user_prompt.append(
             f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
         )
+    # 当前时间戳置底，避免破坏前缀缓存
+    user_prompt.append(
+        f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"
+    )
 
     return "\n\n".join(user_prompt)
 
@@ -182,9 +193,11 @@ def process_media_captions_for_prompt(
     messages: list[MessageData],
     media_captions: list[MediaCaption],
     threshold: int = 100,
+    force_inline_all: bool = False,
 ) -> tuple[list[MessageData], list[MediaCaption]]:
     """
     分析消息列表与媒体转述，进行内联判定与替换。
+    force_inline_all: 若为 True，则无视长度和频次限制，将所有已有转述 100% 全部内联替换到正文中。
     返回: (修改后的消息副本列表, 剩余未内联的媒体转述列表)
     """
     from collections import Counter
@@ -212,6 +225,10 @@ def process_media_captions_for_prompt(
     # 过滤和替换逻辑
     inline_hashes = set()
     for hash_val, caption in caption_map.items():
+        if force_inline_all:
+            inline_hashes.add(hash_val)
+            continue
+
         # 计算非空描述性字段的总长度
         raw_text = "".join(
             getattr(caption, f, "")
@@ -322,35 +339,22 @@ def build_reply_prompt(
     )
 
     user_prompt = []
-    # 时间
-    user_prompt.append(
-        f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"
-    )
-    # 群数据
+
+    # 1. 静态前缀区：群基础数据、群画像/群规、短期任务看板、活跃成员摘要（极度稳固，优先命中前缀缓存）
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
     # 群画像
     group_profile_text = normalize_profile_text(group_profile)
     if group_profile_text:
         user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
-    # 用户画像
-    user_profile_block = build_user_profile_block(
-        user_id=user_id,
-        user_profile=user_profile,
-        user_relation=user_relation,
-        nickname=nickname,
-    )
-    if user_profile_block:
-        user_prompt.append(user_profile_block)
-    # 窗口内其他活跃用户摘要
-    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
-    if active_user_briefs_block:
-        user_prompt.append(active_user_briefs_block)
-    # 短期任务看板
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
     if task_board_block:
         user_prompt.append(task_board_block)
-    # 长期记忆
+    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
+    if active_user_briefs_block:
+        user_prompt.append(active_user_briefs_block)
+
+    # 2. 长期记忆背景：全量长期记忆库与会话累计召回记忆
     if long_memories:
         user_prompt.append(
             f"<long_memories>\n{build_long_memories(long_memories)}\n</long_memories>"
@@ -362,7 +366,8 @@ def build_reply_prompt(
             f"{build_session_recalled_memories(session_recalled_memories)}\n"
             "</session_recalled_memories>"
         )
-    # 媒体转述
+
+    # 3. 对话上下文流：未内联独立长媒体转述、合并转发索引与近期历史消息
     if remaining_captions:
         media_captions_block = "\n".join(
             parse_caption_to_str(caption) for caption in remaining_captions
@@ -380,12 +385,16 @@ def build_reply_prompt(
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
         )
-    # 当前消息
-    if copied_current:
-        user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
-        )
-    # 机器人状态
+
+    # 4. 即时刺激与心境生成区（高权重近因区，为生成提供直接依据，变动置底保护上方缓存）
+    user_profile_block = build_user_profile_block(
+        user_id=user_id,
+        user_profile=user_profile,
+        user_relation=user_relation,
+        nickname=nickname,
+    )
+    if user_profile_block:
+        user_prompt.append(user_profile_block)
     if bot_status:
         user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     # 表情包
@@ -402,7 +411,14 @@ def build_reply_prompt(
     # 工具结果
     if tool_results:
         user_prompt.append(f"<tool_results>\n{tool_results}\n</tool_results>")
-    # 其他数据
+    if copied_current:
+        user_prompt.append(
+            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
+        )
+    # 当前时间戳置底，避免破坏前缀缓存
+    user_prompt.append(
+        f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"
+    )
     if other_data:
         user_prompt.append("\n\n".join(other_data))
 
