@@ -6,7 +6,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
-[![AstrBot](https://img.shields.io/badge/AstrBot-4.10.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
+[![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![Giftia](https://img.shields.io/badge/Giftia-v0.1.2-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
@@ -74,6 +74,10 @@
 关于完整的常用命令列表、所有配置项的详细说明以及提示词模版详解，请参阅：
 - [**Giftia 详细使用文档 (DETAIL.md)**](DETAIL.md)
 - [**媒体缓存与第三方插件适配指南 (MEDIA_CACHE_ADAPTATION.md)**](MEDIA_CACHE_ADAPTATION.md)
+
+## 交流与反馈
+
+- **bot拷打群**：123180736
 
 ## 致谢
 感谢 Codex 和 Google One PRO 提供代码补全与参考支持！
