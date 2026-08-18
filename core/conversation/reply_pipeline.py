@@ -143,8 +143,6 @@ class ReplyPipeline:
         group_or_user_id: str,
         current_message: MessageData | None = None,
         remind_message: str | None = None,
-        image_urls: list[str] | None = None,
-        audio_urls: list[str] | None = None,
         relevant_memories: list[str] | None = None,
         pending_recall_memories: list[dict] | None = None,
         tool_results: list[dict[str, str]] | None = None,
@@ -374,8 +372,6 @@ class ReplyPipeline:
                 and self.plugin.tts_manager.enabled(bot_conf)
                 else ""
             ),
-            image_urls=image_urls,
-            audio_urls=audio_urls,
             timeout=self.plugin.tools_config.get("timeout", 120),
         )
 

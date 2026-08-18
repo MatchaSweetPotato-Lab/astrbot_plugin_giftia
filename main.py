@@ -704,7 +704,6 @@ class Giftia(Star):
                         nickname=nickname,
                         group_or_user_id=group_or_user_id,
                         remind_message=remind_msg,
-                        image_urls=[],
                         pending_recall_memories=pending_recall_memories,
                     ):
                         if chunk:

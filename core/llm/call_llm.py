@@ -117,8 +117,6 @@ class CallLLM:
         provider_ids: list[str],
         system_prompt: str,
         user_prompt: str,
-        image_urls: list[str] | None = None,
-        audio_urls: list[str] | None = None,
         bot_name: str = "",
         group_or_user_id: str = "",
     ) -> Decision | None:
@@ -140,8 +138,6 @@ class CallLLM:
                         chat_provider_id=provider_id,
                         system_prompt=actual_system_prompt,
                         prompt=user_prompt,
-                        image_urls=image_urls,
-                        audio_urls=audio_urls,
                     )
                     parsed_result = None
                     is_parsed = False
@@ -194,14 +190,10 @@ class CallLLM:
         force_xml_tools: bool = False,
         enabled_features: list[str] | None = None,
         tts_instruction: str = "",
-        image_urls: list[str] | None = None,
-        audio_urls: list[str] | None = None,
         is_qq_official: bool = False,
         persona_tools: list[str] | None = None,
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
-        # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
-        # logger.info(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
         is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
 
         for provider_id in provider_ids:
@@ -321,9 +313,8 @@ class CallLLM:
                                 actual_system_prompt + xml_tools_instruction
                             )
 
-                    logger.debug(
-                        f"[Giftia] 触发大模型回复，最终系统提示词 (system_prompt):\n{actual_system_prompt}"
-                    )
+                    logger.debug(f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>")
+                    logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
 
                     if use_source_tools and not force_xml_tools:
                         llm_resp = await self.context.tool_loop_agent(
@@ -331,8 +322,6 @@ class CallLLM:
                             chat_provider_id=provider_id,
                             system_prompt=actual_system_prompt,
                             prompt=user_prompt,
-                            image_urls=image_urls,
-                            audio_urls=audio_urls,
                             tools=tools_set,
                             max_steps=10,
                             tool_call_timeout=timeout,
@@ -344,8 +333,6 @@ class CallLLM:
                             chat_provider_id=provider_id,
                             system_prompt=actual_system_prompt,
                             prompt=user_prompt,
-                            image_urls=image_urls,
-                            audio_urls=audio_urls,
                             tool_call_timeout=timeout,
                             stream=True,
                         )

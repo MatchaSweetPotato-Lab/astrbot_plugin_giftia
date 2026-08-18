@@ -287,8 +287,6 @@ class ChatManager:
             nickname=nickname,
             group_or_user_id=group_or_user_id,
             current_message=current_message,
-            image_urls=image_urls,
-            audio_urls=audio_urls,
         )
 
         if not should_reply:
@@ -311,8 +309,6 @@ class ChatManager:
                     nickname=nickname,
                     group_or_user_id=group_or_user_id,
                     current_message=current_message,
-                    image_urls=image_urls,
-                    audio_urls=audio_urls,
                     relevant_memories=relevant_memories,
                     pending_recall_memories=pending_recall_memories,
                 ):

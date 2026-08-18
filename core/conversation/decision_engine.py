@@ -9,12 +9,14 @@ from astrbot.api.message_components import At
 
 from ..llm.prompt import build_decision_prompt
 from ..utils.schemas import MessageData
+from .media_captioner import MediaCaptioner
 from .memory_recall import search_memories_with_rerank
 
 
 class DecisionEngine:
     def __init__(self, plugin):
         self.plugin = plugin
+        self.media_captioner = MediaCaptioner(plugin)
 
     def check_whitelists(self, event: AstrMessageEvent) -> bool:
         """检查白名单配置。返回 True 表示通过，False 表示拦截。"""
@@ -73,8 +75,6 @@ class DecisionEngine:
         nickname: str,
         group_or_user_id: str,
         current_message: MessageData,
-        image_urls: list[str],
-        audio_urls: list[str],
     ) -> tuple[bool, list[str] | None, bool, list[dict] | None]:
         """
         进行接话决策。
@@ -313,11 +313,11 @@ class DecisionEngine:
                     )
                     return False, None, False, None
 
-                # 获取决策所需上下文
+                # 获取决策所需上下文（小模型采用轻量级条数）
                 recent_messages = await self.plugin.data_cache.get_recent_message(
                     bot_name=bot_name,
                     group_id=group_or_user_id,
-                    limit=self.plugin.msg_number,
+                    limit=12,
                 )
                 bot_status = await self.plugin.data_cache.get_bot_status(
                     bot_name=bot_name,
@@ -360,6 +360,21 @@ class DecisionEngine:
                     )
                     short_task_limit = self.plugin.task_board.max_active_tasks()
 
+                # 读取已有缓存的媒体转述（仅读缓存，非阻塞），用于轻量内联
+                caption_config = self.plugin.get_caption_config(bot_conf)
+                all_for_caption = []
+                if recent_messages:
+                    all_for_caption.extend(recent_messages)
+                if current_message:
+                    all_for_caption.append(current_message)
+
+                media_captions = await self.media_captioner.get_cached_media_captions(
+                    bot_name=bot_name,
+                    recent_messages=all_for_caption,
+                    caption_config=caption_config,
+                    group_or_user_id=group_or_user_id,
+                )
+
                 user_prompt = build_decision_prompt(
                     user_id=event.get_sender_id(),
                     group_data=str(
@@ -377,6 +392,7 @@ class DecisionEngine:
                     short_tasks=short_tasks,
                     short_task_limit=short_task_limit,
                     message_truncate_limit=getattr(self.plugin, "reply_message_truncate_limit", 1500),
+                    media_captions=media_captions,
                 )
 
                 provider_ids = decision_conf.get("provider_ids")
@@ -404,13 +420,11 @@ class DecisionEngine:
                         f"{bot_name} 消耗接话分析窗口次数，当前群组剩余分析次数: {self.plugin.active_reply_counters[fmt_key]}"
                     )
 
-                # 调用 LLM 决策
+                # 调用 LLM 决策（纯文本化调用，不传递多模态原始 URL）
                 result = await self.plugin.call_llm.call_llm_decision(
                     provider_ids=provider_ids,
                     system_prompt=decision_conf.get("decision_prompt"),
                     user_prompt=user_prompt,
-                    image_urls=image_urls,
-                    audio_urls=audio_urls,
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                 )
