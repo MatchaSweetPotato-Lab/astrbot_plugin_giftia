@@ -201,7 +201,11 @@ class DecisionEngine:
                 return False, None, False, None
 
         # 跳过空消息
-        if not current_message.content and not image_urls and not audio_urls:
+        if (
+            not current_message.content
+            and not current_message.media_id_list
+            and not current_message.forward_messages
+        ):
             logger.debug("消息为空，跳过处理")
             return False, None, False, None
 
