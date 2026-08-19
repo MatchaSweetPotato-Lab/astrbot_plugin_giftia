@@ -1,10 +1,10 @@
 name: astrbot_plugin_giftia
 display_name: 🤍Giftia🤍
 desc: 赋予 AI 人格与记忆，以时间沉淀情感，用记忆塑造行为。
-version: 0.1.2
+version: 0.1.3
 author: Sukafon && e.e.
 repo: https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia
-astrbot_version: ">=4.10.0"
+astrbot_version: ">=4.26.0"
 support_platforms:
   - aiocqhttp
   - qq_official
