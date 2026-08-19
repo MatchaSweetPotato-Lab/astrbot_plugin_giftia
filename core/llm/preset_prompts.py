@@ -4,6 +4,16 @@ from ..tts.constants import (
     MINIMAX_TONE_TAGS,
     SUPPORTED_PROVIDER_TYPES,
 )
+from ..utils.schemas import FeatureKey
+
+# 官方 QQ 平台暂不支持的动作 Feature 集合
+UNSUPPORTED_QQ_OFFICIAL_FEATURES = {
+    FeatureKey.POKE,
+    FeatureKey.EMOJI_LIKE,
+    FeatureKey.REPEAT,
+    FeatureKey.LIKE,
+    FeatureKey.LEAVE,
+}
 
 
 def build_tts_xml_instructions(
@@ -50,8 +60,8 @@ def build_tts_xml_instructions(
             "### 标签规则",
             "语音文本中可以使用自由的方括号标签，根据文本语言填入，可控制语调。",
             "标签的语言需要和文本保持一致。",
-            f'示例1：`<tts lang="ja-JP" >[くすくす笑い]ほほ、そうすればアリスの電力はずっと[強調]100%になるのね</tts>`',
-            f'示例2：`<tts lang="zh-CN" >[轻笑]哼哼，这样爱丽丝的电量就能[强调]一直保持在百分之百啦</tts>`',
+            '示例1：`<tts lang="ja-JP" >[くすくす笑い]ほほ、そうすればアリスの電力はずっと[強調]100%になるのね</tts>`',
+            '示例2：`<tts lang="zh-CN" >[轻笑]哼哼，这样爱丽丝的电量就能[强调]一直保持在百分之百啦</tts>`',
         ]
     elif provider_type == "gsvtts":
         prompt_lines = [
@@ -65,18 +75,6 @@ def build_tts_xml_instructions(
         prompt_lines = []
 
     return "\n".join(prompt_lines)
-
-
-from ..utils.schemas import FeatureKey
-
-# 官方 QQ 平台暂不支持的动作 Feature 集合
-UNSUPPORTED_QQ_OFFICIAL_FEATURES = {
-    FeatureKey.POKE,
-    FeatureKey.EMOJI_LIKE,
-    FeatureKey.REPEAT,
-    FeatureKey.LIKE,
-    FeatureKey.LEAVE,
-}
 
 
 def build_xml_instructions(
@@ -113,6 +111,7 @@ def build_xml_instructions(
         "2. **`<message>`**: 所有的文本回复、说话台词必须写入 `<message>` 标签内。单条回复若句子较长，可以使用多个并列的 `<message>` 标签分段输出（通常不超过 3 段）。",
         '   - **引用回复**: 如果你想回复/引用某条特定消息，可以加上 `quote` 属性，形如：`<message quote="消息ID">回复内容</message>`。',
         '3. **`<at>`**: 如果需要 @ 提及某个群友，在 `<message>` 标签内部或外部输出 `<at user_id="用户ID"/>`。请勿高频或无意义地频繁使用。',
+        '4. **`<image>`**: 发送网络图片、照片或插图（如通过网页搜索、工具调用获取的图片URL等）。使用 `<image url="图片直链URL"/>`。可以在 `<message>` 标签内部或外部并列输出。',
     ]
 
     # 2. 动态生成的互动标签说明
@@ -188,7 +187,7 @@ def build_xml_instructions(
     if is_enabled(FeatureKey.MEMORY_QUERY_DELETE):
         interactive_lines.append(
             "- **记忆检索与删除**:\n"
-            '  * **检索记忆**: `<search_memory>检索问题</search_memory>`。用于模糊检索你的长期记忆，回答与过往回忆、约定等相关的内容。\n'
+            "  * **检索记忆**: `<search_memory>检索问题</search_memory>`。用于模糊检索你的长期记忆，回答与过往回忆、约定等相关的内容。\n"
             '  * **删除记忆**: `<delete_memory id="记忆ID"/>`。用于清理失效或不准确的记忆。'
         )
 
@@ -481,5 +480,3 @@ DEFAULT_DECISION_RULES = """## 状态与检索判定 (use_rag)
 本次决策的理由和依据（思维链）
 </think>
 <decision reply="bool" use_rag="bool" rag_query="string"/>"""
-
-

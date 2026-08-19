@@ -442,9 +442,8 @@ class ReplyPipeline:
 
         # 如果工具调用产生了图片，立即发送
         if image_base64:
-            yield await event.send(
-                MessageChain([Image.fromBase64(b64) for b64 in image_base64])
-            )
+            comps = [Image.fromBase64(b64) for b64 in image_base64]
+            yield await event.send(MessageChain(comps))
             logger.info(
                 f"{bot_name} 从MCP工具收到 {len(image_base64)} 张图片，直接发出去了"
             )

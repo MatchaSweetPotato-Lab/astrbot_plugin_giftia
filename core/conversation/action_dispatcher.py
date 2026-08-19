@@ -12,7 +12,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
-from ..utils.schemas import MessageData, XmlLlmResult
+from ..utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
 
 class ActionDispatcher:
@@ -231,7 +231,7 @@ class ActionDispatcher:
         bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
         for item_type, item_index in self.get_output_order(llm_result):
-            if item_type == "message":
+            if item_type in ("message", "sticker", "image"):
                 if item_index < 0 or item_index >= len(llm_result.msg_chains):
                     continue
                 msg_chain = llm_result.msg_chains[item_index]
@@ -242,12 +242,18 @@ class ActionDispatcher:
                     if llm_result.msg_logs and item_index < len(llm_result.msg_logs)
                     else ""
                 )
+                send_image_type = (
+                    ImageSendType.STICKER
+                    if item_type == "sticker"
+                    else ImageSendType.NORMAL
+                )
             elif item_type == "tts":
                 msg_chain, msg_str = await self.build_tts_message_chain(
                     event, llm_result, item_index, bot_conf
                 )
                 if not msg_chain:
                     continue
+                send_image_type = ImageSendType.NORMAL
             else:
                 continue
 
@@ -274,11 +280,11 @@ class ActionDispatcher:
                 success, message_id = await self.plugin.aiocqhttp.send_message(
                     event,
                     msg_chain,
+                    image_type=send_image_type,
                 )
             sent_index += 1
             if success and message_id:
                 iso_string = datetime.now().isoformat()
-                media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
                 if item_type == "tts":
                     segment = llm_result.tts_segments[item_index]
                     attrs = []
@@ -288,18 +294,44 @@ class ActionDispatcher:
                         attrs.append(f'emotion="{segment.emotion}"')
                     attrs_str = " " + " ".join(attrs) if attrs else ""
                     db_content = f"<tts{attrs_str}>{segment.text}</tts>"
+                    msg_data = MessageData(
+                        nickname=nickname,
+                        user_id=event.get_self_id(),
+                        group_or_user_id=group_or_user_id,
+                        time=iso_string,
+                        message_id=str(message_id),
+                        content=db_content,
+                        is_recalled=0,
+                        media_id_list=[],
+                    )
                 else:
-                    db_content = msg_str
-                msg_data = MessageData(
-                    nickname=nickname,
-                    user_id=event.get_self_id(),
-                    group_or_user_id=group_or_user_id,
-                    time=iso_string,
-                    message_id=str(message_id),
-                    content=db_content,
-                    is_recalled=False,
-                    media_id_list=media_id_list,
-                )
+                    try:
+                        parsed_msg = await self.plugin.message_parser.chain_to_result(
+                            msg_chain, event=event
+                        )
+                        db_content = parsed_msg.content
+                        media_id_list = parsed_msg.media_id_list
+                        forward_messages = parsed_msg.forward_messages
+                    except Exception as parse_err:
+                        logger.error(
+                            f"[Giftia] 解析已发送消息链入库失败: {parse_err}, 降级使用日志文本",
+                            exc_info=True,
+                        )
+                        db_content = msg_str
+                        media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
+                        forward_messages = []
+
+                    msg_data = MessageData(
+                        nickname=nickname,
+                        user_id=event.get_self_id(),
+                        group_or_user_id=group_or_user_id,
+                        time=iso_string,
+                        message_id=str(message_id),
+                        content=db_content,
+                        is_recalled=0,
+                        media_id_list=media_id_list,
+                        forward_messages=forward_messages,
+                    )
                 await self.plugin.data_cache.add_message(
                     bot_name, group_or_user_id, msg_data
                 )
@@ -316,7 +348,7 @@ class ActionDispatcher:
         sent_index = 0
         for item_type, item_index in self.get_output_order(llm_result):
             is_tts = item_type == "tts"
-            if item_type == "message":
+            if item_type in ("message", "sticker", "image"):
                 if item_index < 0 or item_index >= len(llm_result.msg_chains):
                     continue
                 msg_chain = llm_result.msg_chains[item_index]
@@ -360,23 +392,41 @@ class ActionDispatcher:
                         time=iso_string,
                         message_id=str(uuid.uuid4()),
                         content=db_content,
-                        is_recalled=False,
+                        is_recalled=0,
                         media_id_list=[],
                     )
                 else:
-                    parsed_msg = await self.plugin.message_parser.chain_to_result(
-                        msg_chain, event=event
+                    msg_str = (
+                        llm_result.msg_logs[item_index]
+                        if llm_result.msg_logs and item_index < len(llm_result.msg_logs)
+                        else ""
                     )
+                    try:
+                        parsed_msg = await self.plugin.message_parser.chain_to_result(
+                            msg_chain, event=event
+                        )
+                        db_content = parsed_msg.content
+                        media_id_list = parsed_msg.media_id_list
+                        forward_messages = parsed_msg.forward_messages
+                    except Exception as parse_err:
+                        logger.error(
+                            f"[Giftia] 通用平台解析已发送消息链入库失败: {parse_err}, 降级使用日志文本",
+                            exc_info=True,
+                        )
+                        db_content = msg_str
+                        media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
+                        forward_messages = []
+
                     msg_data = MessageData(
                         nickname=nickname,
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
                         message_id=str(uuid.uuid4()),
-                        content=parsed_msg.content,
-                        is_recalled=False,
-                        media_id_list=parsed_msg.media_id_list,
-                        forward_messages=parsed_msg.forward_messages,
+                        content=db_content,
+                        is_recalled=0,
+                        media_id_list=media_id_list,
+                        forward_messages=forward_messages,
                     )
                 await self.plugin.data_cache.add_message(
                     bot_name, group_or_user_id, msg_data
