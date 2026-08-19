@@ -468,7 +468,6 @@ class ReplyPipeline:
                 pending_recall_memories=pending_recall_memories,
                 tool_results=tool_results,
                 remind_message=remind_message,
-                image_urls=image_base64,
                 times=times + 1,
                 other_data=other_data,
                 sent_messages=sent_messages,
