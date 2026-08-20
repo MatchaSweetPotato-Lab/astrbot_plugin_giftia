@@ -60,7 +60,7 @@
 - **非活跃时媒体不自动转述 (`defer_caption_enabled`)**: 开启后，在非活跃群聊中收到的图片/语音消息不立刻调用大模型转述，仅下载缓存并保留占位符 ID，Bot 在需要时可通过 `inspect_media` 工具主动查看，彻底消除唤醒时的多模态延迟并大幅节省 Token。
 
 ### 5. 记忆检索配置 (`memory_config`)
-- **启用嵌入模型 (`embedding_conf.enabled`)**: 是否启用本地或外部 Embedding 提供商，开启后才能使用长期记忆检索功能（注：底层向量库 LanceDB 需要 CPU 支持 AVX2 指令集；若不支持，插件在启动时会检测并抛出异常中止加载以保护 AstrBot 本体稳定运行）。
+- **启用嵌入模型 (`embedding_conf.enabled`)**: 是否启用本地或外部 Embedding 提供商，开启后才能使用长期记忆检索功能（注：底层向量库 LanceDB 在 x86 架构下需要 CPU 支持 AVX2 指令集；若不支持，插件在启动时会检测并抛出异常中止加载以保护 AstrBot 本体稳定运行；若确信误报可配置 `ignore_avx2_check` 强制跳过）。
 - **启用重排模型 (`rerank_conf.enabled`)**: 是否启用 Rerank 提供商对检索到的向量记忆进行重排，以获取更精确的参考。
 - **启用被动状态维护 (`passive_memory_enabled`)**: 开启后台闲聊自动总结归纳。机器人会在后台对聊天片段进行总结，动态更新用户画像、群画像、好感度与关系头衔。
 - **被动总结模型提供商 (`passive_memory_provider_ids`)**: 指定用于后台总结与画像提取的大模型通道。
