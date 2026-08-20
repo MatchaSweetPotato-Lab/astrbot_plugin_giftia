@@ -1,5 +1,6 @@
 import base64
 import ssl
+import urllib.parse
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -16,6 +17,9 @@ from astrbot.api import logger
 from astrbot.core import AstrBotConfig
 
 
+from .path_security import get_safe_local_media_path
+
+
 class HttpManager:
     def __init__(self, config: AstrBotConfig):
         self.session = ClientSession(timeout=ClientTimeout(connect=30, total=60))
@@ -23,58 +27,90 @@ class HttpManager:
 
     async def download_media(self, url: str) -> bytes:
         """下载媒体文件"""
-        # 如果是本地文件路径，直接从本地读取
-        if not url.startswith("http://") and not url.startswith("https://"):
-            local_path = url
-            if local_path.startswith("file://"):
-                local_path = local_path[7:]
-            # Windows system path handling: file:///C:/path -> C:/path
-            if (
-                local_path.startswith("/")
-                and len(local_path) > 2
-                and local_path[2] == ":"
-            ):
-                local_path = local_path[1:]
-            path = Path(local_path)
-            try:
-                if path.exists():
-                    with open(path, "rb") as f:
-                        return f.read()
-                else:
-                    logger.error(f"本地媒体文件不存在: {path}")
-            except Exception as e:
-                logger.error(f"从本地读取媒体文件失败: {e}, Path: {path}")
+        if not url or not isinstance(url, str):
             return b""
 
-        for _ in range(3):
+        # 如果是本地文件路径或 file://，必须通过安全沙箱校验后方可从本地读取
+        if not url.startswith("http://") and not url.startswith("https://"):
+            safe_path = get_safe_local_media_path(url)
+            if not safe_path:
+                logger.warning(f"[Giftia Security] 拦截不安全的媒体路径读取请求: {url}")
+                return b""
             try:
-                headers = {"Referer": "https://im.qq.com/"}
+                return safe_path.read_bytes()
+            except Exception as e:
+                logger.error(f"从本地读取媒体文件失败: {e}, Path: {safe_path}")
+                return b""
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        try:
+            parsed = urllib.parse.urlparse(url)
+            host = parsed.netloc.lower()
+            if any(d in host for d in ("qpic.cn", "qq.com", "gtimg.cn", "qlogo.cn")):
+                headers["Referer"] = "https://im.qq.com/"
+            elif "pximg.net" in host or "pixiv.net" in host:
+                headers["Referer"] = "https://www.pixiv.net/"
+            elif "bilibili.com" in host or "hdslb.com" in host:
+                headers["Referer"] = "https://www.bilibili.com/"
+            elif "sinaimg.cn" in host or "weibo.com" in host:
+                headers["Referer"] = "https://weibo.com/"
+            elif parsed.scheme and parsed.netloc:
+                headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+        except Exception:
+            pass
+
+        for attempt in range(3):
+            try:
                 async with self.session.get(url, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.read()
-                    else:
-                        logger.error(f"下载媒体文件失败: {resp.status}, URL: {url}")
+
+                    # 识别 Cloudflare 人机验证挑战（5秒盾/Turnstile），优雅跳过缓存并避免重复重试刷屏
+                    if (
+                        resp.headers.get("Cf-Mitigated") == "challenge"
+                        or (
+                            resp.status == 403
+                            and resp.headers.get("Server", "").lower() == "cloudflare"
+                        )
+                    ):
+                        logger.warning(
+                            f"[Giftia] 目标媒体站点开启了 Cloudflare 5秒盾/人机验证防护，跳过本地缓存: URL={url}"
+                        )
+                        return b""
+
+                    logger.error(
+                        f"下载媒体文件失败: {resp.status}，retry: {attempt + 1} times, URL: {url}"
+                    )
             except (
                 ClientConnectorSSLError,
                 ClientConnectorCertificateError,
-            ):
+            ) as ssl_err:
                 logger.warning(
-                    f"SSL 证书验证失败，将尝试临时关闭 SSL 验证重新下载: {url}"
+                    f"SSL 证书验证失败 ({ssl_err})，将尝试临时关闭 SSL 验证重新下载: {url}"
                 )
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
-                async with self.session.get(
-                    url, ssl=ssl_context, headers=headers
-                ) as resp:
-                    if resp.status == 200:
-                        return await resp.read()
-                    else:
-                        logger.error(
-                            f"下载媒体文件失败: {resp.status}，retry: {_ + 1} times, URL: {url}"
-                        )
+                try:
+                    async with self.session.get(
+                        url, ssl=ssl_context, headers=headers
+                    ) as resp:
+                        if resp.status == 200:
+                            return await resp.read()
+                        else:
+                            logger.error(
+                                f"下载媒体文件失败(无SSL): {resp.status}，retry: {attempt + 1} times, URL: {url}"
+                            )
+                except Exception as inner_e:
+                    logger.error(f"下载媒体文件失败(无SSL重试): {inner_e}, URL={url}")
             except Exception as e:
-                logger.error(f"下载媒体文件失败: {e}，retry: {_ + 1} times")
+                logger.error(f"下载媒体文件失败: {e}，retry: {attempt + 1} times, URL={url}")
         return b""
 
     @staticmethod

@@ -10,6 +10,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Image, Reply
 from astrbot.core.star.star_tools import StarTools
 
+from ..utils.path_security import get_safe_local_media_path
 from ..utils.schemas import MediaCaption, XmlLlmResult, extract_media_ids
 from ..utils.video_utils import (
     VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES,
@@ -346,19 +347,18 @@ class MediaCaptioner:
         local_video_path = cache_dir / f"{media_caption.hash_val}.mp4"
 
         if not local_video_path.exists():
-            if url.startswith("file://"):
-                local_video_path = Path(url.replace("file://", ""))
-            elif url.startswith("http://") or url.startswith("https://"):
+            if url.startswith("http://") or url.startswith("https://"):
                 logger.info(f"[Giftia] 下载视频文件进行分析: hash={media_caption.hash_val}")
                 video_bytes = await self.plugin.http_manager.download_media(url)
                 if not video_bytes:
                     return "[视频下载失败]"
                 local_video_path.write_bytes(video_bytes)
-            elif os.path.exists(url):
-                local_video_path = Path(url)
-
-        if not local_video_path.exists():
-            return "[本地视频文件不存在]"
+            else:
+                safe_video_path = get_safe_local_media_path(url)
+                if safe_video_path:
+                    local_video_path = safe_video_path
+                else:
+                    return "[视频文件路径不存在或不在允许的安全目录中]"
 
         duration = media_caption.duration or 0.0
         target_video_file = str(local_video_path)

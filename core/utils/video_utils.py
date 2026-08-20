@@ -7,6 +7,8 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+from .path_security import get_safe_local_media_path
+
 # 视频转述核心体积阈值常量
 VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024   # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
 VIDEO_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024             # 20 MB：发往视觉模型的最终 Base64 请求体安全上限
@@ -272,14 +274,16 @@ async def get_remote_video_info(
     # 1. 本地文件直接解析
     local_target_path = ""
     for cand in candidates:
-        clean_path = cand.replace("file://", "") if cand.startswith("file://") else cand
-        try:
-            if os.path.isfile(clean_path):
-                file_size = os.path.getsize(clean_path)
-                local_target_path = clean_path
+        if cand.startswith("http://") or cand.startswith("https://"):
+            continue
+        safe_path = get_safe_local_media_path(cand)
+        if safe_path:
+            try:
+                file_size = safe_path.stat().st_size
+                local_target_path = str(safe_path)
                 break
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     # 2. OneBot API 主动查询 (针对 NapCat / Lagrange / Go-CQHTTP)
     if (not file_size or not duration) and event and hasattr(event, "bot") and event.bot:

@@ -19,6 +19,7 @@ from ..database.data_cache import DataCache, is_temp_or_local_path
 from ..llm.call_llm import CallLLM
 from .http_manager import HttpManager
 from .message_parse_types import ChainParseResult
+from .path_security import get_safe_local_media_path
 from .schemas import MediaCaption
 from .video_utils import get_remote_video_info, format_file_size, format_duration
 
@@ -378,12 +379,11 @@ class MessageMediaFormatter:
 
             # 下载图片
             image_bytes = None
-            if file_name and file_name.startswith("file://"):
-                clean_path = urllib.parse.unquote(file_name[7:])
-                local_path = Path(clean_path)
-                if local_path.is_file():
+            if file_name and (file_name.startswith("file://") or is_temp_or_local_path(file_name)):
+                safe_local_path = get_safe_local_media_path(file_name)
+                if safe_local_path:
                     try:
-                        image_bytes = local_path.read_bytes()
+                        image_bytes = safe_local_path.read_bytes()
                     except Exception as e:
                         file_name_disp = (
                             (file_name[:100] + "...")
@@ -571,12 +571,11 @@ class MessageMediaFormatter:
 
             # 语音的hash_val用url生成，如果是本地文件，使用本地内容生成hash
             audio_bytes = None
-            if file_name and file_name.startswith("file://"):
-                clean_path = urllib.parse.unquote(file_name[7:])
-                local_path = Path(clean_path)
-                if local_path.is_file():
+            if file_name and (file_name.startswith("file://") or is_temp_or_local_path(file_name)):
+                safe_local_path = get_safe_local_media_path(file_name)
+                if safe_local_path:
                     try:
-                        audio_bytes = local_path.read_bytes()
+                        audio_bytes = safe_local_path.read_bytes()
                     except Exception as e:
                         file_name_disp = (
                             (file_name[:100] + "...")

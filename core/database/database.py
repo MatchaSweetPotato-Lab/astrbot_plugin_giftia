@@ -1,3 +1,4 @@
+import re
 import aiosqlite
 
 from astrbot.api import logger
@@ -336,6 +337,9 @@ class Database(ProfileStoreMixin):
     # =========================================================================
     async def drop_table(self, table_name: str):
         """删除数据表"""
+        if not table_name or not re.fullmatch(r"^[a-zA-Z0-9_]+$", table_name):
+            logger.warning(f"[Giftia Security] 拒绝删除非法表名: {table_name}")
+            return False
         async with self.conn.execute(
             """
             SELECT name FROM sqlite_master WHERE type='table' AND name=?
@@ -345,7 +349,7 @@ class Database(ProfileStoreMixin):
             row = await cursor.fetchone()
         if not row:
             return False
-        await self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        await self.conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
         await self.conn.commit()
         return True
 
