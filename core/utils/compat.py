@@ -67,18 +67,12 @@ def check_avx2_support() -> bool:
 def ensure_avx2_supported(config: dict | None = None, data_dir: Path | str | None = None):
     """
     确保宿主 CPU 支持 AVX2 指令集（仅在 x86 架构下生效）。
-    支持通过配置 ignore_avx2_check 强制跳过，或通过数据目录标记持久化跳过检测。
-    若不支持且未跳过，抛出结构化 RuntimeError 终止插件启动，保护 AstrBot 避免触发 SIGILL 崩溃。
+    支持通过 memory_config.ignore_avx2_check 强制跳过，或通过数据目录标记持久化跳过检测。
+    若不支持且未跳过，向日志输出详细指引并抛出 RuntimeError 终止插件启动，保护 AstrBot 避免触发 SIGILL 崩溃。
     """
-    # 1. 检查用户是否配置了强制跳过检测
-    if config:
-        memory_cfg = config.get("memory_config", {})
-        if isinstance(memory_cfg, dict) and memory_cfg.get("ignore_avx2_check", False):
-            logger.warning(
-                "[Giftia] 用户已开启 ignore_avx2_check，已跳过 CPU AVX2 指令集前置检测。"
-            )
-            return
-        if config.get("ignore_avx2_check", False):
+    # 1. 检查用户是否在 memory_config 中配置了强制跳过检测
+    if config and isinstance(config.get("memory_config"), dict):
+        if config["memory_config"].get("ignore_avx2_check", False):
             logger.warning(
                 "[Giftia] 用户已开启 ignore_avx2_check，已跳过 CPU AVX2 指令集前置检测。"
             )
@@ -106,8 +100,8 @@ def ensure_avx2_supported(config: dict | None = None, data_dir: Path | str | Non
                 pass
         return
 
-    # 4. 检测未通过，输出清晰的指引日志并抛出异常阻断启动
-    err_msg = (
+    # 4. 检测未通过：向日志输出详细的排版指引，异常文本保持单行精简
+    guide_banner = (
         "\n================================================================================\n"
         "[Giftia] ⚠️ 启动硬件检测警告：未检测到 AVX2 指令集支持！\n"
         "--------------------------------------------------------------------------------\n"
@@ -120,5 +114,7 @@ def ensure_avx2_supported(config: dict | None = None, data_dir: Path | str | Non
         "   👉 请在插件配置【记忆检索配置 -> 强制跳过 AVX2 指令集检测 (ignore_avx2_check)】开启后重启插件。\n"
         "================================================================================"
     )
-    logger.error(err_msg)
-    raise RuntimeError(err_msg)
+    logger.error(guide_banner)
+    raise RuntimeError(
+        "[Giftia] 未检测到 CPU AVX2 指令集支持，已阻止插件加载以防 AstrBot 崩溃。如需强制跳过请在记忆检索配置中开启 ignore_avx2_check，详见日志指引。"
+    )
