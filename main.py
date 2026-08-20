@@ -26,16 +26,12 @@ from .core.llm.llm_tools import (
     remove_tools,
 )
 from .core.llm.xml_parse import XmlParse
-from .core.utils.compat import ensure_avx2_supported
-
-# 检查 CPU AVX2 指令集支持，若不支持则抛出异常阻止加载底层 LanceDB 避免触发 SIGILL 崩溃
-ensure_avx2_supported()
-
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
 from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
 from .core.utils.qq_official_action import QQOfficialAction
+from .core.utils.compat import ensure_avx2_supported
 from .core.utils.emoji_manager import EmojiManager
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
@@ -48,6 +44,9 @@ from .core.utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
 class Giftia(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
+        # 检查 CPU AVX2 指令集支持，若不支持则抛出异常阻止插件启动，保护 AstrBot 避免触发 SIGILL 崩溃
+        ensure_avx2_supported()
+
         super().__init__(context)
         self.context: Context = context  # type: ignore
         self.conf = config
