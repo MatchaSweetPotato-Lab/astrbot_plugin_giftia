@@ -3,16 +3,13 @@ import gc
 import threading
 import uuid
 
-import lancedb
-from fastembed import TextEmbedding
-from fastembed.rerank.cross_encoder import TextCrossEncoder
-from lancedb.pydantic import LanceModel, Vector
-
 from astrbot.api import logger
 from astrbot.api.star import Context, StarTools
 
 
 def get_memory_schema(dim: int):
+    from lancedb.pydantic import LanceModel, Vector
+
     class MemorySchema(LanceModel):
         id: str
         bot_name: str
@@ -28,6 +25,8 @@ def get_memory_schema(dim: int):
 
 class LTM:
     def __init__(self, context: Context, embedding_conf: dict, rerank_conf: dict):
+        import lancedb
+
         self.context = context
         self.embedding_conf = embedding_conf
         self.rerank_conf = rerank_conf
@@ -159,6 +158,8 @@ class LTM:
                         f"模型名称: {resolved_provider.get_model()}，维度: {self.vector_dim}"
                     )
                 else:
+                    from fastembed import TextEmbedding
+
                     model_name = self.embedding_conf.get(
                         "model",
                         self.embedding_conf.get("model_name", "BAAI/bge-small-zh-v1.5"),
@@ -254,6 +255,8 @@ class LTM:
                         f"模型名称: {self._get_provider_model(resolved_provider)}"
                     )
                 else:
+                    from fastembed.rerank.cross_encoder import TextCrossEncoder
+
                     self.reranker = TextCrossEncoder(
                         model_name=self.rerank_conf.get(
                             "model",
@@ -276,10 +279,14 @@ class LTM:
 
     def get_all_models(self) -> list[dict]:
         """获取所有支持的模型信息"""
+        from fastembed import TextEmbedding
+
         return TextEmbedding.list_supported_models()
 
     def get_all_rerank_models(self) -> list[dict]:
         """获取所有支持的模型信息"""
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+
         return TextCrossEncoder.list_supported_models()
 
     async def add_memory(
@@ -459,7 +466,6 @@ class LTM:
                 .to_list()
             )
             # 过滤低相关性条目 (LanceDB 的 _distance 越小代表越相似)
-            # logger.debug(f"Memory search results: {results}")
             if threshold is not None:
                 results = [r for r in results if r.get("_distance", 0) <= threshold]
             return results
@@ -494,39 +500,6 @@ class LTM:
         except Exception as e:
             logger.error(f"Get all memories failed: {e}")
             return []
-
-    # async def update_memory(
-    #     self, memory_id: str, text: str, metadata: str = "{}"
-    # ) -> bool:
-    #     """修改记忆内容（重写以更新向量）"""
-    #     loop = asyncio.get_running_loop()
-    #     return await loop.run_in_executor(
-    #         None, self._update_memory_sync, memory_id, text, metadata
-    #     )
-
-    # def _update_memory_sync(self, memory_id: str, text: str, metadata: str) -> bool:
-    #     """修改记忆内容（重写以更新向量）"""
-    #     try:
-    #         memory = self._get_memory_sync([memory_id])
-    #         if not memory:
-    #             return False
-    #         self._delete_memory_sync(memory_id)
-    #         now = datetime.now().isoformat()
-    #         self.table.add([
-    #             {
-    #                 "id": memory_id,
-    #                 "bot_name": memory[0]["bot_name"],
-    #                 "group_or_user_id": memory[0]["group_or_user_id"],
-    #                 "text": text,
-    #                 "metadata": metadata,
-    #                 "created_at": memory[0]["created_at"],
-    #                 "updated_at": now,
-    #             }
-    #         ])
-    #         return True
-    #     except Exception as e:
-    #         logger.error(f"Update memory failed: {e}")
-    #         return False
 
     async def delete_memory(self, memory_id: str) -> bool:
         self._lazy_init()
@@ -601,7 +574,6 @@ class LTM:
                 return []
 
             # 使用 Cross-Encoder 计算相关性分数
-            # reranker.rerank 返回的是一个生成器，包含每个记忆的分数
             scores_gen = self.reranker.rerank(query, memory_texts)
             scores = list(scores_gen)
 

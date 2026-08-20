@@ -447,6 +447,12 @@
                 "type": "int",
                 "default": 100,
                 "hint": "当机器人一直活跃时，未总结且已离开上下文窗口的消息达到多少条后触发后台记录。"
+            },
+            "ignore_avx2_check": {
+                "description": "强制跳过 AVX2 指令集检测",
+                "type": "bool",
+                "default": false,
+                "hint": "若系统误报不支持但您确认 CPU 具备 AVX2，可开启此项强制加载。警告：若 CPU 确实不支持，加载 LanceDB 会直接导致 AstrBot 闪退 (SIGILL 132)。"
             }
         }
     },

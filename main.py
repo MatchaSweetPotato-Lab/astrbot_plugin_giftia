@@ -6,7 +6,7 @@ from collections import defaultdict
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Plain, Reply, Image, Video, Node, Nodes
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.utils.session_lock import session_lock_manager
@@ -31,6 +31,7 @@ from .core.memory.passive_memory import PassiveMemoryManager
 from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
 from .core.utils.qq_official_action import QQOfficialAction
+from .core.utils.compat import ensure_avx2_supported
 from .core.utils.emoji_manager import EmojiManager
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
@@ -43,6 +44,12 @@ from .core.utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
 class Giftia(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
+        # 检查 CPU AVX2 指令集支持，若不支持则抛出异常阻止插件启动，保护 AstrBot 避免触发 SIGILL 崩溃
+        ensure_avx2_supported(
+            config=config,
+            data_dir=StarTools.get_data_dir("astrbot_plugin_giftia"),
+        )
+
         super().__init__(context)
         self.context: Context = context  # type: ignore
         self.conf = config
