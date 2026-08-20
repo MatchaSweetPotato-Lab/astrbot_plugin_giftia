@@ -495,39 +495,6 @@ class LTM:
             logger.error(f"Get all memories failed: {e}")
             return []
 
-    # async def update_memory(
-    #     self, memory_id: str, text: str, metadata: str = "{}"
-    # ) -> bool:
-    #     """修改记忆内容（重写以更新向量）"""
-    #     loop = asyncio.get_running_loop()
-    #     return await loop.run_in_executor(
-    #         None, self._update_memory_sync, memory_id, text, metadata
-    #     )
-
-    # def _update_memory_sync(self, memory_id: str, text: str, metadata: str) -> bool:
-    #     """修改记忆内容（重写以更新向量）"""
-    #     try:
-    #         memory = self._get_memory_sync([memory_id])
-    #         if not memory:
-    #             return False
-    #         self._delete_memory_sync(memory_id)
-    #         now = datetime.now().isoformat()
-    #         self.table.add([
-    #             {
-    #                 "id": memory_id,
-    #                 "bot_name": memory[0]["bot_name"],
-    #                 "group_or_user_id": memory[0]["group_or_user_id"],
-    #                 "text": text,
-    #                 "metadata": metadata,
-    #                 "created_at": memory[0]["created_at"],
-    #                 "updated_at": now,
-    #             }
-    #         ])
-    #         return True
-    #     except Exception as e:
-    #         logger.error(f"Update memory failed: {e}")
-    #         return False
-
     async def delete_memory(self, memory_id: str) -> bool:
         self._lazy_init()
         loop = asyncio.get_running_loop()

@@ -26,6 +26,11 @@ from .core.llm.llm_tools import (
     remove_tools,
 )
 from .core.llm.xml_parse import XmlParse
+from .core.utils.compat import ensure_avx2_supported
+
+# 检查 CPU AVX2 指令集支持，若不支持则抛出异常阻止加载底层 LanceDB 避免触发 SIGILL 崩溃
+ensure_avx2_supported()
+
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
 from .core.tts.manager import TTSManager

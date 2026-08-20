@@ -1,3 +1,8 @@
+## [v0.1.5] - 2026-08-21
+
+### Bug Fixes & Stability
+- **CPU AVX2 指令集前置检测**：在插件启动阶段自动检测宿主 CPU 是否支持 AVX2 指令集；在不支持的老旧 CPU（如 AMD Piledriver / Intel Sandy Bridge）上主动抛出异常终止插件加载，彻底避免加载底层 LanceDB C 扩展时触发非法指令（SIGILL 132）导致 AstrBot 闪退和 Docker 无限重启循环。
+
 ## [v0.1.4] - 2026-08-20
 
 ### Features & Improvements
