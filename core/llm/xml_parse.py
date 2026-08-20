@@ -11,16 +11,15 @@ from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.core.message.components import BaseMessageComponent
 
 from ..database.data_cache import DataCache
+from ..utils.anti_drool import clean_llm_completion
 from ..utils.emoji_manager import EmojiManager
 from ..utils.schemas import (
     FLAT_CLOSABLE_TAGS,
-    SYSTEM_XML_TAGS,
     Decision,
     SetCallNameRequest,
     TTSRequest,
     XmlLlmResult,
 )
-from ..utils.anti_drool import clean_llm_completion
 
 
 class XmlParse:
@@ -128,7 +127,7 @@ class XmlParse:
                                 sub_text += text_content
                                 sub_log += text_content
 
-                        # 如果是子标签 (<at>, <sticker>等)
+                        # 如果是子标签 (<at>, <sticker>, <image>等)
                         elif isinstance(content, Tag):
                             if content.name == "at":
                                 user_id = (
@@ -157,6 +156,26 @@ class XmlParse:
                                 else:
                                     logger.error(
                                         f"Sticker组件缺少sticker_id属性: {content.attrs}, xml_str: {xml_str[:1000]}"
+                                    )
+
+                            elif content.name == "image":
+                                img_url = (
+                                    self._attr_str(content, "url", "")
+                                    or self._attr_str(content, "src", "")
+                                    or content.get_text(strip=True)
+                                )
+                                if img_url:
+                                    img = self._create_image_component(img_url)
+                                    if img:
+                                        sub_chain.append(img)
+                                        sub_log += f" [图片:{img_url}]"
+                                    else:
+                                        logger.warning(
+                                            f"Image组件URL协议不受支持 (仅支持 http/https/base64): {img_url}"
+                                        )
+                                else:
+                                    logger.error(
+                                        f"Image组件缺少url/src属性: {content.attrs}, xml_str: {xml_str[:1000]}"
                                     )
 
                     result.msg_chains.append(sub_chain)
@@ -203,8 +222,31 @@ class XmlParse:
                             result.send_stickers.append(sticker_id)
                             result.msg_logs.append(f"[图片:{sticker_id}]")
                             result.output_order.append(
-                                ("message", len(result.msg_chains) - 1)
+                                ("sticker", len(result.msg_chains) - 1)
                             )
+
+                elif tag_name == "image":
+                    img_url = (
+                        self._attr_str(child, "url", "")
+                        or self._attr_str(child, "src", "")
+                        or child.get_text(strip=True)
+                    )
+                    if img_url:
+                        img = self._create_image_component(img_url)
+                        if img:
+                            result.msg_chains.append([img])
+                            result.msg_logs.append(f"[图片:{img_url}]")
+                            result.output_order.append(
+                                ("image", len(result.msg_chains) - 1)
+                            )
+                        else:
+                            logger.warning(
+                                f"Image组件URL协议不受支持 (仅支持 http/https/base64): {img_url}"
+                            )
+                    else:
+                        logger.error(
+                            f"Image组件缺少url/src属性: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
                 elif tag_name == "emoji_like":
                     if self._attr_str(child, "message_id", "") and self._attr_str(
                         child, "emoji_id", ""
@@ -442,7 +484,6 @@ class XmlParse:
                             f"Add sticker数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
-
             return result
         except Exception as e:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
@@ -611,6 +652,17 @@ class XmlParse:
         except ValueError:
             return default
 
+    @staticmethod
+    def _create_image_component(img_url: str) -> Image | None:
+        """根据网络 URL 或 base64 创建普通大图 (原图) 消息组件"""
+        if (
+            img_url.startswith("http://")
+            or img_url.startswith("https://")
+            or img_url.startswith("base64://")
+        ):
+            return Image.fromURL(img_url)
+        return None
+
     async def _load_sticker_image(
         self, sticker_id: str, xml_str: str = ""
     ) -> Image | None:
@@ -626,7 +678,5 @@ class XmlParse:
             if media_caption and media_caption.url:
                 img = Image.fromURL(media_caption.url)
             else:
-                logger.error(
-                    f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
-                )
+                logger.error(f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}")
         return img

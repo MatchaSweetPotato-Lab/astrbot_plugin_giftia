@@ -1,3 +1,8 @@
+## [v0.1.4] - 2026-08-20
+
+### Features & Improvements
+- **`<image>` 标签解析支持**：支持 LLM 输出 `<image url="..."/>` XML 标签发送网络图片。
+
 ## [v0.1.3] - 2026-08-19
 
 ### Bug Fixes

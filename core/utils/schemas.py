@@ -1,6 +1,6 @@
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-import re
 
 from astrbot.core.message.components import BaseMessageComponent
 
@@ -13,7 +13,6 @@ class ImageSendType(int, Enum):
 
     NORMAL = 0  # 普通大图
     STICKER = 1  # 小图表情
-
 
 
 class FeatureKey:
@@ -209,6 +208,7 @@ FLAT_CLOSABLE_TAGS = [
 INLINE_CONTAINER_TAGS = [
     "at",
     "sticker",
+    "image",
     "emoji_like",
     "think",
     "root",

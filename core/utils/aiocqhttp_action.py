@@ -33,7 +33,7 @@ class AIoCQHTTPAction:
         self,
         event: AstrMessageEvent,
         message_chain: list[BaseMessageComponent],
-        image_type: ImageSendType = ImageSendType.STICKER,
+        image_type: ImageSendType = ImageSendType.NORMAL,
     ) -> tuple[bool, int | None]:
         """发送消息
         Args:
@@ -487,7 +487,7 @@ class AIoCQHTTPAction:
     async def _msg_chain_to_data(
         self,
         message_chain: list[BaseMessageComponent],
-        image_type: ImageSendType = ImageSendType.STICKER,
+        image_type: ImageSendType = ImageSendType.NORMAL,
     ) -> list:
         """
         将消息链转换为aiocqhttp的数据结构
@@ -524,7 +524,7 @@ class AIoCQHTTPAction:
                         data_dict["subtype"] = 1
                         data_dict["summary"] = random.choice(self.sticker_summaries)
                     else:
-                        # 普通大图模式
+                        # 普通大图/原图模式
                         data_dict["subType"] = 0
                         data_dict["sub_type"] = 0
                         data_dict["subtype"] = 0

@@ -20,6 +20,7 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.core.message.components import BaseMessageComponent
+from xml.sax.saxutils import quoteattr
 
 from ..database.data_cache import DataCache
 from ..llm.call_llm import CallLLM
@@ -306,11 +307,20 @@ class MessageParser:
                     )
                     result.merge(quote_result)
                     quote_text = quote_result.content
-                msg_parts.append(
-                    f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>"
-                )
+                attrs = []
+                if hasattr(comp, "id") and comp.id is not None:
+                    attrs.append(f"message_id={quoteattr(str(comp.id))}")
+                if getattr(comp, "sender_id", None) is not None:
+                    attrs.append(f"sender_id={quoteattr(str(comp.sender_id))}")
+                if getattr(comp, "sender_nickname", None) is not None:
+                    attrs.append(f"sender_name={quoteattr(str(comp.sender_nickname))}")
+                attrs_str = (" " + " ".join(attrs)) if attrs else ""
+                msg_parts.append(f"<quote{attrs_str}>{quote_text}</quote>")
             elif isinstance(comp, At):
-                msg_parts.append(f"<@{comp.name}({comp.qq})>")
+                comp_name = getattr(comp, "name", None)
+                msg_parts.append(
+                    f"<@{comp_name}({comp.qq})>" if comp_name else f"<@{comp.qq}>"
+                )
             elif isinstance(comp, Image):
                 custom_desc = getattr(comp, "meme_desc", None)
                 part, media_result = await self._format_image_ref(
