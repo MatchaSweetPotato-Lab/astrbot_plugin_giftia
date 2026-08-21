@@ -5,6 +5,7 @@ from .forward_api import ForwardApi
 from .media_api import MediaApi
 from .memory_api import MemoryApi
 from .profile_api import ProfileApi
+from .sticker_api import StickerApi
 from .task_api import TaskApi
 from .token_api import TokenApi
 
@@ -19,6 +20,7 @@ class GiftiaWebApi(
     BotStatusApi,
     TaskApi,
     ProfileApi,
+    StickerApi,
 ):
     """Giftia plugin web APIs for dashboard pages.
 

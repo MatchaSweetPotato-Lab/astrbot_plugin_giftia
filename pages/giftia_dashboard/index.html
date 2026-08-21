@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="css/components/token_stats.css">
     <link rel="stylesheet" href="css/components/switches.css">
     <link rel="stylesheet" href="css/components/priority_select.css">
+    <link rel="stylesheet" href="css/components/stickers.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
@@ -53,6 +54,10 @@
                 <button class="nav-tab" data-tab="media-captions">
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                     媒体转述
+                </button>
+                <button class="nav-tab" data-tab="stickers">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+                    表情包管理
                 </button>
                 <button class="nav-tab" data-tab="forward-messages">
                     <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M7 8h10"></path><path d="M7 12h6"></path><path d="M8 22l4-4 4 4"></path></svg>
@@ -228,7 +233,66 @@
                 </div>
             </section>
 
-            <!-- TAB 5: Forward Messages -->
+            <!-- TAB 5: Sticker Management -->
+            <section id="tab-stickers" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>归属机器人</label>
+                            <select id="sticker-bot-name">
+                                <option value="">全部机器人</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>分类</label>
+                            <select id="sticker-category">
+                                <option value="">全部分类</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>标签</label>
+                            <select id="sticker-tag">
+                                <option value="">全部标签</option>
+                            </select>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label>搜索名称 / 描述</label>
+                            <input type="text" id="sticker-search" placeholder="输入关键字搜索...">
+                        </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button class="btn btn-primary" onclick="openUploadStickerModal()">上传表情包</button>
+                        </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button class="btn btn-secondary" onclick="openStickerTaxonomyModal()">分类 / 标签管理</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sticker-batch-bar card" id="sticker-batch-bar">
+                    <span class="sticker-batch-info">已选 <span id="sticker-selected-count">0</span> 项</span>
+                    <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('set_category')">修改分类</button>
+                    <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('add_tags')">追加标签</button>
+                    <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('remove_tags')">移除标签</button>
+                    <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('link_bot')">绑定机器人</button>
+                    <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('unlink_bot')">解绑机器人</button>
+                    <button class="btn btn-danger btn-small" onclick="batchDeleteStickers()">删除</button>
+                    <span class="sticker-batch-spacer"></span>
+                    <label class="sticker-select-all-label">
+                        <input type="checkbox" id="sticker-select-all" onchange="window.toggleAllStickersOnPage(this.checked)">
+                        全选本页
+                    </label>
+                    <button class="btn btn-secondary btn-small" onclick="window.clearStickerSelection()">取消选择</button>
+                </div>
+
+                <div class="sticker-grid" id="sticker-list">
+                    <!-- Dynamic sticker cards -->
+                </div>
+                <div class="pagination-container card" id="sticker-pagination">
+                    <!-- Pagination -->
+                </div>
+            </section>
+
+            <!-- TAB 6: Forward Messages -->
             <section id="tab-forward-messages" class="tab-panel">
                 <div class="filter-card card">
                     <div class="filter-row">
@@ -285,7 +349,7 @@
                 </div>
             </section>
 
-            <!-- TAB 6: Profiles -->
+            <!-- TAB 7: Profiles -->
             <section id="tab-profiles" class="tab-panel">
                 <div class="filter-card card">
                     <div class="filter-row">
@@ -334,7 +398,7 @@
                 </div>
             </section>
 
-            <!-- TAB 7: Token Stats -->
+            <!-- TAB 8: Token Stats -->
             <section id="tab-token-stats" class="tab-panel">
                 <div class="filter-card card">
                     <div class="filter-row">
@@ -388,7 +452,7 @@
                 </div>
             </section>
 
-            <!-- TAB 8: Bot Management -->
+            <!-- TAB 9: Bot Management -->
             <section id="tab-bots" class="tab-panel">
                 <div class="filter-card card flex-between" style="align-items: center;">
                     <div>
@@ -989,6 +1053,178 @@
                 <button id="btn-manual-submit" class="btn btn-danger" onclick="submitCleanCache()">确认清理</button>
                 <button id="btn-auto-trigger" class="btn btn-primary" style="display: none;" onclick="triggerAutoCleanImmediately()">立即执行清理</button>
                 <button id="btn-auto-save" class="btn btn-danger" style="display: none;" onclick="saveAutoCleanConfig()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shared datalist: 表情包分类建议 -->
+    <datalist id="sticker-category-suggestions"></datalist>
+
+    <!-- MODAL: Edit Sticker -->
+    <div id="edit-sticker-modal" class="modal-overlay">
+        <div class="modal-card card" style="max-width: 720px;">
+            <div class="modal-header">
+                <h2 id="edit-sticker-title">编辑表情包</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-sticker-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-sticker-id">
+                <div class="edit-sticker-layout">
+                    <div>
+                        <div class="edit-sticker-preview" id="edit-sticker-preview"></div>
+                    </div>
+                    <div>
+                        <div class="form-group">
+                            <label>名称</label>
+                            <input type="text" id="edit-sticker-name" placeholder="例如：开心猫猫">
+                        </div>
+                        <div class="form-group">
+                            <label>分类</label>
+                            <input type="text" id="edit-sticker-category" list="sticker-category-suggestions" placeholder="例如：可爱">
+                        </div>
+                        <div class="form-group">
+                            <label>标签</label>
+                            <div id="edit-sticker-tags"></div>
+                        </div>
+                        <div class="form-group">
+                            <label>描述</label>
+                            <textarea id="edit-sticker-description" rows="3" placeholder="这张表情包在什么场合用..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>归属机器人</label>
+                            <div id="edit-sticker-bots"></div>
+                            <small style="color: var(--font-secondary); font-size: 11px;">只有归属的机器人才会发送这张表情包。</small>
+                        </div>
+                        <small style="color: var(--font-secondary); font-size: 11px; display: block;">
+                            名称、分类和标签会注入到大模型的提示词里，是它挑选表情包的唯一依据，建议写准确。
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-reanalyze-sticker" class="btn btn-secondary" onclick="reanalyzeSticker()">重新 AI 分析</button>
+                <button class="btn btn-primary" onclick="submitEditSticker()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Upload Stickers -->
+    <div id="upload-sticker-modal" class="modal-overlay">
+        <div class="modal-card card" style="max-width: 680px;">
+            <div class="modal-header">
+                <h2>上传表情包</h2>
+                <button class="modal-close-btn" onclick="closeModal('upload-sticker-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-dropzone" id="upload-sticker-dropzone">
+                    <div class="upload-dropzone-icon">📁</div>
+                    <div class="upload-dropzone-title">点击选择，或把图片拖到这里</div>
+                    <div class="upload-dropzone-hint">支持 PNG / JPEG / GIF / WEBP / BMP，单张不超过 10MB，可多选</div>
+                </div>
+                <input type="file" id="upload-sticker-files" accept="image/*" multiple style="display: none;">
+
+                <div class="form-group" style="margin-top: 12px;">
+                    <label>待上传 (<span id="upload-sticker-count">0</span> 张)</label>
+                    <div class="upload-preview-grid" id="upload-sticker-preview"></div>
+                </div>
+
+                <div class="sticker-ai-toggle-row">
+                    <input type="checkbox" id="upload-sticker-ai">
+                    <div class="sticker-ai-toggle-text">
+                        <span class="sticker-ai-toggle-title">AI 自动分析</span>
+                        <span class="sticker-ai-toggle-hint" id="upload-sticker-ai-hint"></span>
+                    </div>
+                </div>
+
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group">
+                        <label>名称</label>
+                        <input type="text" id="upload-sticker-name" placeholder="留空则用文件名；多张会自动加序号">
+                    </div>
+                    <div class="form-group">
+                        <label>分类</label>
+                        <input type="text" id="upload-sticker-category" list="sticker-category-suggestions" placeholder="留空则归入「未分类」">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>标签</label>
+                    <div id="upload-sticker-tags"></div>
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea id="upload-sticker-description" rows="2" placeholder="选填，这批表情包共用的描述"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>直接归属给机器人</label>
+                    <div id="upload-sticker-bots"></div>
+                    <small style="color: var(--font-secondary); font-size: 11px;">不选则只入库，没有机器人会发送它。</small>
+                </div>
+
+                <div class="upload-results" id="upload-sticker-results"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('upload-sticker-modal')">关闭</button>
+                <button id="btn-submit-upload" class="btn btn-primary" onclick="submitUploadStickers()">开始上传</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Batch Sticker Operation -->
+    <div id="batch-sticker-modal" class="modal-overlay">
+        <div class="modal-card card" style="max-width: 460px;">
+            <div class="modal-header">
+                <h2 id="batch-sticker-title">批量操作</h2>
+                <button class="modal-close-btn" onclick="closeModal('batch-sticker-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="batch-sticker-mode">
+                <p style="font-size: 13px; color: var(--font-secondary); margin-bottom: 12px;">
+                    将对选中的 <strong id="batch-sticker-count">0</strong> 张表情包生效。
+                </p>
+                <div class="form-group" id="batch-sticker-category-row" style="display: none;">
+                    <label>目标分类</label>
+                    <input type="text" id="batch-sticker-category" list="sticker-category-suggestions" placeholder="输入分类名称">
+                </div>
+                <div class="form-group" id="batch-sticker-tags-row" style="display: none;">
+                    <label>标签</label>
+                    <div id="batch-sticker-tags"></div>
+                </div>
+                <div class="form-group" id="batch-sticker-bot-row" style="display: none;">
+                    <label>机器人</label>
+                    <select id="batch-sticker-bot"></select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('batch-sticker-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitBatchSticker()">确认执行</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Sticker Taxonomy (Categories & Tags) -->
+    <div id="sticker-taxonomy-modal" class="modal-overlay">
+        <div class="modal-card card" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2>表情包分类 / 标签管理</h2>
+                <button class="modal-close-btn" onclick="closeModal('sticker-taxonomy-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 12px; color: var(--font-secondary); margin-bottom: 14px;">
+                    重命名时若填入已存在的名字，两者会自动合并。删除标签不会删除表情包本身。
+                </p>
+                <div class="taxonomy-layout">
+                    <div>
+                        <div class="taxonomy-column-title">分类</div>
+                        <div class="taxonomy-list" id="taxonomy-category-list"></div>
+                    </div>
+                    <div>
+                        <div class="taxonomy-column-title">标签</div>
+                        <div class="taxonomy-list" id="taxonomy-tag-list"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('sticker-taxonomy-modal')">关闭</button>
             </div>
         </div>
     </div>
