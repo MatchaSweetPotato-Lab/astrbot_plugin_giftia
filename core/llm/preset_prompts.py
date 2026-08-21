@@ -219,7 +219,7 @@ def build_xml_instructions(
         "</status>",
         "<message>哼哼，今天也要元气满满哦！</message>",
     ]
-    if not is_qq_official:
+    if is_enabled(FeatureKey.EMOJI_LIKE):
         example_lines.append('<emoji_like message_id="msg-12345" emoji_id="424"/>')
 
     prompt_lines.extend(
