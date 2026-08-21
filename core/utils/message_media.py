@@ -3,8 +3,9 @@ import asyncio
 import base64 as b64_module
 import contextlib
 import re
+import time
 import urllib.parse
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,38 @@ SUPPORTED_FILE_FORMATS_WITH_DOT = (
     ".heif",
     ".mpo",
 )
+
+
+class SessionCaptionRateLimiter:
+    """滑动时间窗口会话级图片自动转述频控器 (默认 60 秒滑动窗口内最多 8 张)。"""
+
+    def __init__(self, window_seconds: float = 60.0, max_requests: int = 8):
+        self.window_seconds = window_seconds
+        self.max_requests = max_requests
+        self._history: dict[str, deque[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, session_key: str) -> bool:
+        """检查并尝试消耗 1 个转述配额。若允许转述返回 True，超频返回 False。"""
+        if not session_key:
+            return True
+        now = time.time()
+        async with self._lock:
+            queue = self._history.setdefault(session_key, deque())
+            while queue and now - queue[0] > self.window_seconds:
+                queue.popleft()
+            if len(queue) >= self.max_requests:
+                return False
+            queue.append(now)
+            # 轻量维护：若字典过大，顺便清理无用键
+            if len(self._history) > 1000:
+                empty_keys = [
+                    k for k, q in self._history.items()
+                    if not q or now - q[-1] > self.window_seconds
+                ]
+                for k in empty_keys:
+                    self._history.pop(k, None)
+            return True
 
 
 class LockManager:
@@ -70,6 +103,7 @@ class MessageMediaFormatter:
         call_llm: CallLLM,
         url_locks=None,
         hash_locks=None,
+        rate_limiter=None,
     ):
         self.data_cache = data_cache
         self.http_manager = http_manager
@@ -81,6 +115,9 @@ class MessageMediaFormatter:
         )
         self.hash_locks = (
             hash_locks if hash_locks is not None else LockManager()
+        )
+        self.rate_limiter = (
+            rate_limiter if rate_limiter is not None else SessionCaptionRateLimiter()
         )
 
     @staticmethod
@@ -488,6 +525,23 @@ class MessageMediaFormatter:
 
             # 如果开启了延迟，直接返回一个仅包含url和hash的基础对象
             if defer_caption:
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=db_url,
+                    media_type="image",
+                    is_captioned=False,
+                )
+                if file_name:
+                    media_caption.file_name = db_file_name
+                await self.data_cache.set_caption(media_caption)
+                return hash_val, media_caption
+
+            # 会话级分钟频控检查 (默认 1 分钟最多 8 张)
+            session_key = f"{bot_name}:{group_or_user_id}" if (bot_name or group_or_user_id) else ""
+            if session_key and not await self.rate_limiter.acquire(session_key):
+                logger.info(
+                    f"[Giftia] 会话 {session_key} 达到 1 分钟内图片自动转述频控上限 (8张/分)，当前图片转为延迟转述 (defer_caption): hash={hash_val}"
+                )
                 media_caption = MediaCaption(
                     hash_val=hash_val,
                     url=db_url,
