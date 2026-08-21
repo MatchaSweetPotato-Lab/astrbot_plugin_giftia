@@ -51,7 +51,7 @@ class SessionCaptionRateLimiter:
         """检查并尝试消耗 1 个转述配额。若允许转述返回 True，超频返回 False。"""
         if not session_key:
             return True
-        now = time.time()
+        now = time.monotonic()
         async with self._lock:
             queue = self._history.setdefault(session_key, deque())
             while queue and now - queue[0] > self.window_seconds:
