@@ -289,6 +289,7 @@ class MessageParser:
         msg_parts = []
         result = ChainParseResult()
         index = 0
+        img_in_msg_count = 0
         while index < len(chain):
             comp = chain[index]
             index += 1
@@ -323,15 +324,18 @@ class MessageParser:
                 )
             elif isinstance(comp, Image):
                 custom_desc = getattr(comp, "meme_desc", None)
+                # 单条消息最多自动转述第 1 张图片，第 2 张起强制 defer_caption=True
+                curr_defer = defer_caption or (img_in_msg_count >= 1)
                 part, media_result = await self._format_image_ref(
                     comp.url or "",
                     comp.file,
-                    defer_caption,
+                    curr_defer,
                     custom_desc=custom_desc,
                     event=event,
                 )
                 result.merge(media_result)
                 msg_parts.append(part)
+                img_in_msg_count += 1
             # 语音消息
             elif isinstance(comp, Record):
                 part, media_result = await self._format_audio_ref(

@@ -8,6 +8,8 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 from .path_security import get_safe_local_media_path
+from ..database.data_cache import is_temp_or_local_path
+
 
 # 视频转述核心体积阈值常量
 VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024   # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
@@ -274,7 +276,7 @@ async def get_remote_video_info(
     # 1. 本地文件直接解析
     local_target_path = ""
     for cand in candidates:
-        if cand.startswith("http://") or cand.startswith("https://"):
+        if not (cand.startswith("file://") or is_temp_or_local_path(cand)):
             continue
         safe_path = get_safe_local_media_path(cand)
         if safe_path:
