@@ -35,18 +35,14 @@ def get_allowed_roots() -> list[Path]:
         except Exception as e:
             logger.debug(f"[Giftia Security] 检查系统目录 {sys_tmp} 失败: {e}")
 
-    # 2. Giftia 插件专属 media_cache 目录 (显式确保目录存在)
+    # 2. AstrBot 插件数据目录 (包含 Giftia 自身 media_cache 以及其它插件如 meme_manager、生图、TTS 生成的媒体)
     try:
-        from astrbot.core.star.star_tools import StarTools
-
-        media_cache_dir = (
-            StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
-        ).resolve()
-        media_cache_dir.mkdir(parents=True, exist_ok=True)
-        if media_cache_dir.is_dir() and media_cache_dir not in roots:
-            roots.append(media_cache_dir)
+        p_data = Path("data/plugin_data").resolve()
+        p_data.mkdir(parents=True, exist_ok=True)
+        if p_data.is_dir() and p_data not in roots:
+            roots.append(p_data)
     except Exception as e:
-        logger.warning(f"[Giftia Security] 初始化插件媒体缓存目录失败: {e}")
+        logger.warning(f"[Giftia Security] 初始化 AstrBot 插件数据目录失败: {e}")
 
     # 3. AstrBot 官方临时目录 (data/temp，显式确保目录存在)
     try:
