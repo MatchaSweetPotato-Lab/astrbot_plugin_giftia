@@ -491,18 +491,6 @@ class WebUIManager:
             desc="Re-run AI analysis for an existing sticker",
         )
         ctx.register_web_api(
-            route="/astrbot_plugin_giftia/stickers/bots/link",
-            view_handler=self.web_api.link_sticker_bot,
-            methods=["POST"],
-            desc="Add sticker to a bot's collection",
-        )
-        ctx.register_web_api(
-            route="/astrbot_plugin_giftia/stickers/bots/unlink",
-            view_handler=self.web_api.unlink_sticker_bot,
-            methods=["POST"],
-            desc="Remove sticker from a bot's collection",
-        )
-        ctx.register_web_api(
             route="/astrbot_plugin_giftia/stickers/batch",
             view_handler=self.web_api.batch_stickers,
             methods=["POST"],

@@ -448,7 +448,7 @@ class StickersRepository(BaseRepository):
             rows = await cursor.fetchall()
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        changed = 0
+        updates: list[tuple[str, str, str]] = []
         for row in rows:
             try:
                 current = json.loads(row["tags"]) if row["tags"] else []
@@ -462,19 +462,18 @@ class StickersRepository(BaseRepository):
             if updated == current:
                 continue
 
-            await self.conn.execute(
-                "UPDATE stickers SET tags = ?, updated_at = ? WHERE sticker_id = ?",
-                (
-                    json.dumps(updated, ensure_ascii=False),
-                    now_str,
-                    row["sticker_id"],
-                ),
+            updates.append(
+                (json.dumps(updated, ensure_ascii=False), now_str, row["sticker_id"])
             )
-            changed += 1
 
-        if changed:
+        if updates:
+            # 收集后一次性 executemany，减少异步事件循环与 SQLite 的往返开销
+            await self.conn.executemany(
+                "UPDATE stickers SET tags = ?, updated_at = ? WHERE sticker_id = ?",
+                updates,
+            )
             await self.conn.commit()
-        return changed
+        return len(updates)
 
     async def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """重命名标签；若 new_tag 已存在于同一张表情包则自动去重（即合并）。"""
@@ -547,15 +546,3 @@ class StickersRepository(BaseRepository):
         return await self._rewrite_tags(
             transform, f"sticker_id IN ({placeholders})", tuple(sticker_ids)
         )
-
-    async def batch_delete_stickers(self, sticker_ids: list[str]) -> int:
-        """批量删除表情包记录（不含 stickers_bot 引用与磁盘文件清理）"""
-        if not sticker_ids:
-            return 0
-        placeholders = ",".join(["?"] * len(sticker_ids))
-        cursor = await self.conn.execute(
-            f"DELETE FROM stickers WHERE sticker_id IN ({placeholders})",
-            sticker_ids,
-        )
-        await self.conn.commit()
-        return cursor.rowcount

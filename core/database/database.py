@@ -362,9 +362,6 @@ class Database(ProfileStoreMixin):
     async def batch_remove_sticker_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
         return await self.stickers_repo.batch_remove_tags(sticker_ids, tags)
 
-    async def batch_delete_stickers(self, sticker_ids: list[str]) -> int:
-        return await self.stickers_repo.batch_delete_stickers(sticker_ids)
-
     # =========================================================================
     # Token Usage Delegations
     # =========================================================================

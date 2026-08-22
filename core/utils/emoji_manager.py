@@ -13,6 +13,36 @@ from ..database.database import Database
 from .schemas import BotSticker, Sticker
 
 
+def resolve_sticker_path(
+    base_dir: Path, name: str, is_thumbnail: bool = False
+) -> Path | None:
+    """把 name 解析为 stickers 目录（或其 thumbnails 子目录）内的绝对路径。
+
+    先剥离目录成分只取文件名，杜绝 ../ 与绝对路径；再用 is_relative_to 双重
+    校验目标与子目录都未越界（防 symlink 逃逸）。非法或越界返回 None。
+
+    EmojiManager 与 Web 层 StickerApi 共用这一套防穿越逻辑，避免多处维护。
+    """
+    if not name:
+        return None
+    # 只取文件名部分，杜绝 ../ 与绝对路径
+    clean_name = Path(str(name).replace("\\", "/")).name
+    if not clean_name or clean_name in (".", ".."):
+        return None
+    try:
+        base = Path(base_dir).resolve()
+        target_dir = (base / "thumbnails").resolve() if is_thumbnail else base
+        # 目录自身也不能越界（防 symlink 逃逸）
+        if not target_dir.is_relative_to(base):
+            return None
+        target = (target_dir / clean_name).resolve()
+        if target.is_relative_to(target_dir):
+            return target
+    except (ValueError, OSError):
+        return None
+    return None
+
+
 class EmojiManager:
     def __init__(self, db: Database, random_sticker_count: int = 50):
         self.db = db
@@ -169,18 +199,11 @@ class EmojiManager:
         self._stickers_loaded = False
         self.bot_stickers.clear()
 
-    def _resolve_sticker_file(self, filename: str) -> Path | None:
-        """把 filename 解析为 stickers 目录内的绝对路径，越界返回 None。"""
-        if not filename:
-            return None
-        try:
-            base = self.stickers_dir.resolve()
-            target = (base / filename).resolve()
-            if target.is_relative_to(base):
-                return target
-        except (ValueError, OSError):
-            return None
-        return None
+    def _resolve_sticker_file(
+        self, name: str, is_thumbnail: bool = False
+    ) -> Path | None:
+        """把 name 解析为 stickers 目录内的绝对路径，越界返回 None。"""
+        return resolve_sticker_path(self.stickers_dir, name, is_thumbnail)
 
     async def update_sticker_meta(
         self,
@@ -255,9 +278,7 @@ class EmojiManager:
         for candidate, is_thumb in ((filename, False), (sticker_id, True)):
             if not candidate:
                 continue
-            target = self._resolve_sticker_file(
-                f"thumbnails/{candidate}" if is_thumb else candidate
-            )
+            target = self._resolve_sticker_file(candidate, is_thumbnail=is_thumb)
             if target and target.is_file():
                 try:
                     target.unlink()

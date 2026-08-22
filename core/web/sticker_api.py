@@ -6,6 +6,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..utils.emoji_manager import resolve_sticker_path
 from .web_helpers import optional_int
 
 
@@ -47,27 +48,12 @@ class StickerApi:
     def _resolve_sticker_file(
         self, filename: str, is_thumbnail: bool = False
     ) -> Path | None:
-        """安全解析表情包文件路径，确保严格落在 stickers 目录内。"""
-        if not filename:
-            return None
+        """安全解析表情包文件路径，确保严格落在 stickers 目录内。
 
-        # 只取文件名部分，杜绝 ../ 与绝对路径
-        clean_name = Path(str(filename).replace("\\", "/")).name
-        if not clean_name or clean_name in (".", ".."):
-            return None
-
-        try:
-            base = self._get_stickers_dir().resolve()
-            target_dir = (base / "thumbnails").resolve() if is_thumbnail else base
-            # 目录自身也不能越界（防 symlink 逃逸）
-            if not target_dir.is_relative_to(base):
-                return None
-            target = (target_dir / clean_name).resolve()
-            if target.is_relative_to(target_dir):
-                return target
-        except (ValueError, OSError):
-            return None
-        return None
+        复用 EmojiManager 的同一套防穿越逻辑（resolve_sticker_path）；这里用
+        _get_stickers_dir() 以兼容 emoji_manager 尚未就绪时的兜底目录。
+        """
+        return resolve_sticker_path(self._get_stickers_dir(), filename, is_thumbnail)
 
     def _find_sticker_image(self, sticker_id: str, filename: str = "") -> Path | None:
         """定位表情包图片：先查 stickers 目录，再回退 media_cache。
@@ -619,6 +605,97 @@ class StickerApi:
             logger.error(f"[Giftia API] AI 分析表情包失败: {e}", exc_info=True)
             return False, None, f"AI 分析失败: {e}"
 
+    async def _ingest_single_sticker(
+        self,
+        *,
+        sticker_id: str,
+        image_bytes: bytes,
+        display_name: str,
+        index: int,
+        total: int,
+        base_name: str,
+        category: str,
+        description: str,
+        tags: list[str],
+        use_ai: bool,
+        bind_bots: list[str],
+    ) -> tuple[str, dict]:
+        """处理单张上传：去重 →（可选）AI 分析 → 落库 → 绑定归属。
+
+        返回 (status, result)，status ∈ {"exists", "added"}。调用方负责加锁与计数；
+        本方法内抛出的异常由调用方按“失败”统计。
+        """
+        emoji_manager = self.giftia.emoji_manager
+
+        existing = await self.giftia.db.get_sticker_by_id(sticker_id)
+        if existing:
+            # 已存在则不覆盖元数据，只按需补归属
+            for bot in bind_bots:
+                await emoji_manager.link_bot(sticker_id, bot)
+            return "exists", {
+                "filename": display_name,
+                "sticker_id": sticker_id,
+                "status": "exists",
+                "name": existing.name,
+                "message": f"已存在同图表情包「{existing.name}」"
+                + ("，已补充机器人归属" if bind_bots else ""),
+            }
+
+        final_name = base_name
+        final_category = category
+        final_tags = list(tags)
+        final_description = description
+        ai_note = ""
+
+        if use_ai:
+            is_useful, ai_sticker, err = await self._analyze_sticker_bytes(
+                image_bytes, sticker_id
+            )
+            if err:
+                ai_note = err
+            elif is_useful and ai_sticker:
+                final_name = ai_sticker.name or final_name
+                final_category = ai_sticker.category or final_category
+                final_tags = self._normalize_tags(
+                    list(final_tags) + list(ai_sticker.tags or [])
+                )
+                final_description = ai_sticker.description or final_description
+                ai_note = "AI 分析完成"
+            else:
+                ai_note = "AI 判定该图不适合作为表情包，已按手填信息保存"
+
+        if not final_name:
+            stem = Path(str(display_name)).stem
+            final_name = stem or sticker_id[:8]
+        if not final_category:
+            final_category = "未分类"
+
+        # 批量上传时给个后缀避免同名难以分辨
+        if total > 1 and base_name and final_name == base_name:
+            final_name = f"{base_name}_{index + 1}"
+
+        await emoji_manager.import_sticker(
+            image_bytes=image_bytes,
+            sticker_id=sticker_id,
+            name=final_name,
+            category=final_category,
+            tags=final_tags,
+            description=final_description,
+        )
+
+        for bot in bind_bots:
+            await emoji_manager.link_bot(sticker_id, bot)
+
+        return "added", {
+            "filename": display_name,
+            "sticker_id": sticker_id,
+            "status": "added",
+            "name": final_name,
+            "category": final_category,
+            "tags": final_tags,
+            "message": ai_note or "上传成功",
+        }
+
     async def upload_stickers(self):
         """手动上传表情包（支持批量），可选调用 AI 自动填写元信息。"""
         try:
@@ -653,7 +730,6 @@ class StickerApi:
             except ImportError:
                 return error_response("缺少 xxhash 依赖，无法计算表情包标识")
 
-            emoji_manager = self.giftia.emoji_manager
             locks = self._sticker_locks()
 
             results: list[dict] = []
@@ -687,88 +763,40 @@ class StickerApi:
                 # 与自动收藏链路同源的哈希，天然去重
                 sticker_id = xxh3_64_hexdigest(image_bytes)
 
+                # 与自动收藏链路（media_captioner）共用 sticker_locks，按 sticker_id
+                # 加锁避免并发写冲突。用 async with 而非手动 acquire/release：协程若
+                # 在 acquire 等待期间被取消，async with 不会误释放他人持有的锁。
                 lock = locks[sticker_id] if locks is not None else None
                 try:
                     if lock is not None:
-                        await lock.acquire()
-
-                    existing = await self.giftia.db.get_sticker_by_id(sticker_id)
-                    if existing:
-                        # 已存在则不覆盖元数据，只按需补归属
-                        for bot in bind_bots:
-                            await emoji_manager.link_bot(sticker_id, bot)
-                        skipped += 1
-                        results.append(
-                            {
-                                "filename": display_name,
-                                "sticker_id": sticker_id,
-                                "status": "exists",
-                                "name": existing.name,
-                                "message": f"已存在同图表情包「{existing.name}」"
-                                + ("，已补充机器人归属" if bind_bots else ""),
-                            }
-                        )
-                        continue
-
-                    final_name = base_name
-                    final_category = category
-                    final_tags = list(tags)
-                    final_description = description
-                    ai_note = ""
-
-                    if use_ai:
-                        is_useful, ai_sticker, err = await self._analyze_sticker_bytes(
-                            image_bytes, sticker_id
-                        )
-                        if err:
-                            ai_note = err
-                        elif is_useful and ai_sticker:
-                            final_name = ai_sticker.name or final_name
-                            final_category = ai_sticker.category or final_category
-                            final_tags = self._normalize_tags(
-                                list(final_tags) + list(ai_sticker.tags or [])
+                        async with lock:
+                            status, result = await self._ingest_single_sticker(
+                                sticker_id=sticker_id,
+                                image_bytes=image_bytes,
+                                display_name=display_name,
+                                index=index,
+                                total=len(files),
+                                base_name=base_name,
+                                category=category,
+                                description=description,
+                                tags=tags,
+                                use_ai=use_ai,
+                                bind_bots=bind_bots,
                             )
-                            final_description = (
-                                ai_sticker.description or final_description
-                            )
-                            ai_note = "AI 分析完成"
-                        else:
-                            ai_note = "AI 判定该图不适合作为表情包，已按手填信息保存"
-
-                    if not final_name:
-                        stem = Path(str(display_name)).stem
-                        final_name = stem or sticker_id[:8]
-                    if not final_category:
-                        final_category = "未分类"
-
-                    # 批量上传时给个后缀避免同名难以分辨
-                    if len(files) > 1 and base_name and final_name == base_name:
-                        final_name = f"{base_name}_{index + 1}"
-
-                    await emoji_manager.import_sticker(
-                        image_bytes=image_bytes,
-                        sticker_id=sticker_id,
-                        name=final_name,
-                        category=final_category,
-                        tags=final_tags,
-                        description=final_description,
-                    )
-
-                    for bot in bind_bots:
-                        await emoji_manager.link_bot(sticker_id, bot)
-
-                    added += 1
-                    results.append(
-                        {
-                            "filename": display_name,
-                            "sticker_id": sticker_id,
-                            "status": "added",
-                            "name": final_name,
-                            "category": final_category,
-                            "tags": final_tags,
-                            "message": ai_note or "上传成功",
-                        }
-                    )
+                    else:
+                        status, result = await self._ingest_single_sticker(
+                            sticker_id=sticker_id,
+                            image_bytes=image_bytes,
+                            display_name=display_name,
+                            index=index,
+                            total=len(files),
+                            base_name=base_name,
+                            category=category,
+                            description=description,
+                            tags=tags,
+                            use_ai=use_ai,
+                            bind_bots=bind_bots,
+                        )
                 except Exception as item_err:
                     logger.error(
                         f"[Giftia API] 上传表情包失败 {display_name}: {item_err}",
@@ -782,9 +810,13 @@ class StickerApi:
                             "message": f"处理失败: {item_err}",
                         }
                     )
-                finally:
-                    if lock is not None and lock.locked():
-                        lock.release()
+                    continue
+
+                if status == "exists":
+                    skipped += 1
+                else:
+                    added += 1
+                results.append(result)
 
             summary = f"新增 {added} 张"
             if skipped:
@@ -872,55 +904,6 @@ class StickerApi:
         except Exception as e:
             logger.error(f"[Giftia API] analyze_sticker error: {e}", exc_info=True)
             return error_response(f"AI 分析表情包失败: {str(e)}")
-
-    # ── 机器人归属 ───────────────────────────────────────────────────────
-
-    async def link_sticker_bot(self):
-        """把表情包加入某机器人的收藏。"""
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                return error_response("请求体格式错误，预期 JSON 对象")
-
-            sticker_id = str(body.get("sticker_id") or "").strip()
-            bot_name = str(body.get("bot_name") or "").strip()
-            if not sticker_id or not bot_name:
-                return error_response("缺少 sticker_id 或 bot_name 参数")
-            if not self._is_valid_sticker_id(sticker_id):
-                return error_response("无效的 sticker_id 参数", status_code=400)
-
-            ok = await self.giftia.emoji_manager.link_bot(sticker_id, bot_name)
-            if not ok:
-                return error_response("表情包记录不存在", status_code=404)
-
-            return json_response(
-                {"status": "success", "message": f"已将表情包加入 {bot_name} 的收藏"}
-            )
-        except Exception as e:
-            logger.error(f"[Giftia API] link_sticker_bot error: {e}", exc_info=True)
-            return error_response(f"添加归属失败: {str(e)}")
-
-    async def unlink_sticker_bot(self):
-        """把表情包从某机器人的收藏里移除。"""
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                return error_response("请求体格式错误，预期 JSON 对象")
-
-            sticker_id = str(body.get("sticker_id") or "").strip()
-            bot_name = str(body.get("bot_name") or "").strip()
-            if not sticker_id or not bot_name:
-                return error_response("缺少 sticker_id 或 bot_name 参数")
-            if not self._is_valid_sticker_id(sticker_id):
-                return error_response("无效的 sticker_id 参数", status_code=400)
-
-            await self.giftia.emoji_manager.unlink_bot(sticker_id, bot_name)
-            return json_response(
-                {"status": "success", "message": f"已从 {bot_name} 的收藏移除"}
-            )
-        except Exception as e:
-            logger.error(f"[Giftia API] unlink_sticker_bot error: {e}", exc_info=True)
-            return error_response(f"移除归属失败: {str(e)}")
 
     # ── 批量操作 ─────────────────────────────────────────────────────────
 
