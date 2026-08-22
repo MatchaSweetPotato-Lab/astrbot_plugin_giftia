@@ -434,3 +434,95 @@ class WebUIManager:
             methods=["POST"],
             desc="Delete signature voice file from disk",
         )
+
+        # Sticker management APIs
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers",
+            view_handler=self.web_api.get_stickers,
+            methods=["GET"],
+            desc="Get stickers list with filters",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/filter_options",
+            view_handler=self.web_api.get_sticker_filter_options,
+            methods=["GET"],
+            desc="Get sticker filter options (categories/tags/bots)",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/file/<sticker_id>",
+            view_handler=self.web_api.get_sticker_file,
+            methods=["GET"],
+            desc="Get sticker image file by sticker id",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/file/b64/<sticker_id>",
+            view_handler=self.web_api.get_sticker_file_b64,
+            methods=["GET"],
+            desc="Get sticker image as base64 by sticker id",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/file/thumbnail/b64/<sticker_id>",
+            view_handler=self.web_api.get_sticker_thumbnail_b64,
+            methods=["GET"],
+            desc="Get sticker thumbnail as base64 by sticker id",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/update",
+            view_handler=self.web_api.update_sticker,
+            methods=["POST"],
+            desc="Update sticker metadata and bot ownership",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/delete",
+            view_handler=self.web_api.delete_sticker,
+            methods=["POST"],
+            desc="Delete sticker with file and ownership cleanup",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/upload",
+            view_handler=self.web_api.upload_stickers,
+            methods=["POST"],
+            desc="Upload sticker images manually (batch supported)",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/analyze",
+            view_handler=self.web_api.analyze_sticker,
+            methods=["POST"],
+            desc="Re-run AI analysis for an existing sticker",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/batch",
+            view_handler=self.web_api.batch_stickers,
+            methods=["POST"],
+            desc="Batch sticker operations",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/categories",
+            view_handler=self.web_api.get_sticker_categories,
+            methods=["GET"],
+            desc="Get sticker category stats",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/categories/rename",
+            view_handler=self.web_api.rename_sticker_category,
+            methods=["POST"],
+            desc="Rename or merge a sticker category",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/tags",
+            view_handler=self.web_api.get_sticker_tags,
+            methods=["GET"],
+            desc="Get sticker tag stats",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/tags/rename",
+            view_handler=self.web_api.rename_sticker_tag,
+            methods=["POST"],
+            desc="Rename or merge a sticker tag",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/tags/delete",
+            view_handler=self.web_api.delete_sticker_tag,
+            methods=["POST"],
+            desc="Remove a tag from all stickers",
+        )

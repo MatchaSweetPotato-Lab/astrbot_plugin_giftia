@@ -6,6 +6,7 @@ import * as history from './modules/render/history.js';
 import * as memories from './modules/render/memories.js';
 import * as status from './modules/render/status.js';
 import * as media from './modules/render/media.js';
+import * as stickers from './modules/render/stickers.js';
 import * as forwards from './modules/render/forwards.js';
 import * as profiles from './modules/render/profiles.js';
 import * as token from './modules/render/token.js';
@@ -54,6 +55,15 @@ window.GiftiaApp = {
     isPcPlayableAudio: media.isPcPlayableAudio,
     renderAudioUnsupportedNotice: media.renderAudioUnsupportedNotice,
     loadMediaFileB64: media.loadMediaFileB64,
+
+    // Stickers
+    initializeStickersTab: stickers.initializeStickersTab,
+    loadStickers: stickers.loadStickers,
+    renderStickers: stickers.renderStickers,
+    loadStickerFilterOptions: stickers.loadStickerFilterOptions,
+    loadStickerImage: stickers.loadStickerImage,
+    updateStickerSelectionUI: stickers.updateStickerSelectionUI,
+    getCurrentSticker: stickers.getCurrentSticker,
 
     // Forwards
     loadForwards: forwards.loadForwards,
@@ -221,6 +231,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
         "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
         "media-type", "media-search",
+        "sticker-bot-name", "sticker-category", "sticker-tag", "sticker-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",
         "profile-type", "profile-bot-name", "profile-group-id-select", "profile-group-id-input", "profile-user-id",
         "token-bot-name", "token-group-id", "token-time-range"
@@ -253,6 +264,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     } else if (app.activeTab === "media-captions") {
                         app.pagination.media.page = 1;
                         app.loadMedia();
+                    } else if (app.activeTab === "stickers") {
+                        app.pagination.stickers.page = 1;
+                        await app.loadStickers();
                     } else if (app.activeTab === "forward-messages") {
                         app.resetPagination("forwards");
                         await app.refreshScopedFilters("forwards", preserveSession);

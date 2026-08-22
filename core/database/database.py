@@ -304,6 +304,64 @@ class Database(ProfileStoreMixin):
     async def get_sticker_bot(self, bot_name: str) -> list[str]:
         return await self.stickers_repo.get_sticker_bot(bot_name)
 
+    async def update_sticker(
+        self, sticker_id: str, name: str, category: str, tags: list[str], description: str
+    ) -> bool:
+        return await self.stickers_repo.update_sticker(sticker_id, name, category, tags, description)
+
+    async def get_sticker_by_id(self, sticker_id: str) -> Sticker | None:
+        return await self.stickers_repo.get_sticker_by_id(sticker_id)
+
+    async def query_stickers(
+        self,
+        page: int = 1,
+        limit: int = 12,
+        category: str = "",
+        tag: str = "",
+        search: str = "",
+        sticker_ids: list[str] | None = None,
+        sort: str = "created_desc",
+    ) -> tuple[list[dict], int]:
+        return await self.stickers_repo.query_stickers(
+            page, limit, category, tag, search, sticker_ids, sort
+        )
+
+    async def delete_sticker_bot(self, sticker_id: str, bot_name: str) -> bool:
+        return await self.stickers_repo.delete_sticker_bot(sticker_id, bot_name)
+
+    async def remove_sticker_from_all_bots(self, sticker_id: str) -> list[str]:
+        return await self.stickers_repo.remove_sticker_from_all_bots(sticker_id)
+
+    async def get_all_bot_sticker_map(self) -> dict[str, list[str]]:
+        return await self.stickers_repo.get_all_bot_sticker_map()
+
+    async def get_all_sticker_tags(self) -> list[str]:
+        return await self.stickers_repo.get_all_sticker_tags()
+
+    async def get_sticker_category_stats(self) -> list[dict]:
+        return await self.stickers_repo.get_category_stats()
+
+    async def get_sticker_tag_stats(self) -> list[dict]:
+        return await self.stickers_repo.get_tag_stats()
+
+    async def rename_sticker_category(self, old_name: str, new_name: str) -> int:
+        return await self.stickers_repo.rename_category(old_name, new_name)
+
+    async def rename_sticker_tag(self, old_tag: str, new_tag: str) -> int:
+        return await self.stickers_repo.rename_tag(old_tag, new_tag)
+
+    async def delete_sticker_tag(self, tag: str) -> int:
+        return await self.stickers_repo.delete_tag(tag)
+
+    async def batch_update_sticker_category(self, sticker_ids: list[str], category: str) -> int:
+        return await self.stickers_repo.batch_update_category(sticker_ids, category)
+
+    async def batch_add_sticker_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
+        return await self.stickers_repo.batch_add_tags(sticker_ids, tags)
+
+    async def batch_remove_sticker_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
+        return await self.stickers_repo.batch_remove_tags(sticker_ids, tags)
+
     # =========================================================================
     # Token Usage Delegations
     # =========================================================================

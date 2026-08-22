@@ -224,6 +224,8 @@ export function loadActiveTabData() {
         app.loadBotStatus();
     } else if (state.activeTab === "media-captions") {
         app.loadMedia();
+    } else if (state.activeTab === "stickers") {
+        app.initializeStickersTab();
     } else if (state.activeTab === "forward-messages") {
         initializeScopedView("forwards");
     } else if (state.activeTab === "profiles") {

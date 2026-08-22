@@ -9,6 +9,7 @@ export const state = {
         history: { page: 1, limit: 15, total: 0 },
         memories: { page: 1, limit: 15, total: 0 },
         media: { page: 1, limit: 12, total: 0 },
+        stickers: { page: 1, limit: 12, total: 0 },
         forwards: { page: 1, limit: 15, total: 0 },
         userProfiles: { page: 1, limit: 15, total: 0 },
         groupProfiles: { page: 1, limit: 15, total: 0 },
@@ -17,4 +18,9 @@ export const state = {
 
     loadedOriginalMediaG: new Set(),
     filterOptions: {},
+
+    // 表情包管理：多选集合、已加载原图集合、筛选项缓存
+    selectedStickers: new Set(),
+    loadedOriginalStickers: new Set(),
+    stickerOptions: { categories: [], tags: [], bots: [], ai_available: false },
 };
