@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.1.8-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.1.9-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -23,7 +23,7 @@
 > - **电脑能力与 Skills 限制说明**：由于关闭了原生 AI 对话管线，AstrBot 内置的**“使用电脑能力”（Computer Use：Shell、Python、文件系统、沙盒环境等）**以及依赖该环境的 **Skills 技能**将无法在 Giftia 对话中调用。Giftia 专注于人设陪伴、多轮记忆与拟人社交场景。
 > - **硬件与 CPU 指令集要求 (AVX2)**：本插件依赖的向量数据库（LanceDB）在 x86 架构下需要 CPU 支持 **AVX2 指令集**（Intel 4代酷睿 Haswell 及以上，AMD 锐龙/挖掘机及以上；ARM64 / Apple Silicon 原生支持）。若在不支持 AVX2 的老旧 CPU（如 AMD Piledriver、Intel Sandy Bridge 等）上运行，插件在启动时会自动检测并直接抛出异常拒绝加载，以保护 AstrBot 本体稳定运行，避免底层触发非法指令（SIGILL 132）导致进程闪退（若确信环境误报，可在插件配置中开启 `ignore_avx2_check` 强制跳过）。
 > - **网页搜索支持**：如需使用 Tavily 网页搜索，可先在 AstrBot 配置中填写好 API Key 并开启搜索，再关闭 AI 对话总开关。
-> - **支持平台**：目前仅支持onebot（QQ）、QQ官方websocket，建议使用 onebot（QQ），官方会缺少部分交互功能，以及无法发送小图表情包（表情会以图片形式发送，在会话窗口占用大量空间）。
+> - **支持平台**：目前仅支持onebot（QQ）、QQ官方websocket，建议使用 onebot（QQ），官方会缺少部分交互功能，以及无法发送小图表情包（表情会以图片形式发送，在会话窗口占用大量空间）。这一条可以缓解：到 Web 面板「表情包管理」页签为该机器人开启**「以 GIF 格式发送」**，发送前会把表情包统一转成 GIF，官方 QQ 客户端便会按表情包渲染。开关每个机器人独立。
 
 ---
 

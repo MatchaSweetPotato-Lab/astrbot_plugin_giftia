@@ -100,6 +100,9 @@ function renderBotsGrid() {
                     <span class="badge badge-info">
                         人格: ${escapeHtml(bot.llm_reply_conf?.persona_id || 'default')}
                     </span>
+                    <span class="badge ${bot.decision_conf?.at_behavior && bot.decision_conf.at_behavior !== 'force_reply' ? 'badge-info' : 'badge-secondary'}">
+                        ${bot.decision_conf?.at_behavior === 'activate_and_decide' ? '@ 激活并判断' : (bot.decision_conf?.at_behavior === 'decide_in_window_force_outside' ? '@ 窗口内判断' : '@ 强制回复')}
+                    </span>
                     <span class="badge ${ttsEnabled ? 'badge-info' : 'badge-secondary'}">
                         TTS 语音: ${ttsEnabled ? escapeHtml(bot.tts_config?.provider_type || '已开启') : '未开启'}
                     </span>
@@ -183,7 +186,8 @@ function openBotEditModal(botName = null) {
             proactive_probability: 0,
             keyword_trigger_enabled: false,
             keyword_rules: [],
-            keyword_default_probability: 100
+            keyword_default_probability: 100,
+            at_behavior: 'force_reply'
         },
         llm_reply_conf: {
             enabled: true,
@@ -232,6 +236,8 @@ function openBotEditModal(botName = null) {
         selectedValues: bot.decision_conf?.provider_ids || []
     });
 
+    const atBehaviorEl = document.getElementById('bot-form-dec-at-behavior');
+    if (atBehaviorEl) atBehaviorEl.value = bot.decision_conf?.at_behavior || 'force_reply';
     document.getElementById('bot-form-dec-whitelist').value = (bot.decision_conf?.group_whitelist || []).join(', ');
     document.getElementById('bot-form-dec-window').value = bot.decision_conf?.reply_active_window ?? 10;
     document.getElementById('bot-form-dec-proactive').value = bot.decision_conf?.proactive_probability ?? 0;
@@ -736,6 +742,7 @@ async function saveBotFromModal() {
             keyword_trigger_enabled: document.getElementById('bot-form-dec-kw-enabled').checked,
             keyword_rules: document.getElementById('bot-form-dec-kw-rules').value.split(',').map(s => s.trim()).filter(s => s),
             keyword_default_probability: parseInt(document.getElementById('bot-form-dec-kw-prob').value || 100),
+            at_behavior: document.getElementById('bot-form-dec-at-behavior')?.value || 'force_reply',
         },
         llm_reply_conf: {
             enabled: document.getElementById('bot-form-reply-enabled').checked,

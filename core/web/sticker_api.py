@@ -7,6 +7,7 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 from ..utils.emoji_manager import resolve_sticker_path
+from ..utils.qq_official_action import is_qq_official
 from .web_helpers import optional_int
 
 
@@ -187,6 +188,119 @@ class StickerApi:
     def _sticker_locks(self):
         """返回按 sticker_id 分片的锁字典，与自动收藏链路共用以避免并发写冲突。"""
         return getattr(self.giftia, "sticker_locks", None)
+
+    # ── 「以 GIF 格式发送」开关（per-bot）───────────────────────────────────
+    #
+    # 官方 QQ 不支持 OneBot 的小图表情包外显，表情包会被当成普通大图发出，在会话
+    # 窗口里占掉大量空间。开关打开后 ActionDispatcher 会把表情包转成 GIF 再发，
+    # 客户端便按表情包渲染。开关按机器人独立存放在 bots_config.json 里。
+
+    def _bot_config_manager(self):
+        """取 BotConfigManager，未初始化则返回 None。"""
+        return getattr(self.giftia, "bot_config_manager", None)
+
+    def _is_qq_official_bot(self, bot: dict, adapters: list[dict]) -> bool:
+        """按该机器人绑定的适配器判断它是不是官方 QQ bot。
+
+        用于在面板上给官方 bot 标注「建议开启」——它们才是这个开关的主要受益方。
+        未绑定适配器（即「全部适用」）或判不出来时返回 False，UI 就不提示。
+        """
+        bound = {str(a).strip() for a in bot.get("adapter_ids") or [] if str(a).strip()}
+        if not bound:
+            return False
+        return any(
+            adapter.get("id") in bound
+            and is_qq_official(str(adapter.get("platform_name") or ""))
+            for adapter in adapters
+        )
+
+    async def get_sticker_gif_config(self):
+        """获取各机器人的「以 GIF 格式发送」开关状态。"""
+        try:
+            manager = self._bot_config_manager()
+            if manager is None:
+                return error_response("BotConfigManager 未初始化")
+
+            # 列出全部已配置机器人（含被暂停的），前端据此给出提示。
+            # _extract_platform_adapters 由 BotApi 提供，两个 mixin 在
+            # GiftiaWebApi 里汇合；单独用 StickerApi 时优雅退化为不标注。
+            adapters = []
+            extract = getattr(self, "_extract_platform_adapters", None)
+            if callable(extract):
+                try:
+                    adapters = extract(getattr(self.giftia, "context", None)) or []
+                except Exception as e:
+                    logger.warning(
+                        f"[Giftia API] 获取适配器列表失败，跳过官方 QQ 标注: {e}"
+                    )
+
+            bots = []
+            for bot in manager.load_bots():
+                if not isinstance(bot, dict):
+                    continue
+                name = str(bot.get("name") or "").strip()
+                if not name:
+                    continue
+                bots.append(
+                    {
+                        "name": name,
+                        "enabled": bot.get("enabled") is not False,
+                        "is_qq_official": self._is_qq_official_bot(bot, adapters),
+                        "send_sticker_as_gif": bool(bot.get("send_sticker_as_gif")),
+                    }
+                )
+
+            return json_response({"status": "success", "data": {"bots": bots}})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_sticker_gif_config error: {e}", exc_info=True)
+            return error_response(f"获取 GIF 发送配置失败: {str(e)}")
+
+    async def set_sticker_gif_config(self):
+        """设置单个机器人的「以 GIF 格式发送」开关。"""
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return error_response("请求体格式错误，预期 JSON 对象")
+
+            bot_name = str(body.get("bot_name") or "").strip()
+            if not bot_name:
+                return error_response("缺少 bot_name 参数")
+            if "send_sticker_as_gif" not in body:
+                return error_response("缺少 send_sticker_as_gif 参数")
+            enabled = bool(body.get("send_sticker_as_gif"))
+
+            manager = self._bot_config_manager()
+            if manager is None:
+                return error_response("BotConfigManager 未初始化")
+
+            existing_bots = manager.load_bots()
+            found = False
+            for bot in existing_bots:
+                if bot.get("name") == bot_name:
+                    bot["send_sticker_as_gif"] = enabled
+                    found = True
+                    break
+            if not found:
+                return error_response(
+                    f"未找到名称为 '{bot_name}' 的机器人", status_code=404
+                )
+
+            if not manager.save_bots(existing_bots):
+                return error_response("保存机器人配置到文件失败")
+
+            # 同步 bot_map，让发送侧读到的 bot_conf 立刻带上新值，无需重载插件
+            self.giftia.sync_bot_maps()
+
+            return json_response(
+                {
+                    "status": "success",
+                    "message": f"{bot_name} 的「以 GIF 格式发送」已{'开启' if enabled else '关闭'}",
+                    "data": {"bot_name": bot_name, "send_sticker_as_gif": enabled},
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] set_sticker_gif_config error: {e}", exc_info=True)
+            return error_response(f"保存 GIF 发送配置失败: {str(e)}")
 
     # ── 列表与筛选项 ──────────────────────────────────────────────────────
 

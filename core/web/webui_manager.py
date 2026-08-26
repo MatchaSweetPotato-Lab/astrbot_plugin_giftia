@@ -526,3 +526,15 @@ class WebUIManager:
             methods=["POST"],
             desc="Remove a tag from all stickers",
         )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/gif_config",
+            view_handler=self.web_api.get_sticker_gif_config,
+            methods=["GET"],
+            desc="Get per-bot send-sticker-as-gif switches",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/stickers/gif_config",
+            view_handler=self.web_api.set_sticker_gif_config,
+            methods=["POST"],
+            desc="Set per-bot send-sticker-as-gif switch",
+        )

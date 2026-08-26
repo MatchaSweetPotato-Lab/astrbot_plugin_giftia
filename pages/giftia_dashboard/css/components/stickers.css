@@ -195,6 +195,75 @@ html[data-theme="dark"] .sticker-preview-box {
     padding-top: 8px;
 }
 
+/* ── 「以 GIF 格式发送」per-bot 开关 ───────────────────────── */
+
+.sticker-gif-card {
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+
+.sticker-gif-head {
+    margin-bottom: 10px;
+}
+
+.sticker-gif-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--font-color);
+    margin-bottom: 4px;
+}
+
+.sticker-gif-hint {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--font-secondary);
+}
+
+.sticker-gif-switches {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 8px 16px;
+}
+
+.sticker-gif-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="dark"] .sticker-gif-row {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.sticker-gif-row-main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sticker-gif-bot-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--font-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.sticker-gif-empty {
+    font-size: 12px;
+    color: var(--font-secondary);
+    grid-column: 1 / -1;
+}
+
 /* ── 批量操作条 ────────────────────────────────────────────── */
 
 .sticker-batch-bar {

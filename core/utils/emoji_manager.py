@@ -12,16 +12,24 @@ from astrbot.api.star import StarTools
 from ..database.database import Database
 from .schemas import BotSticker, Sticker
 
+# 表情包派生产物的子目录名（相对 stickers 目录）
+THUMBNAIL_SUBDIR = "thumbnails"
+GIF_CACHE_SUBDIR = "gif_cache"
+
 
 def resolve_sticker_path(
-    base_dir: Path, name: str, is_thumbnail: bool = False
+    base_dir: Path, name: str, is_thumbnail: bool = False, subdir: str = ""
 ) -> Path | None:
-    """把 name 解析为 stickers 目录（或其 thumbnails 子目录）内的绝对路径。
+    """把 name 解析为 stickers 目录（或其某个子目录）内的绝对路径。
 
     先剥离目录成分只取文件名，杜绝 ../ 与绝对路径；再用 is_relative_to 双重
     校验目标与子目录都未越界（防 symlink 逃逸）。非法或越界返回 None。
 
-    EmojiManager 与 Web 层 StickerApi 共用这一套防穿越逻辑，避免多处维护。
+    子目录可以用 subdir 显式指定（如 GIF 缓存的 "gif_cache"）；`is_thumbnail=True`
+    等价于 subdir="thumbnails"，保留该参数是为了不改动既有调用点。
+
+    EmojiManager、GifConverter 与 Web 层 StickerApi 共用这一套防穿越逻辑，
+    避免多处维护。
     """
     if not name:
         return None
@@ -29,9 +37,15 @@ def resolve_sticker_path(
     clean_name = Path(str(name).replace("\\", "/")).name
     if not clean_name or clean_name in (".", ".."):
         return None
+
+    target_subdir = subdir or (THUMBNAIL_SUBDIR if is_thumbnail else "")
+    # 子目录名本身也只允许单层普通名字，杜绝调用方传入 ../ 或嵌套路径
+    if target_subdir and Path(target_subdir.replace("\\", "/")).name != target_subdir:
+        return None
+
     try:
         base = Path(base_dir).resolve()
-        target_dir = (base / "thumbnails").resolve() if is_thumbnail else base
+        target_dir = (base / target_subdir).resolve() if target_subdir else base
         # 目录自身也不能越界（防 symlink 逃逸）
         if not target_dir.is_relative_to(base):
             return None
@@ -200,10 +214,10 @@ class EmojiManager:
         self.bot_stickers.clear()
 
     def _resolve_sticker_file(
-        self, name: str, is_thumbnail: bool = False
+        self, name: str, is_thumbnail: bool = False, subdir: str = ""
     ) -> Path | None:
-        """把 name 解析为 stickers 目录内的绝对路径，越界返回 None。"""
-        return resolve_sticker_path(self.stickers_dir, name, is_thumbnail)
+        """把 name 解析为 stickers 目录（或其子目录）内的绝对路径，越界返回 None。"""
+        return resolve_sticker_path(self.stickers_dir, name, is_thumbnail, subdir)
 
     async def update_sticker_meta(
         self,
@@ -270,15 +284,21 @@ class EmojiManager:
         return True
 
     def _delete_sticker_files(self, sticker_id: str, filename: str) -> None:
-        """删除表情包图片与其缩略图，失败只记日志不打断流程。
+        """删除表情包图片及其全部派生产物（缩略图、GIF 缓存），失败只记日志不打断流程。
 
         缩略图由 Web 层以 sticker_id 命名（见 StickerApi.get_sticker_thumbnail_b64），
-        与源文件扩展名无关，所以这里按 sticker_id 定位。
+        GIF 缓存由 GifConverter 以 sticker_id 命名，两者都与源文件扩展名无关，
+        所以这里按 sticker_id 定位。
         """
-        for candidate, is_thumb in ((filename, False), (sticker_id, True)):
+        candidates = (
+            (filename, ""),
+            (sticker_id, THUMBNAIL_SUBDIR),
+            (f"{sticker_id}.gif", GIF_CACHE_SUBDIR),
+        )
+        for candidate, subdir in candidates:
             if not candidate:
                 continue
-            target = self._resolve_sticker_file(candidate, is_thumbnail=is_thumb)
+            target = self._resolve_sticker_file(candidate, subdir=subdir)
             if target and target.is_file():
                 try:
                     target.unlink()

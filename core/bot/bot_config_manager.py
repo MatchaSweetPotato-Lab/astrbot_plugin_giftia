@@ -41,6 +41,7 @@ DEFAULT_BOT_CONFIG = {
         "keyword_trigger_enabled": False,
         "keyword_rules": [],
         "keyword_default_probability": 100,
+        "at_behavior": "force_reply",
     },
     "llm_reply_conf": {
         "enabled": True,
@@ -59,6 +60,9 @@ DEFAULT_BOT_CONFIG = {
         "signature_voices": [],
     },
     "enabled_interactive_features": DEFAULT_INTERACTIVE_FEATURES,
+    # 表情包统一转 GIF 发送。主要用于官方 QQ——那边不支持小图表情包外显，
+    # 表情包会以大图发出占屏；转成 GIF 后客户端会按表情包渲染。
+    "send_sticker_as_gif": False,
 }
 
 
@@ -142,6 +146,12 @@ class BotConfigManager:
             "keyword_trigger_enabled": bool(raw_dec.get("keyword_trigger_enabled", False)),
             "keyword_rules": [str(k).strip() for k in raw_dec.get("keyword_rules") or [] if k],
             "keyword_default_probability": int(raw_dec.get("keyword_default_probability", 100)),
+            "at_behavior": (
+                str(raw_dec.get("at_behavior") or "force_reply").strip().lower()
+                if str(raw_dec.get("at_behavior") or "").strip().lower()
+                in ("force_reply", "activate_and_decide", "decide_in_window_force_outside")
+                else "force_reply"
+            ),
         }
 
         # llm_reply_conf
@@ -209,5 +219,8 @@ class BotConfigManager:
                 if key and key not in normalized_features:
                     normalized_features.append(key)
             bot["enabled_interactive_features"] = normalized_features
+
+        # 表情包转 GIF 发送开关（在 Web 面板「表情包管理」页签里逐 bot 切换）
+        bot["send_sticker_as_gif"] = bool(bot.get("send_sticker_as_gif", False))
 
         return bot

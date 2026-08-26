@@ -220,6 +220,27 @@ class ActionDispatcher:
         logger.warning("[Giftia TTS] 语音合成重试后依然失败，放弃发送该段语音消息。")
         return None, ""
 
+    async def _build_send_chain(
+        self, msg_chain: list, bot_conf: dict
+    ) -> list:
+        """按该机器人的「表情包转 GIF」开关，返回用于发送的消息链副本。
+
+        必须返回副本而非就地修改：发送之后调用方还要用**原链**调
+        message_parser.chain_to_result() 生成入库内容，若原链被换成 GIF，
+        入库的 [图片:<sticker_id>] 会变成 GIF 的新哈希，破坏聊天记录与表情包复用。
+        开关关闭、或链里没有可转的表情包时，原样返回入参。
+        """
+        if not msg_chain or not bot_conf.get("send_sticker_as_gif"):
+            return msg_chain
+        converter = getattr(self.plugin, "gif_converter", None)
+        if converter is None:
+            return msg_chain
+        try:
+            return await converter.build_send_chain(msg_chain)
+        except Exception as e:
+            logger.warning(f"[Giftia] 表情包转 GIF 失败，按原格式发送: {e}")
+            return msg_chain
+
     async def _dispatch_aiocqhttp_outputs(
         self,
         event: AstrMessageEvent,
@@ -263,15 +284,20 @@ class ActionDispatcher:
                 )
                 await asyncio.sleep(interval)
 
+            # 发送用 GIF 副本，入库仍用原链（见 _build_send_chain 注释）。
+            # 官方 QQ 尤其需要：那边不支持小图表情包外显，表情包会以大图发出占屏，
+            # 转成 GIF 后客户端才会按表情包渲染。
+            send_chain = await self._build_send_chain(msg_chain, bot_conf)
+
             if is_qq_official_platform(event):
                 success, message_id = await self.plugin.qq_official.send_message(
                     event,
-                    msg_chain,
+                    send_chain,
                 )
                 if not success:
                     try:
                         event._giftia_bypass_logging = True
-                        await event.send(MessageChain(msg_chain))
+                        await event.send(MessageChain(send_chain))
                         success = True
                         message_id = str(uuid.uuid4())
                     except Exception as err_fallback:
@@ -279,7 +305,7 @@ class ActionDispatcher:
             else:
                 success, message_id = await self.plugin.aiocqhttp.send_message(
                     event,
-                    msg_chain,
+                    send_chain,
                     image_type=send_image_type,
                 )
             sent_index += 1
@@ -370,9 +396,11 @@ class ActionDispatcher:
                 await asyncio.sleep(interval)
 
             try:
+                # 发送用 GIF 副本，入库仍用原链（见 _build_send_chain 注释）
+                send_chain = await self._build_send_chain(msg_chain, bot_conf)
                 try:
                     event._giftia_bypass_logging = True
-                    await event.send(MessageChain(msg_chain))
+                    await event.send(MessageChain(send_chain))
                 finally:
                     event._giftia_bypass_logging = False
                 iso_string = datetime.now().isoformat()
