@@ -514,6 +514,6 @@ class DecisionEngine:
                         log_context="决策 RAG 记忆召回",
                     )
                     relevant_memories = [m["text"] for m in memory_results]
-                    return True, relevant_memories, False, memory_results
+                    return True, relevant_memories, is_just_at, memory_results
 
-                return True, relevant_memories, False, None
+                return True, relevant_memories, is_just_at, None
