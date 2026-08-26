@@ -8,6 +8,29 @@ from ..utils.schemas import MediaCaption
 logger = logging.getLogger("astrbot")
 
 
+def _clean_json_comments_and_trailing_commas(s: str) -> str:
+    """安全移除 JSON/JSON5 中的注释与尾随逗号，严格保护带引号字符串内部内容（如 URL、//、/* 等）"""
+    # 1. 移除 // 单行注释与 /* */ 块级注释 (在引号保护下匹配)
+    pattern_comments = r'("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*[\s\S]*?\*/'
+
+    def comment_replacer(m: re.Match) -> str:
+        if m.group(1) is not None:
+            return m.group(1)
+        return ""
+
+    no_comments = re.sub(pattern_comments, comment_replacer, s)
+
+    # 2. 移除对象或数组末尾多余的逗号 (trailing commas)
+    pattern_trailing_commas = r'("(?:\\.|[^"\\])*")|,\s*([\]\}])'
+
+    def comma_replacer(m: re.Match) -> str:
+        if m.group(1) is not None:
+            return m.group(1)
+        return m.group(2)
+
+    return re.sub(pattern_trailing_commas, comma_replacer, no_comments)
+
+
 def _robust_json_loads(s: str) -> dict | list | None:
     """尝试以多种容错方式解析 JSON 字符串"""
     if not s:
@@ -20,28 +43,25 @@ def _robust_json_loads(s: str) -> dict | list | None:
     except Exception:
         pass
 
-    # 2. 移除末尾多余逗号 (trailing commas)
+    # 2. 安全清理注释与尾随逗号后再次尝试标准解析
     try:
-        s_fixed = re.sub(r",\s*([\]\}])", r"\1", s)
-        return json.loads(s_fixed)
+        cleaned = _clean_json_comments_and_trailing_commas(s)
+        return json.loads(cleaned)
     except Exception:
         pass
 
-    # 3. 移除 // 单行注释与 /* */ 块级注释
+    # 3. 尝试通过 ast.literal_eval 兜底（处理单引号与 Python 风格字面量）
     try:
-        s_no_comments = re.sub(r"^\s*//.*$", "", s, flags=re.MULTILINE)
-        s_no_comments = re.sub(r"(?<![:\\])//.*$", "", s_no_comments, flags=re.MULTILINE)
-        s_no_comments = re.sub(r"/\*.*?\*/", "", s_no_comments, flags=re.DOTALL)
-        s_no_comments = re.sub(r",\s*([\]\}])", r"\1", s_no_comments)
-        return json.loads(s_no_comments)
-    except Exception:
-        pass
-
-    # 4. 尝试通过 ast.literal_eval 兜底（处理单引号或弱语法）
-    try:
-        ast_str = re.sub(r"\btrue\b", "True", s, flags=re.IGNORECASE)
-        ast_str = re.sub(r"\bfalse\b", "False", ast_str, flags=re.IGNORECASE)
-        ast_str = re.sub(r"\bnull\b", "None", ast_str, flags=re.IGNORECASE)
+        # 引号感知替换：仅在单双引号外部将 true/false/null 替换为 Python 的 True/False/None
+        # 避免破坏如 {'caption': 'null'} 或 {'text': 'it is true'} 等字面量内容
+        ast_str = re.sub(
+            r"([\"'])(?:\\[\s\S]|(?!\1)[\s\S])*?\1|(?<!\w)(true|false|null)(?!\w)",
+            lambda match: match.group(0)
+            if match.group(1)
+            else {"true": "True", "false": "False", "null": "None"}[match.group(2).lower()],
+            s,
+            flags=re.IGNORECASE,
+        )
         res = ast.literal_eval(ast_str)
         if isinstance(res, (dict, list)):
             return res

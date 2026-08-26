@@ -124,7 +124,7 @@ git push --force-with-lease origin <你的分支>    # 仅对自己的临时分�
 
 1. **`metadata.yaml`** 的 `version` 属性（如 `version: 0.1.9`）
 2. **`README.md`** 顶部的 Giftia 版本 Badge（如 `[![Giftia](https://img.shields.io/badge/Giftia-v0.1.9-FFD700.svg)]`）
-3. **`changelog.md`** 顶部新增对应版本号的变更日志块（如 `## [v0.1.9] - 2026-08-26`）
+3. **`changelog.md`** 顶部新增对应版本号的变更日志块（如 `## [v0.1.9] - 2026-08-26`），内容尽可能简洁，仅描述最终用户可见的改动，如新增功能，修复bug等。
 
 ---
 
