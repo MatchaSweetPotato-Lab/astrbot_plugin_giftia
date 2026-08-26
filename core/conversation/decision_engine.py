@@ -122,10 +122,54 @@ class DecisionEngine:
             else:
                 self.plugin.debounce_at_map[debounce_key] = is_just_at
 
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
+        is_active_window = active_counter > 0
+
+        # 是否针对当前消息强制直接回复（不走小模型判断）
+        should_force_reply = False
         # 是否需要递减接话分析窗口的标志
         decrement_counter = False
 
-        if not is_just_at:
+        if is_just_at:
+            if is_private and self.plugin.private_chat_bypass:
+                should_force_reply = True
+            else:
+                at_behavior = decision_conf.get("at_behavior", "force_reply")
+                has_decision_provider = decision_conf.get("enabled", True) and bool(
+                    decision_conf.get("provider_ids") or decision_conf.get("provider_id")
+                )
+                is_in_whitelist = (
+                    not decision_conf.get("group_whitelist")
+                    or group_or_user_id in decision_conf.get("group_whitelist")
+                )
+
+                if not has_decision_provider or not is_in_whitelist:
+                    if at_behavior != "force_reply":
+                        logger.warning(
+                            f"[Giftia] {bot_name} 配置了 @ 行为为 '{at_behavior}'，但小模型决策未启用、无可用提供商或不在白名单内，自动降级为强制回复"
+                        )
+                    should_force_reply = True
+                elif at_behavior == "force_reply":
+                    should_force_reply = True
+                elif at_behavior == "decide_in_window_force_outside":
+                    if is_active_window:
+                        should_force_reply = False
+                    else:
+                        should_force_reply = True
+                elif at_behavior == "activate_and_decide":
+                    should_force_reply = False
+                else:
+                    should_force_reply = True
+
+                # 如果 @ 行为交由小模型判断，则立即刷新/激活活跃窗口计数
+                if not should_force_reply:
+                    window_size = decision_conf.get("reply_active_window", 10)
+                    self.plugin.active_reply_counters[fmt_key] = window_size
+                    logger.info(
+                        f"[Giftia] {bot_name} 收到 @ 消息，根据 @ 行为策略刷新接话分析窗口为 {window_size} 并交由小模型进行判断"
+                    )
+        else:
             if not decision_conf.get("enabled", True) or not (
                 decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
@@ -138,11 +182,7 @@ class DecisionEngine:
                 return False, None, False, None
 
             # 活跃窗口与主动接话概率检查
-            fmt_key = f"{bot_name}:{group_or_user_id}"
-            active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
             proactive_prob = decision_conf.get("proactive_probability", 0)
-
-            is_active_window = active_counter > 0
             is_proactive_hit = False
             is_keyword_hit = False
 
@@ -246,7 +286,7 @@ class DecisionEngine:
         reply_key = f"{bot_name}:{group_or_user_id}"
 
         # 节流拦截更新
-        if is_just_at:
+        if should_force_reply:
             now = time.time()
             if self.plugin.user_throttle_time > 0:
                 user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
@@ -255,8 +295,8 @@ class DecisionEngine:
                 group_throttle_key = f"{bot_name}:{event.get_group_id()}"
                 self.plugin.throttle_map[group_throttle_key] = now
 
-        # @消息直接跳过后续 LLM 决策，但更新决策表为 3 (直接回复)
-        if is_just_at:
+        # 强制回复直接跳过后续 LLM 决策，更新决策表为 3 (直接回复)
+        if should_force_reply:
             if is_private and self.plugin.replying_status.get(reply_key, 0) > 0:
                 logger.debug(
                     f"{bot_name} 消息 {reply_key} 正在回复中，私聊防并发单线程拦截"
@@ -272,7 +312,7 @@ class DecisionEngine:
             )
             return True, None, True, None
 
-        # 非 @ 消息进行 LLM 决策
+        # 非强制回复消息进行 LLM 决策
         if self.plugin.replying_status.get(reply_key, 0) > 0:
             logger.debug(f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策")
             return False, None, False, None

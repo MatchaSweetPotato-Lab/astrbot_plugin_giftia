@@ -1361,6 +1361,16 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
+                            <label>@ 提及响应行为 <span class="info-tooltip" data-tooltip="收到针对本机器人的 @ 消息时的处理策略"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <select id="bot-form-dec-at-behavior">
+                                <option value="force_reply">强制回复（默认，不走小模型直接回复）</option>
+                                <option value="activate_and_decide">激活并交由小模型判断（收到 @ 刷新活跃状态并由小模型裁决）</option>
+                                <option value="decide_in_window_force_outside">仅在会话活跃窗口内交由小模型判断，非活跃窗口强制回复</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
                             <label>主动接话分析窗口 (条)</label>
                             <input type="number" id="bot-form-dec-window" min="0" value="10">
                         </div>
