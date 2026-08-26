@@ -1,3 +1,5 @@
+import re
+
 from ..tts.constants import (
     LANGUAGE_NAMES,
     MINIMAX_EMOTIONS,
@@ -347,80 +349,126 @@ DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT = """# 角色与目标
 **注意：严格禁止输出任何 Markdown 代码块包裹标记（如 ```xml），禁止输出任何解释性、前导或后随的旁白文字。直接以 `<long_user_profile>` 开头，以 `</long_user_profile>` 结尾。**"""
 
 
-DEFAULT_IMAGE_CAPTION_PROMPT = """# 请识别图片的以下信息：
-- genre：你认为合适的图片分类，例如“屏幕截图”“表情包”“插画”“漫画”“游戏图片”“写真”“风景照”等，若无法确定则为 ""。
+def get_image_caption_prompt(
+    question: str | None = None,
+    fingerprint: str = "",
+) -> str:
+    """生成图片转述提示词"""
+    question_block = ""
+    if question and question.strip():
+        question_block = (
+            f"\n\n# 额外关注的问题\n"
+            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f"{question.strip()}"
+        )
+    fp_block = f"\n\n[Image Fingerprint: {fingerprint}]" if fingerprint else ""
+
+    return f"""# 请识别图片的以下信息：
+- genre：图片分类，例如“屏幕截图”“表情包”“插画”“漫画”“游戏图片”“写真”“风景照”等，若无法确定则为 ""。
 - character：识别图片中的角色名称，若无法确定则为 ""。
 - source：图片所属的作品名、地点名字，若无法确定则为 ""。
-- text：识别图片中的文字内容，不限字数，若无或无法识别则为 ""。
-- caption：从多角度描述图片内容，包括图片中的角色形象、场景、氛围、情感等，一段话纯文本，不超过 120 个字。
+- text：识别图片中的文字/OCR内容，若无或无法识别则为 ""。
+- caption：图片核心描述（必填，一段话纯文本，不超过 120 个字）。从多角度描述画面主体、角色动作、场景与氛围；即使是纯文字图也请给出一句话概括（如“系统报错信息截图”），严禁留空。{question_block}{fp_block}
 
 # 输出格式
-必须输出为合法的 JSON 对象。请严格遵守以下规则：
-1. 不要输出任何 Markdown 标记（例如 ```json ```）以外的解释性、前导或后随文字。
-2. 绝对不能在 Markdown 代码块首行（```json）后添加任何额外的语言标记、引用信息或非标准描述。
-3. JSON 键值对中的所有字符串值内，绝对不得包含未转义的双引号（"）。如果字符串内部需要表达双引号，请改用中文双引号（“ ”）或者对其进行转义（写成 \\"）。
+请直接输出合法的 JSON 对象，不要输出任何额外的解释说明文字：
 
-格式如下：
-{
+```json
+{{
   "genre": "图片分类",
   "character": "角色名称",
   "source": "作品/来源名",
   "text": "图片内识别出的文字",
   "caption": "图片详细描述"
-}"""
+}}
+```"""
 
 
-DEFAULT_AUDIO_CAPTION_PROMPT = """# 请识别音频的以下信息：
-- genre：语音对话、直播语音、声优台词、音乐，若无法确定则为 ""。
-- character：如果为非语音对话，识别出具体主播或者声优名字，包括视频主播和虚拟主播以及游戏、动漫CV等，若无法确定则为 ""。
-- source：如果是声优台词，请识别出作品名；如果是音乐，请识别出音乐名称，若无法确定则为 ""。
-- text：识别语音的文字内容，若无或无法识别则为 ""。
-- caption：从多角度描述音频内容，包括音频的氛围、情感、场景等，一段话纯文本，不超过 120 个字。
+def get_audio_caption_prompt(
+    question: str | None = None,
+    fingerprint: str = "",
+) -> str:
+    """生成音频转述提示词"""
+    question_block = ""
+    if question and question.strip():
+        question_block = (
+            f"\n\n# 额外关注的问题\n"
+            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f"{question.strip()}"
+        )
+    fp_block = f"\n\n[Audio Fingerprint: {fingerprint}]" if fingerprint else ""
+
+    return f"""# 请识别音频的以下信息：
+- genre：音频分类，例如“语音对话”“直播语音”“声优台词”“音乐歌曲”等，若无法确定则为 ""。
+- character：若能识别出具体主播、声优名字或角色名称（包括虚拟主播、动漫/游戏CV等）则填写，若无法确定或为普通闲聊则为 ""。
+- source：如果是声优台词请识别作品名；如果是音乐请识别音乐歌曲名称；若无法确定则为 ""。
+- text：识别语音转写的文字内容，若无或无法识别则为 ""。
+- caption：音频核心描述（必填，一段话纯文本，不超过 120 个字）。从多角度描述音频的氛围、语调情绪、场景或背景音效；即使已转写文字也请给出一句话概括（如“日常闲聊语音，语气轻松愉快”），严禁留空。{question_block}{fp_block}
 
 # 输出格式
-必须输出为合法的 JSON 对象。请严格遵守以下规则：
-1. 不要输出任何 Markdown 标记（例如 ```json ```）以外的解释性、前导或后随文字。
-2. 绝对不能在 Markdown 代码块首行（```json）后添加任何额外的语言标记、引用信息或非标准描述。
-3. JSON 键值对中的所有字符串值内，绝对不得包含未转义的双引号（"）。如果字符串内部需要表达双引号，请改用中文双引号（“ ”）或者对其进行转义（写成 \\"）。
+请直接输出合法的 JSON 对象，不要输出任何额外的解释说明文字：
 
-格式如下：
-{
+```json
+{{
   "genre": "音频分类",
   "character": "主播/声优名字",
   "source": "作品/音乐名称",
   "text": "语音转写的文字内容",
   "caption": "音频详细描述"
-}"""
+}}
+```"""
 
 
-DEFAULT_VIDEO_CAPTION_PROMPT = """# 请结合视频的画面动作、画面文字字幕以及背景语音/音效识别以下信息：
+def get_video_caption_prompt(
+    question: str | None = None,
+    fingerprint: str = "",
+) -> str:
+    """生成视频转述提示词"""
+    question_block = ""
+    if question and question.strip():
+        question_block = (
+            f"\n\n# 额外关注的问题\n"
+            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f"{question.strip()}"
+        )
+    fp_block = f"\n\n[Video Fingerprint: {fingerprint}]" if fingerprint else ""
+
+    return f"""# 请结合视频的画面动作、画面文字字幕以及背景语音/音效识别以下信息：
 - genre：视频分类，例如“游戏剪辑”“动漫剪辑”“短视频搞笑”“教程演示”“生活Vlog”等，若无法确定则为 ""。
 - character：识别视频中的主要人物或角色名称（包括动漫角色、游戏角色、虚拟主播等），若无法确定则为 ""。
 - source：识别视频所属的作品名、游戏名、影视出处或音乐BGM名称，若无法确定则为 ""。
 - text：识别视频画面中出现的字幕、贴图文字或背景语音转写文本，若无则为 ""。
-- caption：结合视频的画面动作变化、场景氛围、字幕文字以及声音音频进行综合总结与详细转述，一段话纯文本，不超过 150 个字。
+- caption：视频画音综合描述（必填，一段话纯文本，不超过 150 个字）。结合视频的画面动作变化、场景氛围、字幕文字以及声音音频进行综合总结与详细转述，严禁留空。{question_block}{fp_block}
 
 # 输出格式
-必须输出为合法的 JSON 对象。请严格遵守以下规则：
-1. 不要输出任何 Markdown 标记（例如 ```json ```）以外的解释性、前导或后随文字。
-2. 绝对不能在 Markdown 代码块首行（```json）后添加任何额外的语言标记、引用信息或非标准描述。
-3. JSON 键值对中的所有字符串值内，绝对不得包含未转义的双引号（"）。如果字符串内部需要表达双引号，请改用中文双引号（“ ”）或者对其进行转义（写成 \\"）。
+请直接输出合法的 JSON 对象，不要输出任何额外的解释说明文字：
 
-格式如下：
-{
+```json
+{{
   "genre": "视频分类",
   "character": "角色/人物名称",
   "source": "作品出处/BGM",
   "text": "视频字幕与语音文字",
   "caption": "视频画音综合描述"
-}"""
+}}
+```"""
 
 
-DEFAULT_STICKER_ANALYSIS_PROMPT = """# 任务目标
+def get_sticker_analysis_prompt(
+    categories: list[str] | None = None,
+    fingerprint: str = "",
+) -> str:
+    """生成表情包分析提示词"""
+    categories_str = (
+        "\n".join(f"- {c}" for c in categories) if categories else "- 无"
+    )
+    fp_block = f"\n\n[Sticker Fingerprint: {fingerprint}]" if fingerprint else ""
+
+    return f"""# 任务目标
 你的任务是判断图片是否有收藏价值（适合当作表情包），并分析它的特征以确定最适合的分类和标签。
 
 # 现有分类列表
-{categories}
+{categories_str}
 
 # isUseful
 - 适合当作表情包的图片通常具有清晰的主体、鲜明的情感表达、独特的风格或幽默元素。
@@ -446,23 +494,27 @@ DEFAULT_STICKER_ANALYSIS_PROMPT = """# 任务目标
   * 角色/作品标签（最高优先级）：如果能识别角色或作品，必须包含。如"派蒙"、"原神"、"海绵宝宝"、"柴犬"
   * 物品/主体标签（高优先级）：描述表情包的主体是什么。如"猫"、"狗"、"食物"、"机器人"
   * 情感/表情标签（中优先级）：描述表情包表达的情感。如"开心"、"无语"、"生气"、"摆烂"、"震惊"
-  * 动作/状态标签（中优先级）：描述角色或物品 of 动作。如"奔跑"、"吃东西"、"睡觉"、"跳舞"
+  * 动作/状态标签（中优先级）：描述角色或物品的动作。如"奔跑"、"吃东西"、"睡觉"、"跳舞"
   * 风格/形式标签（低优先级）：如"二次元"、"像素风"、"真人"、"手绘"
 - 标签质量：
   * 使用通俗易懂的词汇
   * 考虑用户搜索习惯和词汇偏好
   * 平衡具体性和通用性
-  * 避免过于专业或生僻的术语
+  * 避免过于专业或生僻的术语{fp_block}
 
-# 返回JSON格式
-{
-  "isUseful": boolean, // 是否适合被归类为表情包
+# 输出格式
+请直接输出合法的 JSON 对象，不要输出任何额外的解释说明文字：
+
+```json
+{{
+  "isUseful": true,
   "name": "表情包名称",
   "category": "最适合的分类（从现有分类中选择或建议新分类）",
   "tags": ["角色/作品", "物品/主体", "情感表情", "动作状态", "风格形式"],
   "description": "50-100字的详细描述，重点描述角色来源、物品特征和情感表达",
-  "newCategory": "建议的新分类（仅在需要时提供，优先用作品名）"
-}"""
+  "newCategory": "建议的新分类（仅在需要时提供，优先用作品名，无需新分类则留空字符串）"
+}}
+```"""
 
 
 DEFAULT_DECISION_RULES = """## 状态与检索判定 (use_rag)
@@ -480,3 +532,11 @@ DEFAULT_DECISION_RULES = """## 状态与检索判定 (use_rag)
 本次决策的理由和依据（思维链）
 </think>
 <decision reply="bool" use_rag="bool" rag_query="string"/>"""
+
+
+# 兼容性常量别名
+DEFAULT_IMAGE_CAPTION_PROMPT = get_image_caption_prompt()
+DEFAULT_AUDIO_CAPTION_PROMPT = get_audio_caption_prompt()
+DEFAULT_VIDEO_CAPTION_PROMPT = get_video_caption_prompt()
+DEFAULT_STICKER_ANALYSIS_PROMPT = get_sticker_analysis_prompt()
+

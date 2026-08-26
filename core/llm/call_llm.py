@@ -24,6 +24,10 @@ from .preset_prompts import (
     DEFAULT_VIDEO_CAPTION_PROMPT,
     DEFAULT_STICKER_ANALYSIS_PROMPT,
     DEFAULT_DECISION_RULES,
+    get_audio_caption_prompt,
+    get_image_caption_prompt,
+    get_sticker_analysis_prompt,
+    get_video_caption_prompt,
     build_xml_instructions,
 )
 from .xml_parse import XmlParse
@@ -458,16 +462,10 @@ class CallLLM:
                         f"[Giftia] 发送给LLM的图片内容hash: {b64_hashes} "
                         f"provider={provider_id}"
                     )
-                    # Append a unique fingerprint of the images to the prompt.
-                    # This prevents any upstream proxy or API-level cache from returning
-                    # a stale description if they compute cache keys based purely on the text prompt.
-                    unique_prompt = f"{self.image_caption_prompt}\n\n[Image Fingerprint: {','.join(b64_hashes)}]"
-                    if question:
-                        unique_prompt += (
-                            f"\n\n# 额外关注的确定问题\n"
-                            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\"（如果是画面描述相关）或 \"text\"（如果是图片内文字相关）字段中**：\n"
-                            f"{question}"
-                        )
+                    unique_prompt = get_image_caption_prompt(
+                        question=question,
+                        fingerprint=",".join(b64_hashes),
+                    )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
@@ -527,13 +525,10 @@ class CallLLM:
                     audio_fingerprints = [
                         xxh3_64_hexdigest(u.encode()) for u in audio_urls
                     ]
-                    unique_prompt = f"{self.audio_caption_prompt}\n\n[Audio Fingerprint: {','.join(audio_fingerprints)}]"
-                    if question:
-                        unique_prompt += (
-                            f"\n\n# 额外关注的确定问题\n"
-                            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\"（如果是音频氛围/情感描述相关）或 \"text\"（如果是语音转写的文字相关）字段中**：\n"
-                            f"{question}"
-                        )
+                    unique_prompt = get_audio_caption_prompt(
+                        question=question,
+                        fingerprint=",".join(audio_fingerprints),
+                    )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
@@ -581,26 +576,14 @@ class CallLLM:
     ) -> tuple[bool, Sticker | None]:
         """调用LLM生成表情包分析结果"""
         logger.info(f"调用LLM生成表情包分析结果，共{len(image_urls)}张图片")
-        prompt_template = self.sticker_analysis_prompt
-        if not prompt_template:
-            logger.error("表情包分析提示词为空")
-            return False, None
-
-        categories_str = (
-            "\n".join(f"- {c}" for c in categories) if categories else "- 无"
-        )
-        prompt = prompt_template.replace("{categories}", categories_str)
-
         for provider_id in self.image_caption_provider_ids:
             for i in range(self.network_conf.get("image_caption_retry_times", 1)):
                 if i > 0:
                     logger.warning(f"LLM表情包分析失败，{provider_id} 重试第 {i} 次")
                 try:
-                    # Append a unique fingerprint of the images to the prompt.
-                    # This prevents any upstream proxy or API-level cache from returning
-                    # a stale description if they compute cache keys based purely on the text prompt.
-                    unique_prompt = (
-                        f"{prompt}\n\n[Sticker Fingerprint: {','.join(image_urls)}]"
+                    unique_prompt = get_sticker_analysis_prompt(
+                        categories=categories,
+                        fingerprint=",".join(image_urls),
                     )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
@@ -711,13 +694,10 @@ class CallLLM:
                     payload = video_url.removeprefix("base64://")
                     video_sig = f"{len(payload)}:{xxh3_64_hexdigest(payload[200:328].encode()) if len(payload) > 328 else 'sig'}"
 
-                    unique_prompt = f"{self.video_caption_prompt}\n\n[Video Fingerprint: {video_sig}]"
-                    if question:
-                        unique_prompt += (
-                            f"\n\n# 带着以下问题看视频\n"
-                            f"请在转述中特别关注并回答该问题，将针对该问题的回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
-                            f"{question}"
-                        )
+                    unique_prompt = get_video_caption_prompt(
+                        question=question,
+                        fingerprint=video_sig,
+                    )
 
                     with _scoped_video_mime_detection():
                         llm_resp = await self.context.llm_generate(
@@ -728,7 +708,10 @@ class CallLLM:
                     is_parsed = False
                     parsed = None
                     if llm_resp and llm_resp.completion_text:
-                        parsed = decode_media_caption_json(llm_resp.completion_text)
+                        parsed = decode_media_caption_json(
+                            llm_resp.completion_text,
+                            media_type="video",
+                        )
                         if parsed:
                             is_parsed = True
 
