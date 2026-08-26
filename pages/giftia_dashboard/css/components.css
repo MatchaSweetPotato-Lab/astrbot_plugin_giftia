@@ -400,8 +400,8 @@ tr:hover td {
     content: attr(data-tooltip);
     position: absolute;
     bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%) translateY(4px);
+    left: -6px;
+    transform: translateY(4px);
     background-color: #1e293b;
     color: #f8fafc;
     padding: 6px 12px;
@@ -412,7 +412,7 @@ tr:hover td {
     white-space: normal;
     word-break: break-word;
     width: max-content;
-    max-width: 260px;
+    max-width: 280px;
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
     pointer-events: none;
     opacity: 0;
@@ -430,7 +430,7 @@ html[data-theme="dark"] .info-tooltip[data-tooltip]::after {
 .info-tooltip[data-tooltip]:hover::after {
     opacity: 1;
     visibility: visible;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
 }
 
 
