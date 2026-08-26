@@ -269,8 +269,28 @@ class BotApi:
             manager = giftia.bot_config_manager
             existing_bots = manager.load_bots()
 
-            normalized_bot = manager.normalize_bot_config(body)
             original_name = str(body.get("_original_name") or bot_name).strip()
+
+            # 机器人编辑弹窗提交的是全量配置，但它不含「表情包转 GIF」这类只在别处
+            # 维护的字段；normalize_bot_config 又会把缺失键补成默认值。所以请求体
+            # 没带这些键时，得先从原记录里取回来，否则在弹窗里保存一次配置就会把
+            # 表情包管理页刚打开的开关悄悄关掉。
+            preserved_keys = ("send_sticker_as_gif",)
+            if any(key not in body for key in preserved_keys):
+                previous = next(
+                    (
+                        b
+                        for b in existing_bots
+                        if b.get("name") in (original_name, bot_name)
+                    ),
+                    None,
+                )
+                if previous:
+                    for key in preserved_keys:
+                        if key not in body and key in previous:
+                            body[key] = previous[key]
+
+            normalized_bot = manager.normalize_bot_config(body)
 
             # Target update vs insert
             updated = False

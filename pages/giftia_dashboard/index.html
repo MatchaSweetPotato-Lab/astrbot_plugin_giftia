@@ -262,6 +262,19 @@
                     </div>
                 </div>
 
+                <div class="sticker-gif-card card">
+                    <div class="sticker-gif-head">
+                        <div class="sticker-gif-title">以 GIF 格式发送</div>
+                        <div class="sticker-gif-hint">
+                            官方 QQ 不支持小图表情包外显，表情包会当成普通大图发出、在会话窗口占掉大量空间；开启后统一转成 GIF，客户端便按表情包渲染。
+                            OneBot 本就支持小图，开启后观感更接近真表情包。转换结果会缓存到本地磁盘，只在首次发送某张图时消耗一次 CPU。
+                        </div>
+                    </div>
+                    <div class="sticker-gif-switches" id="sticker-gif-switches">
+                        <div class="loading-row"><span class="loader"></span> 加载中...</div>
+                    </div>
+                </div>
+
                 <div class="sticker-batch-bar card" id="sticker-batch-bar">
                     <span class="sticker-batch-info">已选 <span id="sticker-selected-count">0</span> 项</span>
                     <button class="btn btn-secondary btn-small" onclick="openBatchStickerModal('set_category')">修改分类</button>

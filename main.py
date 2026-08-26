@@ -33,6 +33,7 @@ from .core.utils.aiocqhttp_action import AIoCQHTTPAction
 from .core.utils.qq_official_action import QQOfficialAction
 from .core.utils.compat import ensure_avx2_supported
 from .core.utils.emoji_manager import EmojiManager
+from .core.utils.gif_convert import GifConverter
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
 from .core.utils.scheduler import Scheduler
@@ -220,6 +221,8 @@ class Giftia(Star):
         self.emoji_manager = EmojiManager(
             self.db, random_sticker_count=self.random_sticker_count
         )
+        # 依赖 emoji_manager.stickers_dir，必须在其之后实例化
+        self.gif_converter = GifConverter(self.emoji_manager)
         sticker_summaries = self.conf.get("sticker_config", {}).get(
             "sticker_summaries", ["这是一张表情包"]
         )

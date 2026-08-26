@@ -89,7 +89,106 @@ export async function loadStickers() {
 /** 初始化表情包 tab：先拉筛选项，再拉列表 */
 export async function initializeStickersTab() {
     await loadStickerFilterOptions();
+    await loadStickerGifConfig();
     await loadStickers();
+}
+
+/* ── 「以 GIF 格式发送」per-bot 开关 ──────────────────────────────────────
+ *
+ * 官方 QQ 不支持小图表情包外显，表情包会以大图发出占屏；开关打开后后端发送前
+ * 会把表情包转成 GIF，客户端便按表情包渲染。开关按机器人独立存在
+ * bots_config.json 里，切换即时生效，无需重载插件。
+ */
+
+/** DOM id 安全化：机器人名可以是任意字符，不能直接拼进 id */
+function sanitizeDomId(str) {
+    return String(str || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+export async function loadStickerGifConfig() {
+    const container = document.getElementById("sticker-gif-switches");
+    if (!container) return;
+
+    setupStickerGifDelegation();
+
+    try {
+        const res = await window.apiGet("/stickers/gif_config");
+        if (res.status !== "success" || !res.data) {
+            throw new Error(res.message || "请求失败");
+        }
+
+        const bots = res.data.bots || [];
+        if (!bots.length) {
+            container.innerHTML = `<div class="sticker-gif-empty">还没有配置机器人。到「机器人管理」页签创建一个，再回来设置。</div>`;
+            return;
+        }
+
+        container.innerHTML = bots.map(bot => {
+            const domId = `sticker-gif-toggle-${sanitizeDomId(bot.name)}`;
+            const on = !!bot.send_sticker_as_gif;
+            const badges = [
+                bot.is_qq_official
+                    ? `<span class="badge badge-info" title="官方 QQ 无法发送小图表情包，开启后可明显节省会话空间">官方 QQ · 建议开启</span>`
+                    : "",
+                bot.enabled === false
+                    ? `<span class="badge badge-secondary" title="该机器人已暂停，开关会保留但暂时不生效">已暂停</span>`
+                    : "",
+            ].join("");
+
+            return `
+                <div class="sticker-gif-row" data-bot-name="${window.escapeHtml(bot.name)}">
+                    <div class="sticker-gif-row-main">
+                        <span class="sticker-gif-bot-name" title="${window.escapeHtml(bot.name)}">${window.escapeHtml(bot.name)}</span>
+                        ${badges}
+                    </div>
+                    <div class="switch-container" title="${on ? "关闭后按原文件格式发送" : "开启后统一转 GIF 发送"}">
+                        <input type="checkbox" class="switch-checkbox sticker-gif-checkbox" id="${domId}"
+                               data-bot-name="${window.escapeHtml(bot.name)}" ${on ? "checked" : ""}>
+                        <label for="${domId}" class="switch-label"></label>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch (e) {
+        container.innerHTML = `<div class="sticker-gif-empty">加载失败: ${window.escapeHtml(e.message)}</div>`;
+    }
+}
+
+/**
+ * 开关走事件委托：机器人名是用户填的任意字符串，不编进 inline onchange 字符串，
+ * 与本文件的 setupStickerListDelegation 保持同一套做法。
+ */
+function setupStickerGifDelegation() {
+    const container = document.getElementById("sticker-gif-switches");
+    if (!container || container.dataset.delegated === "1") return;
+    container.dataset.delegated = "1";
+
+    container.addEventListener("change", async (e) => {
+        const checkbox = e.target.closest(".sticker-gif-checkbox");
+        if (!checkbox) return;
+
+        const botName = checkbox.getAttribute("data-bot-name");
+        const desired = checkbox.checked;
+        checkbox.disabled = true;
+        try {
+            const res = await window.apiPost("/stickers/gif_config", {
+                bot_name: botName,
+                send_sticker_as_gif: desired,
+            });
+            if (res && res.status === "success") {
+                window.showToast(res.message || "已保存");
+            } else {
+                // 失败回滚，避免界面显示的状态和后端不一致
+                checkbox.checked = !desired;
+                window.showToast(res?.message || "保存失败");
+            }
+        } catch (err) {
+            checkbox.checked = !desired;
+            window.showToast("网络错误，保存失败");
+        } finally {
+            checkbox.disabled = false;
+        }
+    });
 }
 
 /** 懒加载表情包图片（默认缩略图，hover 后换原图以便看到 GIF 动画） */

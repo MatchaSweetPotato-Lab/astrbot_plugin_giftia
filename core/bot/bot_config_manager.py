@@ -60,6 +60,9 @@ DEFAULT_BOT_CONFIG = {
         "signature_voices": [],
     },
     "enabled_interactive_features": DEFAULT_INTERACTIVE_FEATURES,
+    # 表情包统一转 GIF 发送。主要用于官方 QQ——那边不支持小图表情包外显，
+    # 表情包会以大图发出占屏；转成 GIF 后客户端会按表情包渲染。
+    "send_sticker_as_gif": False,
 }
 
 
@@ -216,5 +219,8 @@ class BotConfigManager:
                 if key and key not in normalized_features:
                     normalized_features.append(key)
             bot["enabled_interactive_features"] = normalized_features
+
+        # 表情包转 GIF 发送开关（在 Web 面板「表情包管理」页签里逐 bot 切换）
+        bot["send_sticker_as_gif"] = bool(bot.get("send_sticker_as_gif", False))
 
         return bot

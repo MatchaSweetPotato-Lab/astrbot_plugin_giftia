@@ -62,6 +62,7 @@ window.GiftiaApp = {
     loadStickers: stickers.loadStickers,
     renderStickers: stickers.renderStickers,
     loadStickerFilterOptions: stickers.loadStickerFilterOptions,
+    loadStickerGifConfig: stickers.loadStickerGifConfig,
     loadStickerImage: stickers.loadStickerImage,
     updateStickerSelectionUI: stickers.updateStickerSelectionUI,
     getCurrentSticker: stickers.getCurrentSticker,
