@@ -11,6 +11,7 @@ import * as forwards from './modules/render/forwards.js';
 import * as profiles from './modules/render/profiles.js';
 import * as token from './modules/render/token.js';
 import * as bots from './modules/bots.js';
+import { initGlobalTooltip } from './components/tooltip.js';
 
 // Assemble window.GiftiaApp keeping identical structure for backward compatibility
 window.GiftiaApp = {
@@ -125,6 +126,9 @@ window.openTokenClearModal = token.openTokenClearModal;
 
 // DOM Setup
 document.addEventListener("DOMContentLoaded", () => {
+    // Initialize Global Floating Tooltip Controller
+    initGlobalTooltip();
+
     // Initialize AstrBot Bridge SDK
     if (window.AstrBotPluginPage) {
         window.AstrBotPluginPage.ready().then((context) => {

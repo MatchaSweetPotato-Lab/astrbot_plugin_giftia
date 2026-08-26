@@ -396,38 +396,37 @@ tr:hover td {
     transform: scale(1.1);
 }
 
-.info-tooltip[data-tooltip]::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: -6px;
-    transform: translateY(4px);
+/* Floating Tooltip Component (Root-level Portal) */
+.floating-tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
     background-color: #1e293b;
     color: #f8fafc;
-    padding: 6px 12px;
+    padding: 7px 12px;
     border-radius: 6px;
     font-size: 12px;
     font-weight: 400;
-    line-height: 1.4;
+    line-height: 1.45;
     white-space: normal;
     word-break: break-word;
-    width: max-content;
     max-width: 280px;
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
-    z-index: 3000;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    z-index: 100000;
 }
 
-html[data-theme="dark"] .info-tooltip[data-tooltip]::after {
+html[data-theme="dark"] .floating-tooltip {
     background-color: #0f172a;
     color: #f1f5f9;
     border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
-.info-tooltip[data-tooltip]:hover::after {
+.floating-tooltip.visible {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);
