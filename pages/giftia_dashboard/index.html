@@ -1319,8 +1319,8 @@
                 <!-- Sub-tab Navigation Header -->
                 <div class="card-tabs-header" style="margin-bottom: 15px; display: flex; gap: 6px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); padding-bottom: 8px; flex-wrap: wrap;">
                     <button type="button" class="card-tab-btn active" data-subtab="subtab-identity" onclick="switchBotModalSubTab('subtab-identity')">身份与适配器</button>
-                    <button type="button" class="card-tab-btn" data-subtab="subtab-decision" onclick="switchBotModalSubTab('subtab-decision')">小模型判断</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-trigger" onclick="switchBotModalSubTab('subtab-trigger')">触发与接话策略</button>
+                    <button type="button" class="card-tab-btn" data-subtab="subtab-decision" onclick="switchBotModalSubTab('subtab-decision')">小模型判断</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-reply" onclick="switchBotModalSubTab('subtab-reply')">大模型回复</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-tts" onclick="switchBotModalSubTab('subtab-tts')">TTS XML 语音</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-interactive" onclick="switchBotModalSubTab('subtab-interactive')">内置交互功能</button>
@@ -1344,29 +1344,7 @@
                     </div>
                 </div>
 
-                <!-- Sub-tab 2: Decision Conf -->
-                <div id="subtab-decision" class="bot-subtab-content" style="display: none;">
-                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
-                        <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用小模型主动接话审查</strong>
-                            <span class="info-tooltip" data-tooltip="关闭后将不会对群聊普通消息进行意图判断"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
-                        </div>
-                        <div class="switch-container">
-                            <input type="checkbox" id="bot-form-dec-enabled" class="switch-checkbox" checked>
-                            <label for="bot-form-dec-enabled" class="switch-label"></label>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>小模型提供商优先级 <span class="info-tooltip" data-tooltip="按标签顺序依次尝试；当前提供商失败则自动降级"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <div id="bot-form-dec-providers" class="tag-select-container"></div>
-                    </div>
-                    <div class="form-group">
-                        <label>判断系统提示词 (Decision System Prompt) <span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <textarea id="bot-form-dec-prompt" rows="5" placeholder="留空使用默认的分析提示词..."></textarea>
-                    </div>
-                </div>
-
-                <!-- Sub-tab 3: Trigger & Mention Rules -->
+                <!-- Sub-tab 2: Trigger & Mention Rules -->
                 <div id="subtab-trigger" class="bot-subtab-content" style="display: none;">
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
@@ -1410,6 +1388,28 @@
                             <label>未指定默认概率 (%)</label>
                             <input type="number" id="bot-form-dec-kw-prob" min="0" max="100" value="100">
                         </div>
+                    </div>
+                </div>
+
+                <!-- Sub-tab 3: Decision Conf -->
+                <div id="subtab-decision" class="bot-subtab-content" style="display: none;">
+                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
+                        <div style="flex: 1;">
+                            <strong style="color: var(--font-primary);">启用小模型主动接话审查</strong>
+                            <span class="info-tooltip" data-tooltip="关闭后将不会对群聊普通消息进行意图判断"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                        </div>
+                        <div class="switch-container">
+                            <input type="checkbox" id="bot-form-dec-enabled" class="switch-checkbox" checked>
+                            <label for="bot-form-dec-enabled" class="switch-label"></label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>小模型提供商优先级 <span class="info-tooltip" data-tooltip="按标签顺序依次尝试；当前提供商失败则自动降级"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <div id="bot-form-dec-providers" class="tag-select-container"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>判断系统提示词 (Decision System Prompt) <span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <textarea id="bot-form-dec-prompt" rows="5" placeholder="留空使用默认的分析提示词..."></textarea>
                     </div>
                 </div>
 
