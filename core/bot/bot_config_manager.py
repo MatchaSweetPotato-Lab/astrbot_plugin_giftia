@@ -41,6 +41,7 @@ DEFAULT_BOT_CONFIG = {
         "keyword_trigger_enabled": False,
         "keyword_rules": [],
         "keyword_default_probability": 100,
+        "at_behavior": "force_reply",
     },
     "llm_reply_conf": {
         "enabled": True,
@@ -142,6 +143,12 @@ class BotConfigManager:
             "keyword_trigger_enabled": bool(raw_dec.get("keyword_trigger_enabled", False)),
             "keyword_rules": [str(k).strip() for k in raw_dec.get("keyword_rules") or [] if k],
             "keyword_default_probability": int(raw_dec.get("keyword_default_probability", 100)),
+            "at_behavior": (
+                str(raw_dec.get("at_behavior") or "force_reply").strip().lower()
+                if str(raw_dec.get("at_behavior") or "").strip().lower()
+                in ("force_reply", "activate_and_decide", "decide_in_window_force_outside")
+                else "force_reply"
+            ),
         }
 
         # llm_reply_conf

@@ -279,7 +279,6 @@ class ChatManager:
         (
             should_reply,
             relevant_memories,
-            is_just_at,
             pending_recall_memories,
         ) = await self.decision_engine.evaluate_decision(
             event=event,

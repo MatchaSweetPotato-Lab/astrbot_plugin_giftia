@@ -1319,6 +1319,7 @@
                 <!-- Sub-tab Navigation Header -->
                 <div class="card-tabs-header" style="margin-bottom: 15px; display: flex; gap: 6px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); padding-bottom: 8px; flex-wrap: wrap;">
                     <button type="button" class="card-tab-btn active" data-subtab="subtab-identity" onclick="switchBotModalSubTab('subtab-identity')">身份与适配器</button>
+                    <button type="button" class="card-tab-btn" data-subtab="subtab-trigger" onclick="switchBotModalSubTab('subtab-trigger')">触发与接话策略</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-decision" onclick="switchBotModalSubTab('subtab-decision')">小模型判断</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-reply" onclick="switchBotModalSubTab('subtab-reply')">大模型回复</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-tts" onclick="switchBotModalSubTab('subtab-tts')">TTS XML 语音</button>
@@ -1343,39 +1344,31 @@
                     </div>
                 </div>
 
-                <!-- Sub-tab 2: Decision Conf -->
-                <div id="subtab-decision" class="bot-subtab-content" style="display: none;">
-                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
-                        <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用小模型主动接话审查</strong>
-                            <span class="info-tooltip" data-tooltip="关闭后将不会对群聊普通消息进行意图判断"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
-                        </div>
-                        <div class="switch-container">
-                            <input type="checkbox" id="bot-form-dec-enabled" class="switch-checkbox" checked>
-                            <label for="bot-form-dec-enabled" class="switch-label"></label>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>小模型提供商优先级 <span class="info-tooltip" data-tooltip="按标签顺序依次尝试；当前提供商失败则自动降级"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <div id="bot-form-dec-providers" class="tag-select-container"></div>
-                    </div>
+                <!-- Sub-tab 2: Trigger & Mention Rules -->
+                <div id="subtab-trigger" class="bot-subtab-content" style="display: none;">
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
-                            <label>主动接话分析窗口 (条)</label>
-                            <input type="number" id="bot-form-dec-window" min="0" value="10">
-                        </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label>基础主动回复概率 (%)</label>
-                            <input type="number" id="bot-form-dec-proactive" min="0" max="100" value="0">
+                            <label>@ 提及响应行为 <span class="info-tooltip" data-tooltip="收到针对本机器人的 @ 消息时的处理策略"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <select id="bot-form-dec-at-behavior">
+                                <option value="force_reply">强制回复（默认，不走小模型直接回复）</option>
+                                <option value="activate_and_decide">激活并交由小模型判断（收到 @ 刷新活跃状态并由小模型裁决）</option>
+                                <option value="decide_in_window_force_outside">仅在会话活跃窗口内交由小模型判断，非活跃窗口强制回复</option>
+                            </select>
                         </div>
                     </div>
                     <div class="form-group">
                         <label>生效群聊白名单 <span class="info-tooltip" data-tooltip="填写群号，逗号分隔，留空对所有群生效"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <input type="text" id="bot-form-dec-whitelist" placeholder="例如: 123456, 789012 (留空全生效)">
                     </div>
-                    <div class="form-group">
-                        <label>判断系统提示词 (Decision System Prompt) <span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <textarea id="bot-form-dec-prompt" rows="3" placeholder="留空使用默认的分析提示词..."></textarea>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label>主动接话分析窗口 (条) <span class="info-tooltip" data-tooltip="触发回复或激活后，持续对后续群聊消息进行意图分析的条数"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <input type="number" id="bot-form-dec-window" min="0" value="10">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label>基础主动回复概率 (%) <span class="info-tooltip" data-tooltip="非活跃窗口下无 @ 时，随机主动触发接话决策的概率"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <input type="number" id="bot-form-dec-proactive" min="0" max="100" value="0">
+                        </div>
                     </div>
                     <div class="form-row form-row-switch" style="margin-top: 10px; margin-bottom: 10px;">
                         <div style="flex: 1;">
@@ -1398,7 +1391,29 @@
                     </div>
                 </div>
 
-                <!-- Sub-tab 3: Reply Conf -->
+                <!-- Sub-tab 3: Decision Conf -->
+                <div id="subtab-decision" class="bot-subtab-content" style="display: none;">
+                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
+                        <div style="flex: 1;">
+                            <strong style="color: var(--font-primary);">启用小模型主动接话审查</strong>
+                            <span class="info-tooltip" data-tooltip="关闭后将不会对群聊普通消息进行意图判断"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                        </div>
+                        <div class="switch-container">
+                            <input type="checkbox" id="bot-form-dec-enabled" class="switch-checkbox" checked>
+                            <label for="bot-form-dec-enabled" class="switch-label"></label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>小模型提供商优先级 <span class="info-tooltip" data-tooltip="按标签顺序依次尝试；当前提供商失败则自动降级"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <div id="bot-form-dec-providers" class="tag-select-container"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>判断系统提示词 (Decision System Prompt) <span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <textarea id="bot-form-dec-prompt" rows="5" placeholder="留空使用默认的分析提示词..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Sub-tab 4: Reply Conf -->
                 <div id="subtab-reply" class="bot-subtab-content" style="display: none;">
                     <div class="form-row form-row-switch" style="margin-bottom: 12px;">
                         <div style="flex: 1;">
