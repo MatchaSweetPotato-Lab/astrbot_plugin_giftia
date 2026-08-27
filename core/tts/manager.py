@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-
 from dataclasses import dataclass
 
 from astrbot.api import logger
@@ -11,6 +10,7 @@ from astrbot.api.message_components import Plain, Record
 from astrbot.api.star import StarTools
 from astrbot.core.provider.provider import TTSProvider
 
+from ..utils.event_utils import resolve_bot_name
 from ..utils.schemas import TTSRequest, XmlLlmResult
 from .constants import (
     LANGUAGE_LABELS,
@@ -51,7 +51,11 @@ class TTSManager:
         return bool(self.get_config(bot_conf).get("enabled", False))
 
     def provider_type(self, bot_conf: dict | str = None) -> str:
-        provider_type = str(self.get_config(bot_conf).get("provider_type", "minimax")).strip().lower()
+        provider_type = (
+            str(self.get_config(bot_conf).get("provider_type", "minimax"))
+            .strip()
+            .lower()
+        )
         return provider_type if provider_type in SUPPORTED_PROVIDER_TYPES else "minimax"
 
     def _language_items(self, bot_conf: dict | str = None) -> list[tuple[str, str]]:
@@ -101,7 +105,6 @@ class TTSManager:
 
         return result
 
-
     @staticmethod
     def normalize_language(value: str) -> str:
         key = str(value or "").strip()
@@ -127,7 +130,9 @@ class TTSManager:
             options.append((lang, LANGUAGE_NAMES.get(lang, lang)))
         return options
 
-    def _provider_id_for_language(self, lang: str, bot_conf: dict | str = None) -> tuple[str, str]:
+    def _provider_id_for_language(
+        self, lang: str, bot_conf: dict | str = None
+    ) -> tuple[str, str]:
         items = self._language_items(bot_conf)
         if not items:
             return "", lang or "zh-CN"
@@ -138,13 +143,14 @@ class TTSManager:
                 return provider_id, item_lang
         return items[0][1], items[0][0]
 
-
     def _lock_for_provider(self, provider_id: str) -> asyncio.Lock:
         if provider_id not in self._provider_locks:
             self._provider_locks[provider_id] = asyncio.Lock()
         return self._provider_locks[provider_id]
 
-    def _warn_provider_type_mismatch(self, provider: TTSProvider, provider_id: str, bot_conf: dict | str = None) -> None:
+    def _warn_provider_type_mismatch(
+        self, provider: TTSProvider, provider_id: str, bot_conf: dict | str = None
+    ) -> None:
         expected = {
             "minimax": "minimax_tts_api",
             "fishaudio": "fishaudio_tts_api",
@@ -161,7 +167,9 @@ class TTSManager:
                 f"但 provider_id={provider_id} 的实际类型是 {actual}。"
             )
 
-    def resolve(self, segment: TTSRequest, bot_conf: dict | str = None) -> ResolvedTTSRequest | None:
+    def resolve(
+        self, segment: TTSRequest, bot_conf: dict | str = None
+    ) -> ResolvedTTSRequest | None:
         if not self.enabled(bot_conf):
             return None
 
@@ -205,7 +213,9 @@ class TTSManager:
         """
         return text
 
-    async def get_audio_path(self, resolved: ResolvedTTSRequest, event=None, bot_conf: dict | str = None) -> str:
+    async def get_audio_path(
+        self, resolved: ResolvedTTSRequest, event=None, bot_conf: dict | str = None
+    ) -> str:
         lock = self._lock_for_provider(resolved.provider_id)
         async with lock:
             audio_path = ""
@@ -229,13 +239,15 @@ class TTSManager:
                             voice_setting.pop("emotion", None)
                         else:
                             voice_setting["emotion"] = old_emotion
-            
+
             if audio_path and self.plugin:
                 bot_name = ""
                 group_or_user_id = ""
                 if event:
-                    bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
-                    group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+                    bot_name = resolve_bot_name(self.plugin, event)
+                    group_or_user_id = (
+                        event.get_group_id() or event.get_sender_id() or ""
+                    )
                 if not bot_name and isinstance(bot_conf, dict):
                     bot_name = bot_conf.get("name", "")
                 char_count = len(resolved.text)
@@ -252,7 +264,9 @@ class TTSManager:
                 )
             return audio_path
 
-    async def build_record(self, event, segment: TTSRequest, bot_conf: dict | str = None) -> Record | None:
+    async def build_record(
+        self, event, segment: TTSRequest, bot_conf: dict | str = None
+    ) -> Record | None:
         if segment.pre_recorded_path:
             resolved_path = self.resolve_audio_path(segment.pre_recorded_path)
             if not os.path.exists(resolved_path):
@@ -324,7 +338,9 @@ class TTSManager:
             return cwd_path
 
         # 3. Try relative to plugin root (3 levels up from core/tts/manager.py)
-        plugin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        plugin_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
         plugin_path = os.path.abspath(os.path.join(plugin_root, path))
         if os.path.exists(plugin_path):
             return plugin_path
@@ -353,13 +369,19 @@ class TTSManager:
                     raw_audios = parts[0].strip()
                     raw_texts = parts[1].strip()
 
-                    audio_list = [a.strip() for a in re.split(r'[,，|;]', raw_audios) if a.strip()]
+                    audio_list = [
+                        a.strip() for a in re.split(r"[,，|;]", raw_audios) if a.strip()
+                    ]
                     audio_path = random.choice(audio_list) if audio_list else ""
 
-                    text_list = [t.strip() for t in re.split(r'[,，|;]', raw_texts) if t.strip()]
+                    text_list = [
+                        t.strip() for t in re.split(r"[,，|;]", raw_texts) if t.strip()
+                    ]
                     matched_texts = text_list
                 else:
-                    audio_list = [a.strip() for a in re.split(r'[,，|;]', item_str) if a.strip()]
+                    audio_list = [
+                        a.strip() for a in re.split(r"[,，|;]", item_str) if a.strip()
+                    ]
                     audio_path = random.choice(audio_list) if audio_list else ""
                     matched_texts = []
             elif isinstance(item, dict):
@@ -368,7 +390,9 @@ class TTSManager:
                     valid_audios = [str(a).strip() for a in audio_val if a]
                     audio_path = random.choice(valid_audios) if valid_audios else ""
                 elif isinstance(audio_val, str):
-                    audio_list = [a.strip() for a in re.split(r'[,，|;]', audio_val) if a.strip()]
+                    audio_list = [
+                        a.strip() for a in re.split(r"[,，|;]", audio_val) if a.strip()
+                    ]
                     audio_path = random.choice(audio_list) if audio_list else ""
                 else:
                     audio_path = ""
@@ -377,22 +401,27 @@ class TTSManager:
                 if isinstance(matched_val, list):
                     matched_texts = [str(t).strip() for t in matched_val if t]
                 elif isinstance(matched_val, str):
-                    matched_texts = [t.strip() for t in re.split(r'[,，|;]', matched_val) if t.strip()]
+                    matched_texts = [
+                        t.strip()
+                        for t in re.split(r"[,，|;]", matched_val)
+                        if t.strip()
+                    ]
             else:
                 continue
 
             if audio_path:
-                resolved_voices.append({
-                    "audio": audio_path,
-                    "matched_texts": matched_texts
-                })
+                resolved_voices.append(
+                    {"audio": audio_path, "matched_texts": matched_texts}
+                )
         return resolved_voices
 
-    def split_text_by_signatures(self, text: str, resolved_voices: list[dict] = None, bot_conf: dict | str = None) -> list[dict]:
+    def split_text_by_signatures(
+        self, text: str, resolved_voices: list[dict] = None, bot_conf: dict | str = None
+    ) -> list[dict]:
         voices_conf = self.get_config(bot_conf).get("signature_voices") or []
         if not voices_conf:
             return [{"type": "tts", "text": text}]
-            
+
         text = text.strip()
         if not text:
             return []
@@ -401,16 +430,16 @@ class TTSManager:
             resolved_voices = self._resolve_voices_conf(voices_conf)
 
         # Regex for leading emotion tags like [元気に] or (laughs)
-        LEADING_TAGS_RE = re.compile(r'^(\s*(?:\[[^\]]+\]|\([^)]+\))\s*)+')
-        
+        LEADING_TAGS_RE = re.compile(r"^(\s*(?:\[[^\]]+\]|\([^)]+\))\s*)+")
+
         leading_tags = ""
         content_text = text
-        
+
         match = LEADING_TAGS_RE.match(text)
         if match:
             leading_tags = match.group(0)
-            content_text = text[match.end():]
-            
+            content_text = text[match.end() :]
+
         def find_exact_match(t: str) -> tuple[str, str] | None:
             t_clean = t.strip(" ,，。！!?？、;；:：.）)]｝}")
             for item in resolved_voices:
@@ -452,10 +481,12 @@ class TTSManager:
         if head_match:
             audio_path, kw = head_match
             segments.append({"type": "signature", "path": audio_path, "text": kw})
-            remaining_content = content_text[len(kw):]
-            
-        remaining_content_clean = remaining_content.strip(" ,，。！!?？、;；:：.）)]｝}")
-        
+            remaining_content = content_text[len(kw) :]
+
+        remaining_content_clean = remaining_content.strip(
+            " ,，。！!?？、;；:：.）)]｝}"
+        )
+
         tail_match = None
         longest_tail_len = 0
         for item in resolved_voices:
@@ -478,9 +509,11 @@ class TTSManager:
                 middle = remaining_content[:idx].strip(" ,，。！!?？、;；:：.）)]｝}")
                 tail = remaining_content[idx:]
             else:
-                middle = remaining_content_clean[:-len(kw)].strip(" ,，。！!?？、;；:：.）)]｝}")
+                middle = remaining_content_clean[: -len(kw)].strip(
+                    " ,，。！!?？、;；:：.）)]｝}"
+                )
                 tail = kw
-                
+
             if middle:
                 segments.append({"type": "tts", "text": leading_tags + middle})
             segments.append({"type": "signature", "path": audio_path, "text": tail})
@@ -493,10 +526,12 @@ class TTSManager:
 
         return segments
 
-    def preprocess_signatures(self, llm_result: XmlLlmResult, bot_conf: dict | str = None) -> None:
+    def preprocess_signatures(
+        self, llm_result: XmlLlmResult, bot_conf: dict | str = None
+    ) -> None:
         if not self.enabled(bot_conf):
             return
-            
+
         voices_conf = self.get_config(bot_conf).get("signature_voices") or []
         if not voices_conf:
             return
@@ -507,17 +542,24 @@ class TTSManager:
 
         # 1. Process TTS segments
         self._preprocess_tts_segments(llm_result, resolved_voices, bot_conf)
-        
+
         # 2. Process message chains (if enabled)
         if self.get_config(bot_conf).get("replace_in_message", False):
             self._preprocess_msg_chains(llm_result, resolved_voices, bot_conf)
 
-    def _preprocess_tts_segments(self, llm_result: XmlLlmResult, resolved_voices: list[dict], bot_conf: dict | str = None) -> None:
+    def _preprocess_tts_segments(
+        self,
+        llm_result: XmlLlmResult,
+        resolved_voices: list[dict],
+        bot_conf: dict | str = None,
+    ) -> None:
         new_tts_segments: list[TTSRequest] = []
         index_mapping: dict[int, list[int]] = {}
-        
+
         for i, segment in enumerate(llm_result.tts_segments):
-            split_parts = self.split_text_by_signatures(segment.text, resolved_voices, bot_conf)
+            split_parts = self.split_text_by_signatures(
+                segment.text, resolved_voices, bot_conf
+            )
             new_indices = []
             for part in split_parts:
                 if part["type"] == "signature":
@@ -536,13 +578,17 @@ class TTSManager:
                 new_indices.append(len(new_tts_segments))
                 new_tts_segments.append(new_seg)
             index_mapping[i] = new_indices
-            
+
         new_output_order: list[tuple[str, int]] = []
         output_order = llm_result.output_order
         if not output_order:
-            output_order = [("message", index) for index in range(len(llm_result.msg_chains))]
-            output_order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
-            
+            output_order = [
+                ("message", index) for index in range(len(llm_result.msg_chains))
+            ]
+            output_order.extend(
+                ("tts", index) for index in range(len(llm_result.tts_segments))
+            )
+
         for item_type, index in output_order:
             if item_type == "tts":
                 if index in index_mapping:
@@ -550,11 +596,16 @@ class TTSManager:
                         new_output_order.append(("tts", new_idx))
             else:
                 new_output_order.append((item_type, index))
-                
+
         llm_result.tts_segments = new_tts_segments
         llm_result.output_order = new_output_order
 
-    def _preprocess_msg_chains(self, llm_result: XmlLlmResult, resolved_voices: list[dict], bot_conf: dict | str = None) -> None:
+    def _preprocess_msg_chains(
+        self,
+        llm_result: XmlLlmResult,
+        resolved_voices: list[dict],
+        bot_conf: dict | str = None,
+    ) -> None:
         new_msg_chains = []
         new_tts_segments = list(llm_result.tts_segments)
         msg_index_mapping: dict[int, list[tuple[str, int]]] = {}
@@ -562,10 +613,12 @@ class TTSManager:
         for msg_idx, chain in enumerate(llm_result.msg_chains):
             new_chain_items = []
             order_mapping = []
-            
+
             for component in chain:
                 if isinstance(component, Plain):
-                    split_parts = self.split_text_by_signatures(component.text, resolved_voices, bot_conf)
+                    split_parts = self.split_text_by_signatures(
+                        component.text, resolved_voices, bot_conf
+                    )
                     for part in split_parts:
                         if part["type"] == "signature":
                             new_seg = TTSRequest(
@@ -574,32 +627,36 @@ class TTSManager:
                             )
                             tts_idx = len(new_tts_segments)
                             new_tts_segments.append(new_seg)
-                            
+
                             if new_chain_items:
                                 msg_chain_idx = len(new_msg_chains)
                                 new_msg_chains.append(new_chain_items)
                                 order_mapping.append(("message", msg_chain_idx))
                                 new_chain_items = []
-                                
+
                             order_mapping.append(("tts", tts_idx))
                         else:
                             new_chain_items.append(Plain(text=part["text"]))
                 else:
                     new_chain_items.append(component)
-                    
+
             if new_chain_items:
                 msg_chain_idx = len(new_msg_chains)
                 new_msg_chains.append(new_chain_items)
                 order_mapping.append(("message", msg_chain_idx))
-                
+
             msg_index_mapping[msg_idx] = order_mapping
 
         new_output_order: list[tuple[str, int]] = []
         output_order = llm_result.output_order
         if not output_order:
-            output_order = [("message", index) for index in range(len(llm_result.msg_chains))]
-            output_order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
-            
+            output_order = [
+                ("message", index) for index in range(len(llm_result.msg_chains))
+            ]
+            output_order.extend(
+                ("tts", index) for index in range(len(llm_result.tts_segments))
+            )
+
         for item_type, index in output_order:
             if item_type == "message":
                 if index in msg_index_mapping:
@@ -622,10 +679,9 @@ class TTSManager:
                     log_parts.append(" [图片]")
             new_msg_texts.append("".join(text_parts))
             new_msg_logs.append("".join(log_parts))
-            
+
         llm_result.msg_chains = new_msg_chains
         llm_result.msg_texts = new_msg_texts
         llm_result.msg_logs = new_msg_logs
         llm_result.tts_segments = new_tts_segments
         llm_result.output_order = new_output_order
-

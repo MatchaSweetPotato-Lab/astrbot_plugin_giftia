@@ -1,14 +1,12 @@
 import asyncio
 import json
-import re
 from collections import defaultdict
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain, Reply, Image, Video, Node, Nodes
+from astrbot.api.message_components import Image, Plain, Reply, Video
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
-from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.utils.session_lock import session_lock_manager
 
 from .core.bot.bot_config_manager import BotConfigManager
@@ -31,17 +29,18 @@ from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
 from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
-from .core.utils.qq_official_action import QQOfficialAction
 from .core.utils.compat import ensure_avx2_supported
 from .core.utils.emoji_manager import EmojiManager
+from .core.utils.event_utils import resolve_bot_name
 from .core.utils.gif_convert import GifConverter
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
+from .core.utils.qq_official_action import QQOfficialAction
 from .core.utils.scheduler import Scheduler
+from .core.utils.schemas import ImageSendType, MessageData, XmlLlmResult
 from .core.utils.task_board import TaskBoardManager
 from .core.utils.tools_func import ToolsFunc
 from .core.web.webui_manager import WebUIManager
-from .core.utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
 
 class Giftia(Star):
@@ -193,7 +192,6 @@ class Giftia(Star):
             return next(iter(self.bot_map.values()))
         return {}
 
-
     def sync_bot_maps(self):
         """同步重新加载机器人配置及适配器映射字典。"""
         bot_list = self.bot_config_manager.load_bots()
@@ -274,13 +272,17 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("search_user_profile_enabled", True):
             self.context.add_llm_tools(SearchUserProfileTool(plugin=self))
             logger.info("已注册函数调用工具: search_user_profile")
-        if self.conf.get("tools_config", {}).get("inspect_forward_message_enabled", True):
+        if self.conf.get("tools_config", {}).get(
+            "inspect_forward_message_enabled", True
+        ):
             self.context.add_llm_tools(InspectForwardMessageTool(plugin=self))
             logger.info("已注册函数调用工具: inspect_forward_message")
         if self.conf.get("tools_config", {}).get("inspect_media_enabled", True):
             self.context.add_llm_tools(InspectMediaTool(plugin=self))
             logger.info("已注册函数调用工具: inspect_media")
-        if self.conf.get("tools_config", {}).get("set_user_avatar_description_enabled", True):
+        if self.conf.get("tools_config", {}).get(
+            "set_user_avatar_description_enabled", True
+        ):
             self.context.add_llm_tools(SetUserAvatarDescriptionTool(plugin=self))
             logger.info("已注册函数调用工具: set_user_avatar_description")
         # 注册 Web UI 及 API 路由
@@ -579,8 +581,10 @@ class Giftia(Star):
         """后台绘图/媒体生成完成回调"""
 
         # 1. 过滤出真正的图片与视频组件
-        media_comps = [comp for comp in result.chain if isinstance(comp, (Image, Video))]
-        
+        media_comps = [
+            comp for comp in result.chain if isinstance(comp, (Image, Video))
+        ]
+
         # 2. 检查结果文本
         result_text = ""
         for comp in result.chain:
@@ -602,16 +606,16 @@ class Giftia(Star):
                 is_success = True
             else:
                 is_success = False
-        
+
         error_msg = ""
         if not is_success:
             error_msg = result_text if result_text else "未知错误"
 
-        bot_name = self.adapter_id_map.get(event.platform_meta.id)
+        bot_name = resolve_bot_name(self, event)
         if not bot_name:
             logger.warning("[Giftia] 未找到对应的 Bot 实例，跳过处理。")
             return
-        
+
         bot_conf = self.bot_map.get(bot_name, {})
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
@@ -634,11 +638,17 @@ class Giftia(Star):
             # 4. 如果成功且包含媒体组件，构造 MessageChain 并直接发送给用户
             if is_success:
                 if len(media_comps) > 0:
-                    logger.info(f"[Giftia] 后台绘图/媒体生成完成，正在直接发送生成的媒体组件...")
+                    logger.info(
+                        "[Giftia] 后台绘图/媒体生成完成，正在直接发送生成的媒体组件..."
+                    )
                     send_chain = []
                     if kwargs.get("should_quote"):
                         message_obj = getattr(event, "message_obj", None)
-                        message_id_attr = getattr(message_obj, "message_id", None) if message_obj else None
+                        message_id_attr = (
+                            getattr(message_obj, "message_id", None)
+                            if message_obj
+                            else None
+                        )
                         if message_id_attr:
                             send_chain.append(Reply(id=str(message_id_attr)))
                     send_chain.extend(media_comps)
@@ -647,14 +657,20 @@ class Giftia(Star):
                     success = False
                     message_id = None
 
-                    if event.get_platform_name() == "aiocqhttp" and hasattr(self, "aiocqhttp"):
+                    if event.get_platform_name() == "aiocqhttp" and hasattr(
+                        self, "aiocqhttp"
+                    ):
                         success, message_id = await self.aiocqhttp.send_message(
                             event, send_chain, image_type=ImageSendType.NORMAL
                         )
                         if success:
                             sent_by_direct_action = True
-                    elif hasattr(self, "qq_official") and self.qq_official.is_qq_official(event):
-                        success, message_id = await self.qq_official.send_message(event, send_chain)
+                    elif hasattr(
+                        self, "qq_official"
+                    ) and self.qq_official.is_qq_official(event):
+                        success, message_id = await self.qq_official.send_message(
+                            event, send_chain
+                        )
                         if success:
                             sent_by_direct_action = True
 
@@ -681,12 +697,18 @@ class Giftia(Star):
                                 media_id_list=parsed_msg.media_id_list,
                                 forward_messages=parsed_msg.forward_messages,
                             )
-                            await self.data_cache.add_message(bot_name, group_or_user_id, msg_data)
-                            logger.info(f"[Giftia] 后台绘图/媒体已成功通过 aiocqhttp 投递并存入数据库")
+                            await self.data_cache.add_message(
+                                bot_name, group_or_user_id, msg_data
+                            )
+                            logger.info(
+                                "[Giftia] 后台绘图/媒体已成功通过 aiocqhttp 投递并存入数据库"
+                            )
                         except Exception as e:
                             logger.error(f"[Giftia] 媒体入库失败: {e}", exc_info=True)
                 else:
-                    logger.warning(f"[Giftia] 后台绘图/媒体生成完成，但消息链中未包含图片/视频组件: {result_text}")
+                    logger.warning(
+                        f"[Giftia] 后台绘图/媒体生成完成，但消息链中未包含图片/视频组件: {result_text}"
+                    )
             else:
                 logger.warning(f"[Giftia] 后台绘图/媒体生成失败: {error_msg}")
 
@@ -694,9 +716,9 @@ class Giftia(Star):
             try:
                 if is_success:
                     remind_msg = (
-                        f"[系统通知] 绘图已完成并且已经发送给用户。"
-                        f"请根据上下文（包含刚刚发送的图片及转述描述），以你的角色口吻和语气进行拟人化对话确认或后续互动。"
-                        f"注意：图片已经被系统自动发出了，不要在你的回复中输出任何图片链接、图片组件或再次调用画图工具，只输出你的文字/角色回复即可。"
+                        "[系统通知] 绘图已完成并且已经发送给用户。"
+                        "请根据上下文（包含刚刚发送的图片及转述描述），以你的角色口吻和语气进行拟人化对话确认或后续互动。"
+                        "注意：图片已经被系统自动发出了，不要在你的回复中输出任何图片链接、图片组件或再次调用画图工具，只输出你的文字/角色回复即可。"
                     )
                 else:
                     remind_msg = (
@@ -707,12 +729,16 @@ class Giftia(Star):
 
                 # 运行回复流水线
                 logger.info(f"[Giftia] 正在唤醒 Bot {bot_name} 进行回复/点评...")
-                
+
                 # 手动维护正在回复状态，防止其他正常消息插队
-                self.replying_status[reply_key] = self.replying_status.get(reply_key, 0) + 1
+                self.replying_status[reply_key] = (
+                    self.replying_status.get(reply_key, 0) + 1
+                )
                 pending_recall_memories = []
                 try:
-                    async for chunk in self.chat_manager.reply_pipeline.dispatch_llm_reply_loop(
+                    async for (
+                        chunk
+                    ) in self.chat_manager.reply_pipeline.dispatch_llm_reply_loop(
                         event=event,
                         bot_name=bot_name,
                         nickname=nickname,

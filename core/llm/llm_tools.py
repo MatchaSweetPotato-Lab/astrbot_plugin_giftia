@@ -9,9 +9,15 @@ from astrbot.api.star import Context, StarTools
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
 from ..conversation.media_captioner import MediaCaptioner
-from ..utils.schemas import MediaCaption, MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
+from ..utils.event_utils import resolve_bot_name
+from ..utils.schemas import (
+    FORWARD_MEDIA_PATTERN,
+    FORWARD_NESTED_PATTERN,
+    MediaCaption,
+    MessageData,
+)
+from .prompt import USER_PROFILE_FIELDS, normalize_profile_value
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -79,7 +85,7 @@ class SearchChatHistoryTool(FunctionTool):
             return "检索失败：未找到插件实例"
         plugin: Giftia = self.plugin
         event: AstrMessageEvent = context.context.event
-        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        bot_name = resolve_bot_name(plugin, event)
         if not bot_name:
             logger.warning("SearchChatHistoryTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
@@ -137,7 +143,7 @@ class GetMessageContextTool(FunctionTool):
             return "检索失败：未找到插件实例"
         plugin: Giftia = self.plugin
         event: AstrMessageEvent = context.context.event
-        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        bot_name = resolve_bot_name(plugin, event)
         if not bot_name:
             logger.warning("GetMessageContextTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
@@ -215,7 +221,7 @@ class SearchUserProfileTool(FunctionTool):
             return "检索失败：未找到插件实例"
         plugin: Giftia = self.plugin
         event: AstrMessageEvent = context.context.event
-        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        bot_name = resolve_bot_name(plugin, event)
         if not bot_name:
             logger.warning("SearchUserProfileTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
@@ -266,7 +272,7 @@ class InspectForwardMessageTool(FunctionTool):
             "properties": {
                 "forward_id": {
                     "type": "string",
-                    "description": "提示词中 [合并转发:fwd_xxx] 或 <forward id=\"fwd_xxx\"/> 的 id。",
+                    "description": '提示词中 [合并转发:fwd_xxx] 或 <forward id="fwd_xxx"/> 的 id。',
                 },
             },
             "required": ["forward_id"],
@@ -376,7 +382,9 @@ class InspectForwardMessageTool(FunctionTool):
         for node in nodes:
             if not isinstance(node, dict):
                 continue
-            for forward_id in self._nested_pattern.findall(str(node.get("content") or "")):
+            for forward_id in self._nested_pattern.findall(
+                str(node.get("content") or "")
+            ):
                 if forward_id not in seen:
                     seen.add(forward_id)
                     nested_ids.append(forward_id)
@@ -553,7 +561,7 @@ class InspectForwardMessageTool(FunctionTool):
             return "查看失败：未找到插件实例"
         plugin: Giftia = self.plugin
         event: AstrMessageEvent = context.context.event
-        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        bot_name = resolve_bot_name(plugin, event)
         if not bot_name:
             logger.warning("InspectForwardMessageTool 未找到对应的 bot_name")
             return "查看失败：未找到对应的 bot_name"
@@ -693,7 +701,9 @@ class InspectMediaTool(FunctionTool):
             event = context
 
         platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
-        bot_name = self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        bot_name = (
+            self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        )
         group_or_user_id = ""
         if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
@@ -712,7 +722,9 @@ class InspectMediaTool(FunctionTool):
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
-        media_type = getattr(caption_obj, "media_type", "media") if caption_obj else "media"
+        media_type = (
+            getattr(caption_obj, "media_type", "media") if caption_obj else "media"
+        )
         return f"媒体 [{media_id}] ({media_type}) 分析转述结果:\n{result_str}"
 
 
@@ -751,7 +763,9 @@ class SetUserAvatarDescriptionTool(FunctionTool):
             event = context
 
         platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
-        bot_name = self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        bot_name = (
+            self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        )
         group_or_user_id = ""
         if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
@@ -777,7 +791,9 @@ class SetUserAvatarDescriptionTool(FunctionTool):
             )
             return f"已成功将用户 {user_id} 的头像描述记录至画像库:\n{avatar_desc}"
         except Exception as e:
-            logger.error(f"[Giftia] set_user_avatar_description 执行失败: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia] set_user_avatar_description 执行失败: {e}", exc_info=True
+            )
             return f"保存头像描述失败: {e}"
 
 

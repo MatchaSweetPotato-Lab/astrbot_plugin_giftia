@@ -1,20 +1,26 @@
 import asyncio
+import time
+import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from aiocqhttp import CQHttp
-
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import At, Node, Nodes, Plain
+from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
+from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
-from astrbot.core.utils.session_lock import session_lock_manager
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
+from astrbot.core.utils.session_lock import session_lock_manager
 
+from ..utils.event_utils import bind_fake_event_extras, build_fake_event
 from ..utils.message_media import format_node_components
 from ..utils.notice_parse import NoticeParseResult
 from ..utils.qq_official_action import is_qq_official
@@ -61,10 +67,14 @@ class ChatManager:
         # 3. 跳过机器人自己的发言（通知类事件除外）
         raw_msg = getattr(msg_obj, "raw_message", None) if msg_obj else None
         post_type = (
-            raw_msg.get("post_type", "")
-            if hasattr(raw_msg, "get")
-            else getattr(raw_msg, "post_type", "")
-        ) if raw_msg else ""
+            (
+                raw_msg.get("post_type", "")
+                if hasattr(raw_msg, "get")
+                else getattr(raw_msg, "post_type", "")
+            )
+            if raw_msg
+            else ""
+        )
         if post_type != "notice" and event.get_sender_id() == event.get_self_id():
             logger.debug(f"{event.platform_meta.id} 消息为机器人自己的消息，跳过处理")
             return
@@ -230,17 +240,21 @@ class ChatManager:
                 and hasattr(self.plugin, "message_parser")
                 and hasattr(self.plugin.message_parser, "notice_parser")
             ):
-                notice_result = await self.plugin.message_parser.notice_parser.parse_notice(
-                    event, raw_msg, bot_name
+                notice_result = (
+                    await self.plugin.message_parser.notice_parser.parse_notice(
+                        event, raw_msg, bot_name
+                    )
                 )
-                setattr(event, "_notice_result", notice_result)
+                event._notice_result = notice_result
 
         if notice_result and notice_result.is_notice:
             # 禁言事件：更新缓存并根据条件触发告状
             if notice_result.is_ban_event:
                 if notice_result.is_all_member_ban:
                     if hasattr(self.plugin, "data_cache"):
-                        self.plugin.data_cache.set_bot_muted(bot_name, notice_result.group_id, -1)
+                        self.plugin.data_cache.set_bot_muted(
+                            bot_name, notice_result.group_id, -1
+                        )
                         logger.info(
                             f"[Giftia] 群 {notice_result.group_id} 开启全员禁言，Bot {bot_name} 进入静默状态"
                         )
@@ -263,8 +277,12 @@ class ChatManager:
                     )
             # 解禁事件：更新缓存
             elif notice_result.is_lift_ban_event:
-                if (notice_result.is_all_member_ban or notice_result.is_target_self) and hasattr(self.plugin, "data_cache"):
-                    self.plugin.data_cache.lift_bot_mute(bot_name, notice_result.group_id)
+                if (
+                    notice_result.is_all_member_ban or notice_result.is_target_self
+                ) and hasattr(self.plugin, "data_cache"):
+                    self.plugin.data_cache.lift_bot_mute(
+                        bot_name, notice_result.group_id
+                    )
                     logger.info(
                         f"[Giftia] 群 {notice_result.group_id} 禁言已解除，Bot {bot_name} 恢复正常发言状态"
                     )
@@ -326,7 +344,11 @@ class ChatManager:
                                 and hasattr(self.plugin, "tts_manager")
                                 and self.plugin.tts_manager.enabled(bot_conf)
                             )
-                            if chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids:
+                            if (
+                                chunk.msg_chains
+                                or has_tts_reply
+                                or chunk.repeat_message_ids
+                            ):
                                 has_sent_reply = True
                     else:
                         logger.error(f"{bot_name} 生成消息失败，收到空消息块")
@@ -366,13 +388,58 @@ class ChatManager:
 
     def get_platform_adapter(
         self, adapter_id: str
-    ) -> tuple[CQHttp, PlatformMetadata] | None:
-        """获取平台适配器实例，目前仅支持aiocqhttp"""
-        platforms = self.plugin.context.platform_manager.get_insts()
+    ) -> tuple[CQHttp | Any | None, PlatformMetadata] | None:
+        """按适配器 ID 获取平台客户端与元数据。
+
+        优先返回 aiocqhttp 适配器（其 `bot` 是 OneBot 动作依赖的 CQHttp 实例）；
+        未命中时退化为任意平台（如官方 QQ，本插件 `support_platforms` 亦声明支持），
+        以便主动消息至少能拿到真实的 `platform_meta`，不再落到伪造兜底上。
+        """
+        fallback: tuple[Any, PlatformMetadata] | None = None
+        try:
+            platforms = self.plugin.context.platform_manager.get_insts()
+        except Exception as e:
+            logger.warning(
+                f"[Giftia] 枚举平台适配器失败 (adapter_id={adapter_id}): {e}"
+            )
+            return None
         for p in platforms:
-            if isinstance(p, AiocqhttpAdapter) and p.metadata.id == adapter_id:
-                return p.bot, p.metadata
-        return None
+            metadata = getattr(p, "metadata", None)
+            if metadata is None or getattr(metadata, "id", None) != adapter_id:
+                continue
+            if isinstance(p, AiocqhttpAdapter):
+                return p.bot, metadata
+            if fallback is None:
+                fallback = (
+                    getattr(p, "bot", None) or getattr(p, "client", None),
+                    metadata,
+                )
+        return fallback
+
+    def build_fallback_platform_meta(
+        self, adapter_id: str, platform_name: str
+    ) -> PlatformMetadata:
+        """构造兜底平台元数据，供适配器不可用时的伪造事件使用。
+
+        `platform_meta` 必须始终存在：伪造事件是 `MagicMock(spec=...)`，
+        而 `platform_meta` 是实例属性不在 spec 内，缺失时任何 `event.platform_meta.id`
+        都会抛 `Mock object has no attribute 'platform_meta'`。
+        """
+        meta_id = adapter_id or platform_name or ""
+        try:
+            return PlatformMetadata(
+                name=platform_name or "unknown",
+                description="Giftia 主动消息伪造事件兜底元数据",
+                id=meta_id,
+            )
+        except Exception as e:
+            # PlatformMetadata 字段若随 AstrBot 版本变动，退化为鸭子类型占位对象
+            logger.debug(f"[Giftia] 构造 PlatformMetadata 兜底失败，改用占位对象: {e}")
+            placeholder = MagicMock()
+            placeholder.id = meta_id
+            placeholder.name = platform_name or "unknown"
+            placeholder.description = "Giftia 主动消息伪造事件兜底元数据"
+            return placeholder
 
     async def remind_task(
         self,
@@ -414,6 +481,7 @@ class ChatManager:
                     group_id=group_id,
                     unified_msg_origin=unified_msg_origin,
                     adapter_id=adapter_id,
+                    platform_name=platform_name,
                 )
                 has_sent_reply = False
                 pending_recall_memories = []
@@ -427,9 +495,15 @@ class ChatManager:
                 ):
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):
-                            if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
-                                self.plugin.tts_manager.preprocess_signatures(chunk, bot_conf)
-                            if platform_name == "aiocqhttp" or is_qq_official(platform_name):
+                            if hasattr(
+                                self.plugin, "tts_manager"
+                            ) and self.plugin.tts_manager.enabled(bot_conf):
+                                self.plugin.tts_manager.preprocess_signatures(
+                                    chunk, bot_conf
+                                )
+                            if platform_name == "aiocqhttp" or is_qq_official(
+                                platform_name
+                            ):
                                 if mock_event:
                                     await self.action_dispatcher.dispatch_actions(
                                         event=mock_event,
@@ -453,18 +527,22 @@ class ChatManager:
                             # 降级到普通消息发送
                             if not chunk.msg_chains and not chunk.tts_segments:
                                 continue
-                            for item_type, item_index in self.action_dispatcher.get_output_order(
-                                chunk
-                            ):
+                            for (
+                                item_type,
+                                item_index,
+                            ) in self.action_dispatcher.get_output_order(chunk):
                                 if item_type == "message":
-                                    if item_index < 0 or item_index >= len(chunk.msg_chains):
+                                    if item_index < 0 or item_index >= len(
+                                        chunk.msg_chains
+                                    ):
                                         continue
                                     msg_chain = chunk.msg_chains[item_index]
                                 elif item_type == "tts":
-                                    msg_chain, _ = (
-                                        await self.action_dispatcher.build_tts_message_chain(
-                                            mock_event, chunk, item_index, bot_conf
-                                        )
+                                    (
+                                        msg_chain,
+                                        _,
+                                    ) = await self.action_dispatcher.build_tts_message_chain(
+                                        mock_event, chunk, item_index, bot_conf
                                     )
                                 else:
                                     continue
@@ -500,6 +578,59 @@ class ChatManager:
                     0, self.plugin.replying_status.get(reply_key, 0) - 1
                 )
 
+    def build_fake_message_obj(
+        self,
+        self_id: str,
+        sender_id: str,
+        sender_name: str,
+        group_id: str,
+        session_id: str,
+    ) -> AstrBotMessage:
+        """构造伪造事件的消息对象。
+
+        真实事件的 `message_obj` 是 `__init__` 赋的实例属性，不在类 spec 内。
+        缺失时下游任何 `event.message_obj.xxx` 都会抛
+        `AttributeError: Mock object has no attribute 'message_obj'`；
+        补成空壳 Mock 又会让 `datetime.fromtimestamp(...)` 这类取值炸在别处，
+        所以这里直接造一个字段齐全的真实对象。
+        """
+        msg_obj = AstrBotMessage()
+        msg_obj.type = (
+            MessageType.GROUP_MESSAGE if group_id else MessageType.FRIEND_MESSAGE
+        )
+        msg_obj.self_id = str(self_id or "")
+        msg_obj.session_id = str(session_id or "")
+        msg_obj.message_id = uuid.uuid4().hex
+        msg_obj.group_id = str(group_id or "")
+        msg_obj.sender = MessageMember(
+            user_id=str(sender_id or ""), nickname=sender_name or ""
+        )
+        msg_obj.message = []
+        msg_obj.message_str = ""
+        msg_obj.raw_message = None
+        return msg_obj
+
+    def build_fake_session(
+        self, unified_msg_origin: str, adapter_id: str, group_id: str
+    ) -> MessageSession:
+        """构造伪造事件的会话标识（真实事件的 `session` 同样是实例属性）"""
+        try:
+            return MessageSession.from_str(unified_msg_origin)
+        except Exception as e:
+            logger.debug(
+                f"[Giftia] 解析 unified_msg_origin 失败 ({unified_msg_origin!r})，"
+                f"改用字段拼装会话标识: {e}"
+            )
+            return MessageSession(
+                platform_name=adapter_id,
+                message_type=(
+                    MessageType.GROUP_MESSAGE
+                    if group_id
+                    else MessageType.FRIEND_MESSAGE
+                ),
+                session_id=str(group_id or ""),
+            )
+
     def fake_event(
         self,
         self_id: str,
@@ -508,21 +639,74 @@ class ChatManager:
         group_id: str,
         unified_msg_origin: str,
         adapter_id: str,
+        platform_name: str = "aiocqhttp",
     ) -> AstrMessageEvent:
         """伪造一个aiocqhttp的event，用于主动消息复用被动消息函数"""
-        mock_event = MagicMock(spec=AiocqhttpMessageEvent)
         adapter = self.get_platform_adapter(adapter_id)
         if adapter:
             bot, metadata = adapter
-            mock_event.bot = bot
-            mock_event.platform_meta = metadata
-        mock_event.get_platform_name = MagicMock(return_value="aiocqhttp")
-        mock_event.get_group = AsyncMock(return_value="")
-        mock_event.get_self_id = MagicMock(return_value=self_id)
-        mock_event.get_group_id = MagicMock(return_value=group_id)
-        mock_event.get_sender_id = MagicMock(return_value=sender_id)
-        mock_event.get_sender_name = MagicMock(return_value=sender_name)
-        mock_event.unified_msg_origin = unified_msg_origin
+        else:
+            # 适配器已停用/改名/尚未加载完成时，仍必须补齐 platform_meta 与 bot，
+            # 否则 spec Mock 会在下游 event.platform_meta.id 处抛
+            # AttributeError: Mock object has no attribute 'platform_meta'
+            logger.warning(
+                f"[Giftia] 未找到平台适配器 {adapter_id}（平台 {platform_name}），"
+                "主动消息改用兜底 platform_meta，平台侧动作可能不可用"
+            )
+            bot = None
+            metadata = self.build_fallback_platform_meta(adapter_id, platform_name)
+
+        session = self.build_fake_session(
+            unified_msg_origin, getattr(metadata, "id", "") or adapter_id, group_id
+        )
+        message_obj = self.build_fake_message_obj(
+            self_id=self_id,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            group_id=group_id,
+            session_id=session.session_id,
+        )
+        mock_event = build_fake_event(
+            AiocqhttpMessageEvent,
+            {
+                # 真实事件 __init__ 赋的实例属性，逐个补齐（漏一个就会 AttributeError）
+                "bot": bot,
+                "platform_meta": metadata,
+                "platform": metadata,
+                "message_obj": message_obj,
+                "message_str": "",
+                "session": session,
+                "role": "member",
+                "is_wake": True,
+                "is_at_or_wake_command": True,
+                "call_llm": False,
+                "created_at": time.time(),
+                "plugins_name": None,
+                "_result": None,
+                "_force_stopped": False,
+                "_has_send_oper": False,
+                "_temporary_local_files": [],
+                "unified_msg_origin": unified_msg_origin,
+                # 方法替身：主动消息不能真的走平台取值与发送
+                "get_platform_name": MagicMock(
+                    return_value=platform_name or "aiocqhttp"
+                ),
+                "get_platform_id": MagicMock(
+                    return_value=getattr(metadata, "id", "") or adapter_id
+                ),
+                "get_group": AsyncMock(return_value=""),
+                "get_self_id": MagicMock(return_value=self_id),
+                "get_group_id": MagicMock(return_value=group_id),
+                "get_sender_id": MagicMock(return_value=sender_id),
+                "get_sender_name": MagicMock(return_value=sender_name),
+                "get_session_id": MagicMock(return_value=session.session_id),
+                "get_message_str": MagicMock(return_value=""),
+                "get_message_outline": MagicMock(return_value=""),
+                "get_messages": MagicMock(return_value=[]),
+                "is_private_chat": MagicMock(return_value=not group_id),
+            },
+        )
+        bind_fake_event_extras(mock_event)
         return mock_event
 
     async def report_ban_to_stronghold(
@@ -543,9 +727,13 @@ class ChatManager:
                 return
 
             if notice_result is None and raw_event:
-                if hasattr(self.plugin, "message_parser") and hasattr(self.plugin.message_parser, "notice_parser"):
-                    notice_result = await self.plugin.message_parser.notice_parser.parse_notice(
-                        event, raw_event, bot_name
+                if hasattr(self.plugin, "message_parser") and hasattr(
+                    self.plugin.message_parser, "notice_parser"
+                ):
+                    notice_result = (
+                        await self.plugin.message_parser.notice_parser.parse_notice(
+                            event, raw_event, bot_name
+                        )
                     )
 
             if not notice_result:
@@ -583,20 +771,18 @@ class ChatManager:
                 except Exception:
                     pass
             group_display = (
-                f"【{group_name}】({group_id})"
-                if group_name
-                else f"群聊({group_id})"
+                f"【{group_name}】({group_id})" if group_name else f"群聊({group_id})"
             )
 
             op_display = (
-                notice_result.operator_ref
-                or notice_result.operator_id
-                or "管理员"
+                notice_result.operator_ref or notice_result.operator_id or "管理员"
             )
 
             # 4. 构造告状文本
             if notice_result.is_all_member_ban:
-                complaint_text = f"呜呜呜~我在{group_display}被【{op_display}】开启全员禁言了！"
+                complaint_text = (
+                    f"呜呜呜~我在{group_display}被【{op_display}】开启全员禁言了！"
+                )
             else:
                 from ..utils.notice_parse import NoticeParser
 
@@ -621,9 +807,7 @@ class ChatManager:
                 for m in (recent_msgs or [])
                 if str(getattr(m, "user_id", "") or "").lower() != "system"
                 and getattr(m, "role", "") != "system"
-                and not str(getattr(m, "content", "") or "").startswith(
-                    "【系统消息】"
-                )
+                and not str(getattr(m, "content", "") or "").startswith("【系统消息】")
             ]
             # 截取案发前最新的 20 条消息（切片修复）
             recent_chat_msgs = chat_msgs[-20:]
@@ -656,4 +840,3 @@ class ChatManager:
                     )
         except Exception as e:
             logger.error(f"[Giftia] 向据点发送禁言告状失败: {e}", exc_info=True)
-

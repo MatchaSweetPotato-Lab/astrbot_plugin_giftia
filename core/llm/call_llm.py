@@ -1,15 +1,14 @@
-import asyncio
-import base64
+from contextlib import contextmanager
 from pathlib import Path
-import aiohttp
-from xxhash import xxh3_64_hexdigest
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.core.exceptions import EmptyModelOutputError
-from astrbot.core.provider.entities import LLMResponse, TokenUsage
+from astrbot.core.utils import media_utils
+from xxhash import xxh3_64_hexdigest
 
+from ..utils.event_utils import resolve_bot_name
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
 from ..utils.schemas import (
     Decision,
@@ -17,24 +16,21 @@ from ..utils.schemas import (
     Sticker,
     XmlLlmResult,
 )
+from ..utils.token_utils import extract_tokens_robust
 from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
     DEFAULT_AUDIO_CAPTION_PROMPT,
-    DEFAULT_IMAGE_CAPTION_PROMPT,
-    DEFAULT_VIDEO_CAPTION_PROMPT,
-    DEFAULT_STICKER_ANALYSIS_PROMPT,
     DEFAULT_DECISION_RULES,
+    DEFAULT_IMAGE_CAPTION_PROMPT,
+    DEFAULT_STICKER_ANALYSIS_PROMPT,
+    DEFAULT_VIDEO_CAPTION_PROMPT,
+    build_xml_instructions,
     get_audio_caption_prompt,
     get_image_caption_prompt,
     get_sticker_analysis_prompt,
     get_video_caption_prompt,
-    build_xml_instructions,
 )
 from .xml_parse import XmlParse
-from ..utils.token_utils import extract_tokens_robust
-import astrbot.core.utils.media_utils as media_utils
-
-from contextlib import contextmanager
 
 _orig_detect_image_mime_type = media_utils.detect_image_mime_type
 
@@ -104,15 +100,21 @@ class CallLLM:
         self.plugin = plugin
         self.sticker_analysis_prompt = DEFAULT_STICKER_ANALYSIS_PROMPT
         # 图片转述配置
-        image_caption_provider_ids = caption_config.get("image_caption_provider_ids") or []
+        image_caption_provider_ids = (
+            caption_config.get("image_caption_provider_ids") or []
+        )
         self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
         self.image_caption_prompt = DEFAULT_IMAGE_CAPTION_PROMPT
         # 音频转述配置
-        audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids") or []
+        audio_caption_provider_ids = (
+            caption_config.get("audio_caption_provider_ids") or []
+        )
         self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
         self.audio_caption_prompt = DEFAULT_AUDIO_CAPTION_PROMPT
         # 视频转述配置
-        video_caption_provider_ids = caption_config.get("video_caption_provider_ids") or []
+        video_caption_provider_ids = (
+            caption_config.get("video_caption_provider_ids") or []
+        )
         self.video_caption_provider_ids = [p for p in video_caption_provider_ids if p]
         self.video_caption_prompt = DEFAULT_VIDEO_CAPTION_PROMPT
 
@@ -126,7 +128,9 @@ class CallLLM:
     ) -> Decision | None:
         """调用LLM进行决策"""
         if system_prompt:
-            actual_system_prompt = system_prompt.strip() + "\n\n" + DEFAULT_DECISION_RULES
+            actual_system_prompt = (
+                system_prompt.strip() + "\n\n" + DEFAULT_DECISION_RULES
+            )
         else:
             actual_system_prompt = DEFAULT_DECISION_RULES
 
@@ -161,7 +165,9 @@ class CallLLM:
                         type_name="decision",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        extra_info={
+                            "status": "success" if is_parsed else "parse_failed"
+                        },
                     )
                     if parsed_result is not None:
                         return parsed_result
@@ -170,14 +176,14 @@ class CallLLM:
                     )
                     continue
                 except Exception as e:
-                    logger.error(f"LLM回复失败: {str(e)}")
+                    logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="decision",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return None
@@ -206,7 +212,9 @@ class CallLLM:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
                     xml_inst = build_xml_instructions(
-                        enabled_features, tts_instruction, is_qq_official=is_qq_official_flag
+                        enabled_features,
+                        tts_instruction,
+                        is_qq_official=is_qq_official_flag,
                     )
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
                     tools_set = None
@@ -258,7 +266,9 @@ class CallLLM:
 
                         if persona_tools is not None:
                             if isinstance(persona_tools, (list, tuple, set)):
-                                allowed_names = {str(name).strip() for name in persona_tools if name}
+                                allowed_names = {
+                                    str(name).strip() for name in persona_tools if name
+                                }
                                 for tool in tools_set.tools[:]:
                                     if tool.name not in allowed_names:
                                         tools_set.remove_tool(tool.name)
@@ -317,7 +327,9 @@ class CallLLM:
                                 actual_system_prompt + xml_tools_instruction
                             )
 
-                    logger.debug(f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>")
+                    logger.debug(
+                        f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>"
+                    )
                     logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
 
                     if use_source_tools and not force_xml_tools:
@@ -365,16 +377,14 @@ class CallLLM:
                             native_tools_called=list(llm_resp.tools_call_name or [])
                         )
 
-                    bot_name = ""
-                    if event:
-                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    bot_name = resolve_bot_name(self.plugin, event)
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": status_val}
+                        extra_info={"status": status_val},
                     )
 
                     if llm_resp.tools_call_name:
@@ -408,30 +418,29 @@ class CallLLM:
                     logger.info(
                         f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
                     )
-                    bot_name = ""
-                    if event:
-                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    bot_name = resolve_bot_name(self.plugin, event)
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": "EmptyModelOutputError"}
+                        extra_info={
+                            "status": "api_failed",
+                            "error": "EmptyModelOutputError",
+                        },
                     )
                     return XmlLlmResult()
                 except Exception as e:
-                    logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
-                    bot_name = ""
-                    if event:
-                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    logger.error(f"LLM回复失败: {e!s}，provider_id: {provider_id}")
+                    bot_name = resolve_bot_name(self.plugin, event)
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return None
@@ -484,7 +493,9 @@ class CallLLM:
                         type_name="image_caption",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        extra_info={
+                            "status": "success" if is_parsed else "parse_failed"
+                        },
                     )
                     if parsed:
                         logger.info(
@@ -495,19 +506,17 @@ class CallLLM:
                     logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
-                    logger.error(f"LLM回复失败: {str(e)}")
+                    logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="image_caption",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return None
-
-
 
     async def call_llm_audio_caption(
         self,
@@ -549,21 +558,23 @@ class CallLLM:
                         type_name="audio_caption",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        extra_info={
+                            "status": "success" if is_parsed else "parse_failed"
+                        },
                     )
                     if parsed:
                         return parsed
                     logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
-                    logger.error(f"LLM回复失败: {str(e)}")
+                    logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="audio_caption",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return None
@@ -607,7 +618,9 @@ class CallLLM:
                         type_name="sticker_analysis",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        extra_info={
+                            "status": "success" if is_parsed else "parse_failed"
+                        },
                     )
                     if result_dict:
                         is_useful = result_dict.get("isUseful", False)
@@ -629,14 +642,14 @@ class CallLLM:
                     logger.warning("解析表情包分析 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
-                    logger.error(f"LLM表情包分析失败: {str(e)}")
+                    logger.error(f"LLM表情包分析失败: {e!s}")
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="sticker_analysis",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return False, None
@@ -676,7 +689,7 @@ class CallLLM:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            extra_info=extra_info
+            extra_info=extra_info,
         )
 
     async def call_llm_video_caption(
@@ -723,7 +736,9 @@ class CallLLM:
                         type_name="video_caption",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        extra_info={
+                            "status": "success" if is_parsed else "parse_failed"
+                        },
                     )
                     if parsed:
                         logger.info(
@@ -739,7 +754,7 @@ class CallLLM:
                         type_name="video_caption",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)}
+                        extra_info={"status": "api_failed", "error": str(e)},
                     )
                     continue
         return None

@@ -11,6 +11,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from ..utils.event_utils import get_adapter_id
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
 from ..utils.schemas import ImageSendType, MessageData, XmlLlmResult
 
@@ -39,8 +40,14 @@ class ActionDispatcher:
             return await func(event=event, *args, **kwargs)
         return "action_not_supported"
 
-    def _interactive_feature_enabled(self, feature_name: str, bot_conf: dict | str = None) -> bool:
-        bot_dict = self.plugin.get_bot_config(bot_conf) if hasattr(self.plugin, "get_bot_config") else {}
+    def _interactive_feature_enabled(
+        self, feature_name: str, bot_conf: dict | str = None
+    ) -> bool:
+        bot_dict = (
+            self.plugin.get_bot_config(bot_conf)
+            if hasattr(self.plugin, "get_bot_config")
+            else {}
+        )
         enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
@@ -135,12 +142,8 @@ class ActionDispatcher:
         for item in llm_result.set_call_names:
             target_user_id = str(item.user_id or "").strip()
             if not target_user_id:
-                logs.append(
-                    "<set_call_name result='failed' reason='missing_user_id'/>"
-                )
-                logger.warning(
-                    f"[Giftia] 设置用户称呼失败: 未在标签中显式提供 user_id"
-                )
+                logs.append("<set_call_name result='failed' reason='missing_user_id'/>")
+                logger.warning("[Giftia] 设置用户称呼失败: 未在标签中显式提供 user_id")
                 continue
 
             raw_name = str(item.name or "").strip()
@@ -159,7 +162,9 @@ class ActionDispatcher:
                     user_id=target_user_id,
                     profile_fields=profile_fields,
                 )
-                action_str = f"set call_name to '{name}'" if name else "cleared call_name"
+                action_str = (
+                    f"set call_name to '{name}'" if name else "cleared call_name"
+                )
                 name_attr = f" name={quoteattr(name)}" if name else ""
                 logs.append(
                     f"<set_call_name user_id={quoteattr(target_user_id)}{name_attr} result='success'/>"
@@ -206,7 +211,7 @@ class ActionDispatcher:
         """
         if not hasattr(self.plugin, "tts_manager"):
             return None, ""
-        bot_dict = self.plugin.get_bot_config(bot_conf or (event.platform_meta.id if hasattr(event, "platform_meta") else None))
+        bot_dict = self.plugin.get_bot_config(bot_conf or get_adapter_id(event) or None)
         if not self.plugin.tts_manager.enabled(bot_dict):
             return None, ""
         if index < 0 or index >= len(llm_result.tts_segments):
@@ -220,9 +225,7 @@ class ActionDispatcher:
         logger.warning("[Giftia TTS] 语音合成重试后依然失败，放弃发送该段语音消息。")
         return None, ""
 
-    async def _build_send_chain(
-        self, msg_chain: list, bot_conf: dict
-    ) -> list:
+    async def _build_send_chain(self, msg_chain: list, bot_conf: dict) -> list:
         """按该机器人的「表情包转 GIF」开关，返回用于发送的消息链副本。
 
         必须返回副本而非就地修改：发送之后调用方还要用**原链**调
@@ -301,7 +304,9 @@ class ActionDispatcher:
                         success = True
                         message_id = str(uuid.uuid4())
                     except Exception as err_fallback:
-                        logger.error(f"[Giftia] 官方 QQ 富媒体消息降级发送失败: {err_fallback}")
+                        logger.error(
+                            f"[Giftia] 官方 QQ 富媒体消息降级发送失败: {err_fallback}"
+                        )
             else:
                 success, message_id = await self.plugin.aiocqhttp.send_message(
                     event,
@@ -492,7 +497,9 @@ class ActionDispatcher:
             return
 
         bot_conf = self.plugin.get_bot_config(bot_name)
-        if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(bot_conf):
+        if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled(
+            bot_conf
+        ):
             self.plugin.tts_manager.preprocess_signatures(llm_result, bot_conf)
 
         task_board_logs = await self._dispatch_task_board_actions(
@@ -542,7 +549,9 @@ class ActionDispatcher:
                     target_ids = llm_result.delete_message_ids
                 else:
                     try:
-                        target_ids = [int(msg_id) for msg_id in llm_result.delete_message_ids]
+                        target_ids = [
+                            int(msg_id) for msg_id in llm_result.delete_message_ids
+                        ]
                     except ValueError:
                         target_ids = None
                         logger.error(
@@ -560,7 +569,9 @@ class ActionDispatcher:
                             f"<recall message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
                         )
                     else:
-                        logger.debug(f"[Giftia] delete_messages 动作暂不支持 [{err_msg}]")
+                        logger.debug(
+                            f"[Giftia] delete_messages 动作暂不支持 [{err_msg}]"
+                        )
 
             # 3. 消息贴表情点赞
             if llm_result.emoji_ids:
@@ -577,14 +588,20 @@ class ActionDispatcher:
                             )
                     if m_id is not None:
                         err_msg = await self._invoke_platform_action(
-                            event, "msg_emoji_like", is_qq_official, message_id=m_id, emoji_id=e_id
+                            event,
+                            "msg_emoji_like",
+                            is_qq_official,
+                            message_id=m_id,
+                            emoji_id=e_id,
                         )
                         if err_msg not in ("handler_not_found", "action_not_supported"):
                             success_logs.append(
                                 f"<emoji_like message_id={message_id} emoji_id={emoji_id} result={err_msg or 'success'}/>"
                             )
                         else:
-                            logger.debug(f"[Giftia] msg_emoji_like 动作暂不支持 [{err_msg}]")
+                            logger.debug(
+                                f"[Giftia] msg_emoji_like 动作暂不支持 [{err_msg}]"
+                            )
 
             # 4. 消息复读
             if llm_result.repeat_message_ids:
@@ -662,7 +679,9 @@ class ActionDispatcher:
                                 content=target_msg.content,
                                 is_recalled=False,
                                 media_id_list=list(target_msg.media_id_list or []),
-                                forward_messages=list(target_msg.forward_messages or []),
+                                forward_messages=list(
+                                    target_msg.forward_messages or []
+                                ),
                             )
                             await self.plugin.data_cache.add_message(
                                 bot_name, group_or_user_id, msg_data
@@ -686,7 +705,9 @@ class ActionDispatcher:
                             u_id, c_count = int(user_id), int(count)
                         except ValueError:
                             u_id = None
-                            logger.error(f"{bot_name} 点赞数据格式错误: {user_id}, {count}")
+                            logger.error(
+                                f"{bot_name} 点赞数据格式错误: {user_id}, {count}"
+                            )
                     if u_id is not None:
                         err_msg = await self._invoke_platform_action(
                             event, "like", is_qq_official, user_id=u_id, count=c_count
@@ -713,14 +734,20 @@ class ActionDispatcher:
                             )
                     if g_id is not None:
                         err_msg = await self._invoke_platform_action(
-                            event, "group_poke", is_qq_official, group_id=g_id, user_id=u_id
+                            event,
+                            "group_poke",
+                            is_qq_official,
+                            group_id=g_id,
+                            user_id=u_id,
                         )
                         if err_msg not in ("handler_not_found", "action_not_supported"):
                             success_logs.append(
                                 f"<poke user_id={user_id} result={err_msg or 'success'}/>"
                             )
                         else:
-                            logger.debug(f"[Giftia] group_poke 动作暂不支持 [{err_msg}]")
+                            logger.debug(
+                                f"[Giftia] group_poke 动作暂不支持 [{err_msg}]"
+                            )
 
             # 7. 禁言
             if llm_result.ban:
@@ -737,7 +764,12 @@ class ActionDispatcher:
                             )
                     if g_id is not None:
                         err_msg = await self._invoke_platform_action(
-                            event, "group_ban", is_qq_official, group_id=g_id, user_id=u_id, duration=dur
+                            event,
+                            "group_ban",
+                            is_qq_official,
+                            group_id=g_id,
+                            user_id=u_id,
+                            duration=dur,
                         )
                         if err_msg not in ("handler_not_found", "action_not_supported"):
                             success_logs.append(
@@ -752,7 +784,7 @@ class ActionDispatcher:
                     task_id = f"{bot_name}_{group_or_user_id}_{uuid.uuid4().hex[:6]}"
                     kwargs = {
                         "unified_msg_origin": event.unified_msg_origin,
-                        "adapter_id": event.platform_meta.id,
+                        "adapter_id": get_adapter_id(event),
                         "bot_name": bot_name,
                         "nickname": nickname,
                         "self_id": event.get_self_id(),
@@ -812,14 +844,20 @@ class ActionDispatcher:
                             )
                     if g_id is not None:
                         err_msg = await self._invoke_platform_action(
-                            event, "group_kick", is_qq_official, group_id=g_id, user_id=u_id
+                            event,
+                            "group_kick",
+                            is_qq_official,
+                            group_id=g_id,
+                            user_id=u_id,
                         )
                         if err_msg not in ("handler_not_found", "action_not_supported"):
                             success_logs.append(
                                 f"<kick user_id={user_id} result={err_msg or 'success'}/>"
                             )
                         else:
-                            logger.debug(f"[Giftia] group_kick 动作暂不支持 [{err_msg}]")
+                            logger.debug(
+                                f"[Giftia] group_kick 动作暂不支持 [{err_msg}]"
+                            )
 
             # 13. 退群
             if llm_result.leave:
@@ -841,8 +879,9 @@ class ActionDispatcher:
                                 f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
                             )
                         else:
-                            logger.debug(f"[Giftia] group_leave 动作暂不支持 [{err_msg}]")
-
+                            logger.debug(
+                                f"[Giftia] group_leave 动作暂不支持 [{err_msg}]"
+                            )
 
             # 14. 记录总体操作日志
             if len(success_logs) > 0:

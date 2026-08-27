@@ -13,6 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 
+from .event_utils import resolve_bot_name
 from .schemas import ImageSendType
 
 
@@ -75,9 +76,7 @@ class AIoCQHTTPAction:
                         and self.plugin
                         and hasattr(self.plugin, "data_cache")
                     ):
-                        bot_name = self.plugin.adapter_id_map.get(
-                            event.platform_meta.id
-                        )
+                        bot_name = resolve_bot_name(self.plugin, event)
                         if bot_name:
                             duration = 600
                             try:
@@ -126,7 +125,9 @@ class AIoCQHTTPAction:
     ) -> dict | None:
         bot = getattr(event, "bot", None)
         if not bot:
-            logger.warning(f"[Giftia] 调用 OneBot 动作 {action_name} 失败: event.bot 不存在")
+            logger.warning(
+                f"[Giftia] 调用 OneBot 动作 {action_name} 失败: event.bot 不存在"
+            )
             return None
 
         routing_params = {}
@@ -186,7 +187,9 @@ class AIoCQHTTPAction:
                 f"[Giftia] OneBot 动作 {action_name} 通过 {caller_name} 返回非 dict: {payload!r}"
             )
 
-        logger.warning(f"[Giftia] OneBot 动作 {action_name} 所有调用路径均失败: params={params}")
+        logger.warning(
+            f"[Giftia] OneBot 动作 {action_name} 所有调用路径均失败: params={params}"
+        )
         return None
 
     @staticmethod
@@ -265,7 +268,7 @@ class AIoCQHTTPAction:
                     await event.bot.delete_msg(message_id=message_id)
                 return None
             except Exception as e:
-                logger.warning(f"撤回消息失败: {str(e)}")
+                logger.warning(f"撤回消息失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 撤回消息失败: 当前仅支持aiocqhttp平台")
@@ -290,7 +293,7 @@ class AIoCQHTTPAction:
                 try:
                     await event.bot.send_like(user_id=user_id, times=count)
                 except Exception as e:
-                    logger.warning(f"点赞失败: {str(e)}")
+                    logger.warning(f"点赞失败: {e!s}")
                     # 如果是第一次点赞失败，返回错误信息
                     if index == 0:
                         return str(e)
@@ -319,7 +322,7 @@ class AIoCQHTTPAction:
                 )
                 return None
             except Exception as e:
-                logger.warning(f"踢出群成员失败: {str(e)}")
+                logger.warning(f"踢出群成员失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
@@ -344,7 +347,7 @@ class AIoCQHTTPAction:
                 )
                 return None
             except Exception as e:
-                logger.warning(f"提出群成员失败: {str(e)}")
+                logger.warning(f"提出群成员失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
@@ -359,7 +362,7 @@ class AIoCQHTTPAction:
                 await event.bot.set_group_leave(group_id=group_id)
                 return None
             except Exception as e:
-                logger.warning(f"退群失败: {str(e)}")
+                logger.warning(f"退群失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
@@ -384,7 +387,7 @@ class AIoCQHTTPAction:
                 )
                 return None
             except Exception as e:
-                logger.warning(f"贴表情失败: {str(e)}")
+                logger.warning(f"贴表情失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
@@ -408,7 +411,7 @@ class AIoCQHTTPAction:
                 )
                 return None
             except Exception as e:
-                logger.warning(f"戳一戳失败: {str(e)}")
+                logger.warning(f"戳一戳失败: {e!s}")
                 return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
@@ -418,7 +421,11 @@ class AIoCQHTTPAction:
     async def _make_text_segment(component: Plain, text: str) -> dict:
         try:
             res = component.to_dict()
-            d = await res if (asyncio.iscoroutine(res) or inspect.isawaitable(res)) else res
+            d = (
+                await res
+                if (asyncio.iscoroutine(res) or inspect.isawaitable(res))
+                else res
+            )
             if isinstance(d, dict):
                 d = copy.deepcopy(d)
                 if "data" in d and isinstance(d["data"], dict):
@@ -460,12 +467,18 @@ class AIoCQHTTPAction:
                 if plain_part:
                     if last_was_at:
                         plain_part = "\u200b " + plain_part
-                    segments.append(await self._make_text_segment(component, plain_part))
+                    segments.append(
+                        await self._make_text_segment(component, plain_part)
+                    )
                     last_was_at = False
 
                 target_qq = match.group(1)
                 if last_was_at:
-                    segments.append(await self._make_text_segment(Plain("\u200b \u200b"), "\u200b \u200b"))
+                    segments.append(
+                        await self._make_text_segment(
+                            Plain("\u200b \u200b"), "\u200b \u200b"
+                        )
+                    )
                 segments.append({"type": "at", "data": {"qq": str(target_qq)}})
                 last_was_at = True
                 last_end = end
@@ -496,7 +509,9 @@ class AIoCQHTTPAction:
         last_was_at = False
         for component in message_chain:
             if isinstance(component, Plain):
-                parsed_segs, last_was_at = await self._parse_plain_inline_ats(component, last_was_at)
+                parsed_segs, last_was_at = await self._parse_plain_inline_ats(
+                    component, last_was_at
+                )
                 message_data.extend(parsed_segs)
             # 如果是@，也需要检查前面是不是@
             elif isinstance(component, At):

@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.1.9-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.2.0-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
