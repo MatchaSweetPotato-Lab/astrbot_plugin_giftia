@@ -272,6 +272,7 @@ class ProfileStoreMixin:
                 up.attitude,
                 up.agreements,
                 up.extra,
+                up.avatar_description,
                 COALESCE(up.relation, r.relation) AS relation,
                 CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
             FROM user_profiles up
@@ -322,6 +323,7 @@ class ProfileStoreMixin:
                 up.attitude,
                 up.agreements,
                 up.extra,
+                up.avatar_description,
                 COALESCE(up.relation, r.relation) AS relation,
                 CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title,
                 (
@@ -358,6 +360,7 @@ class ProfileStoreMixin:
                 OR up.attitude LIKE ?
                 OR up.agreements LIKE ?
                 OR up.extra LIKE ?
+                OR up.avatar_description LIKE ?
                 OR EXISTS (
                     SELECT 1
                     FROM chat_history ch
@@ -387,20 +390,20 @@ class ProfileStoreMixin:
             (
                 bot_name,
                 group_or_user_id,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                like,
-                query,
-                query,
-                query,
+                like,  # up.user_id
+                like,  # up.call_name
+                like,  # ua.alias
+                like,  # up.title
+                like,  # up.personality
+                like,  # up.interests
+                like,  # up.attitude
+                like,  # up.agreements
+                like,  # up.extra
+                like,  # up.avatar_description
+                like,  # ch.nickname
+                query,  # ORDER BY exact user_id
+                query,  # ORDER BY exact call_name
+                query,  # ORDER BY exact alias
                 limit,
             ),
         ) as cursor:
@@ -433,6 +436,7 @@ class ProfileStoreMixin:
             "attitude",
             "agreements",
             "extra",
+            "avatar_description",
         ]
         profile_fields = profile_fields or {}
         update_fields = ["updated_at=excluded.updated_at"]
@@ -457,12 +461,13 @@ class ProfileStoreMixin:
                 attitude,
                 agreements,
                 extra,
+                avatar_description,
                 relation,
                 title,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
                 {update_clause}
             """,
@@ -477,6 +482,7 @@ class ProfileStoreMixin:
                 profile_fields.get("attitude"),
                 profile_fields.get("agreements"),
                 profile_fields.get("extra"),
+                profile_fields.get("avatar_description"),
                 relation,
                 title,
                 update_time,

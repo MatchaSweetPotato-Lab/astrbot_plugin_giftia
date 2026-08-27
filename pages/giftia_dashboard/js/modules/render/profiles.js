@@ -84,7 +84,8 @@ export function renderUserProfiles(items) {
             interests: item.interests || "",
             attitude: item.attitude || "",
             agreements: item.agreements || "",
-            extra: item.extra || ""
+            extra: item.extra || "",
+            avatar_description: item.avatar_description || ""
         };
         const encodedStructured = encodeURIComponent(JSON.stringify(structured));
         const profileHtml = window.renderProfileCard("", {
@@ -94,7 +95,8 @@ export function renderUserProfiles(items) {
             interests: item.interests,
             attitude: item.attitude,
             agreements: item.agreements,
-            extra: item.extra
+            extra: item.extra,
+            avatar_description: item.avatar_description
         });
 
         let relationBadge = "";

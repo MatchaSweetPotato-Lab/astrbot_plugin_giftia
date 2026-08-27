@@ -145,6 +145,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 attitude TEXT,
                 agreements TEXT,
                 extra TEXT,
+                avatar_description TEXT,
                 relation INTEGER,
                 title TEXT,
                 bot_name TEXT NOT NULL,
@@ -160,6 +161,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE user_profiles ADD COLUMN attitude TEXT",
             "ALTER TABLE user_profiles ADD COLUMN agreements TEXT",
             "ALTER TABLE user_profiles ADD COLUMN extra TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN avatar_description TEXT",
             "ALTER TABLE user_profiles ADD COLUMN relation INTEGER",
             "ALTER TABLE user_profiles ADD COLUMN title TEXT",
         ):

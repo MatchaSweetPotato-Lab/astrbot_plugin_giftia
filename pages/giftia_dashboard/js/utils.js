@@ -202,7 +202,8 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
         "兴趣话题": "",
         "互动态度": "",
         "关键约定": "",
-        "其他补充": ""
+        "其他补充": "",
+        "头像描述": ""
     };
     
     // Fill from structured if present
@@ -214,6 +215,7 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
         fields["互动态度"] = structured.attitude || "";
         fields["关键约定"] = structured.agreements || "";
         fields["其他补充"] = structured.extra || "";
+        fields["头像描述"] = structured.avatar_description || "";
     }
     
     // If some fields are empty, let's try to extract them from rawProfile
@@ -267,6 +269,7 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
 
     // Extract fields
     const profileFields = [
+        { label: "头像描述", val: fields["头像描述"] || "", class: "prop-avatar", color: "var(--accent, #ec4899)" },
         { label: "性格风格", val: fields["性格风格"] || "", class: "prop-personality", color: "var(--primary)" },
         { label: "兴趣话题", val: fields["兴趣话题"] || "", class: "prop-interests", color: "var(--info)" },
         { label: "其他补充", val: fields["其他补充"] || "", class: "prop-extra", color: "var(--font-secondary)" }
