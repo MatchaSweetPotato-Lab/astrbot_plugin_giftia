@@ -11,6 +11,7 @@ USER_PROFILE_FIELD_KEYS = (
     "attitude",
     "agreements",
     "extra",
+    "avatar_description",
 )
 
 

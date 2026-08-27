@@ -22,6 +22,7 @@ TOOLS_NAMESPACE = [
     "search_user_profile",
     "inspect_forward_message",
     "inspect_media",
+    "set_user_avatar_description",
 ]
 
 
@@ -713,6 +714,71 @@ class InspectMediaTool(FunctionTool):
         )
         media_type = getattr(caption_obj, "media_type", "media") if caption_obj else "media"
         return f"媒体 [{media_id}] ({media_type}) 分析转述结果:\n{result_str}"
+
+
+@dataclass
+class SetUserAvatarDescriptionTool(FunctionTool):
+    plugin: Any = None
+    name: str = "set_user_avatar_description"
+    description: str = (
+        "为指定用户设置或更新头像视觉特征描述，并持久化保存至画像库。"
+        "通常在通过头像转述工具或感知获取到该用户的头像特征后调用。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "目标用户的数字ID/用户标识。",
+                },
+                "avatar_description": {
+                    "type": "string",
+                    "description": "头像的特征描述内容（如主体角色、外貌、风格、色调等一句话概括）。",
+                },
+            },
+            "required": ["user_id", "avatar_description"],
+        }
+    )
+
+    async def call(self, context, **kwargs) -> str:
+        if self.plugin is None:
+            return "设置失败：未绑定插件实例"
+
+        if hasattr(context, "context") and hasattr(context.context, "event"):
+            event = context.context.event
+        else:
+            event = context
+
+        platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
+        bot_name = self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        group_or_user_id = ""
+        if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
+            group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+
+        user_id = str(kwargs.get("user_id") or "").strip()
+        avatar_desc = str(kwargs.get("avatar_description") or "").strip()
+
+        if not user_id:
+            return "请求参数错误：未提供目标用户的 user_id"
+        if not avatar_desc:
+            return "请求参数错误：未提供头像描述 avatar_description"
+
+        try:
+            await self.plugin.data_cache.set_user_profile(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                profile_fields={"avatar_description": avatar_desc},
+                alias_increment_count=False,
+            )
+            logger.info(
+                f"[Giftia] 工具 set_user_avatar_description 已更新用户 {user_id} 的头像描述: {avatar_desc}"
+            )
+            return f"已成功将用户 {user_id} 的头像描述记录至画像库:\n{avatar_desc}"
+        except Exception as e:
+            logger.error(f"[Giftia] set_user_avatar_description 执行失败: {e}", exc_info=True)
+            return f"保存头像描述失败: {e}"
 
 
 def remove_tools(context: Context):

@@ -23,6 +23,7 @@ from .core.llm.llm_tools import (
     InspectMediaTool,
     SearchChatHistoryTool,
     SearchUserProfileTool,
+    SetUserAvatarDescriptionTool,
     remove_tools,
 )
 from .core.llm.xml_parse import XmlParse
@@ -279,6 +280,9 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("inspect_media_enabled", True):
             self.context.add_llm_tools(InspectMediaTool(plugin=self))
             logger.info("已注册函数调用工具: inspect_media")
+        if self.conf.get("tools_config", {}).get("set_user_avatar_description_enabled", True):
+            self.context.add_llm_tools(SetUserAvatarDescriptionTool(plugin=self))
+            logger.info("已注册函数调用工具: set_user_avatar_description")
         # 注册 Web UI 及 API 路由
         self.webui_manager = WebUIManager(self)
         self.webui_manager.register_routes()

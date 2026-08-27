@@ -22,6 +22,7 @@ window.openEditUserProfileModal = function(bot, group, user, relation, titleEnco
     document.getElementById("edit-user-prof-attitude").value = structured.attitude || "";
     document.getElementById("edit-user-prof-agreements").value = structured.agreements || "";
     document.getElementById("edit-user-prof-extra").value = structured.extra || "";
+    document.getElementById("edit-user-prof-avatar").value = structured.avatar_description || "";
     window.openModal("edit-user-profile-modal");
 };
 
@@ -37,6 +38,7 @@ window.submitEditUserProfile = async function() {
     const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
     const agreements = document.getElementById("edit-user-prof-agreements").value.trim();
     const extra = document.getElementById("edit-user-prof-extra").value.trim();
+    const avatarDescription = document.getElementById("edit-user-prof-avatar").value.trim();
 
     const relation = relationVal !== "" ? parseInt(relationVal) : 0;
 
@@ -52,7 +54,8 @@ window.submitEditUserProfile = async function() {
             interests: interests,
             attitude: attitude,
             agreements: agreements,
-            extra: extra
+            extra: extra,
+            avatar_description: avatarDescription
         });
         if (res.status === "success") {
             window.showToast("保存成功！");

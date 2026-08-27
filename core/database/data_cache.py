@@ -582,6 +582,15 @@ class DataCache:
             if len(active_users) >= limit:
                 break
 
+        inject_avatar = False
+        if self.plugin and hasattr(self.plugin, "conf"):
+            inject_avatar = bool(
+                self.plugin.conf.get("tools_config", {}).get(
+                    "inject_avatar_to_active_briefs",
+                    self.plugin.conf.get("inject_avatar_to_active_briefs", False),
+                )
+            )
+
         briefs = []
         for uid, nickname in active_users:
             record = await self.get_user_profile_record(
@@ -602,10 +611,13 @@ class DataCache:
                 "title": title,
                 "call_name": "",
                 "aliases": "",
+                "avatar_description": "",
             }
             if record:
                 brief["call_name"] = record.get("call_name") or ""
                 brief["aliases"] = record.get("aliases") or ""
+                if inject_avatar:
+                    brief["avatar_description"] = record.get("avatar_description") or ""
                 if not title and record.get("title"):
                     brief["title"] = record.get("title") or ""
                 if relation == 0 and record.get("relation") is not None:
@@ -613,7 +625,7 @@ class DataCache:
 
             has_content = any(
                 brief.get(key)
-                for key in ("relation", "title", "call_name", "aliases")
+                for key in ("relation", "title", "call_name", "aliases", "avatar_description")
             )
             if has_content:
                 briefs.append(brief)

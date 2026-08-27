@@ -290,6 +290,18 @@
                 "default": true,
                 "hint": "允许AI在需要时按 media_id 查看未转述的历史媒体（图片/语音/视频）或对已有媒体定向提问。"
             },
+            "set_user_avatar_description_enabled": {
+                "description": "启用设置头像描述工具",
+                "type": "bool",
+                "default": true,
+                "hint": "允许AI在获取到用户头像视觉特征后，将头像描述持久化保存至用户画像库。"
+            },
+            "inject_avatar_to_active_briefs": {
+                "description": "活跃成员摘要包含头像描述",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，活跃成员轻量摘要 (<active_user_briefs>) 中也会注入头像描述；默认关闭（仅在当前发言人画像中注入），以节省上下文 Token。"
+            },
             "active_user_brief_limit": {
                 "description": "活跃用户摘要数量",
                 "type": "int",

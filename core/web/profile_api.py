@@ -78,6 +78,7 @@ class ProfileApi:
                 SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id,
                        up.call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
+                       up.avatar_description,
                        up.created_at, up.updated_at,
                        COALESCE(up.relation, r.relation) AS relation,
                        CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
@@ -110,6 +111,7 @@ class ProfileApi:
                             "attitude": r["attitude"] or "",
                             "agreements": r["agreements"] or "",
                             "extra": r["extra"] or "",
+                            "avatar_description": r["avatar_description"] or "",
                             "relation": r["relation"]
                             if r["relation"] is not None
                             else 0,

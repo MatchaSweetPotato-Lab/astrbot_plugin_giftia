@@ -33,6 +33,7 @@ USER_PROFILE_FIELDS = [
     ("attitude", "互动态度"),
     ("agreements", "关键约定"),
     ("extra", "其他补充"),
+    ("avatar_description", "头像描述"),
 ]
 
 
@@ -744,6 +745,9 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
         aliases = normalize_profile_value(item.get("aliases"))
         if aliases:
             lines.append(f"其他外号：{aliases}")
+        avatar_desc = normalize_profile_value(item.get("avatar_description"))
+        if avatar_desc:
+            lines.append(f"头像描述：{avatar_desc}")
 
         if lines:
             content = "\n".join(lines)
