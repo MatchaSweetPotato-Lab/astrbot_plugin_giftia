@@ -1,28 +1,27 @@
-import os
 import asyncio
 import base64 as b64_module
 import contextlib
+import os
 import re
 import time
 import urllib.parse
-from collections import defaultdict, deque
-from pathlib import Path
+from collections import deque
 from typing import Any
-
-from xxhash import xxh3_64_hexdigest
 
 from astrbot.api import logger
 from astrbot.api.message_components import Image, Plain, Video
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.star.star_tools import StarTools
+from xxhash import xxh3_64_hexdigest
 
 from ..database.data_cache import DataCache, is_temp_or_local_path
 from ..llm.call_llm import CallLLM
+from .event_utils import resolve_bot_name
 from .http_manager import HttpManager
 from .message_parse_types import ChainParseResult
 from .path_security import get_safe_local_media_path
 from .schemas import MediaCaption
-from .video_utils import get_remote_video_info, format_file_size, format_duration
+from .video_utils import format_duration, format_file_size, get_remote_video_info
 
 # 支持的图片文件格式
 SUPPORTED_FILE_FORMATS_WITH_DOT = (
@@ -62,7 +61,8 @@ class SessionCaptionRateLimiter:
             # 轻量维护：若字典过大，顺便清理无用键
             if len(self._history) > 1000:
                 empty_keys = [
-                    k for k, q in self._history.items()
+                    k
+                    for k, q in self._history.items()
                     if not q or now - q[-1] > self.window_seconds
                 ]
                 for k in empty_keys:
@@ -82,7 +82,7 @@ class LockManager:
                 self._locks[key] = [asyncio.Lock(), 0]
             lock_info = self._locks[key]
             lock_info[1] += 1
-        
+
         try:
             async with lock_info[0]:
                 yield
@@ -110,12 +110,8 @@ class MessageMediaFormatter:
         self.image_caption_enabled = image_caption_enabled
         self.audio_caption_enabled = audio_caption_enabled
         self.call_llm = call_llm
-        self.url_locks = (
-            url_locks if url_locks is not None else LockManager()
-        )
-        self.hash_locks = (
-            hash_locks if hash_locks is not None else LockManager()
-        )
+        self.url_locks = url_locks if url_locks is not None else LockManager()
+        self.hash_locks = hash_locks if hash_locks is not None else LockManager()
         self.rate_limiter = (
             rate_limiter if rate_limiter is not None else SessionCaptionRateLimiter()
         )
@@ -157,7 +153,11 @@ class MessageMediaFormatter:
             if is_temp_or_local_path(cand_str):
                 continue
 
-            clean_path = urllib.parse.urlparse(cand_str).path if cand_str.startswith("http") else cand_str
+            clean_path = (
+                urllib.parse.urlparse(cand_str).path
+                if cand_str.startswith("http")
+                else cand_str
+            )
             basename = os.path.basename(clean_path)
             stem = re.sub(r"\.[^.]+$", "", basename)
             if re.fullmatch(r"[a-fA-F0-9]{16,64}", stem):
@@ -198,7 +198,7 @@ class MessageMediaFormatter:
         file_name: str | None,
         defer_caption: bool,
         custom_desc: str | None = None,
-        event = None,
+        event=None,
     ) -> tuple[str, ChainParseResult]:
         result = ChainParseResult()
         decision_url = self.first_media_url(url, file_name)
@@ -231,13 +231,17 @@ class MessageMediaFormatter:
         bot_name = ""
         group_or_user_id = ""
         if event and self.call_llm.plugin:
-            bot_name = self.call_llm.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+            bot_name = resolve_bot_name(self.call_llm.plugin, event)
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
 
         if not media_caption and should_try_caption:
             hash_val, media_caption = await self.get_image_caption(
-                url or "", file_name, defer_caption, custom_desc=custom_desc,
-                bot_name=bot_name, group_or_user_id=group_or_user_id
+                url or "",
+                file_name,
+                defer_caption,
+                custom_desc=custom_desc,
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
             )
         if hash_val and media_caption:
             result.media_id_list.append(hash_val)
@@ -249,7 +253,7 @@ class MessageMediaFormatter:
         return "[图片]", result
 
     async def format_audio_ref(
-        self, url: str, file_name: str | None, defer_caption: bool, event = None
+        self, url: str, file_name: str | None, defer_caption: bool, event=None
     ) -> tuple[str, ChainParseResult]:
         result = ChainParseResult()
         decision_url = self.first_media_url(url, file_name)
@@ -274,8 +278,7 @@ class MessageMediaFormatter:
                 or (
                     file_name
                     and (
-                        file_name.startswith("http")
-                        or file_name.startswith("file://")
+                        file_name.startswith("http") or file_name.startswith("file://")
                     )
                 )
             )
@@ -284,13 +287,16 @@ class MessageMediaFormatter:
         bot_name = ""
         group_or_user_id = ""
         if event and self.call_llm.plugin:
-            bot_name = self.call_llm.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+            bot_name = resolve_bot_name(self.call_llm.plugin, event)
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
 
         if not media_caption and should_try_caption:
             hash_val, media_caption = await self.get_audio_caption(
-                url or "", file_name, defer_caption,
-                bot_name=bot_name, group_or_user_id=group_or_user_id
+                url or "",
+                file_name,
+                defer_caption,
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
             )
         if hash_val and media_caption:
             result.media_id_list.append(hash_val)
@@ -299,7 +305,12 @@ class MessageMediaFormatter:
         return "[语音]", result
 
     async def format_video_ref(
-        self, url: str, file_name: str | None, defer_caption: bool, event = None, path: str | None = None
+        self,
+        url: str,
+        file_name: str | None,
+        defer_caption: bool,
+        event=None,
+        path: str | None = None,
     ) -> tuple[str, ChainParseResult]:
         result = ChainParseResult()
         decision_url = self.first_media_url(url, file_name)
@@ -315,8 +326,10 @@ class MessageMediaFormatter:
         # 2. 从配置获取限制
         caption_config = {}
         if self.call_llm and hasattr(self.call_llm, "plugin") and self.call_llm.plugin:
-            caption_config = getattr(self.call_llm.plugin, "conf", {}).get("caption_config", {})
-        
+            caption_config = getattr(self.call_llm.plugin, "conf", {}).get(
+                "caption_config", {}
+            )
+
         max_size_mb = caption_config.get("video_max_file_size_mb", 50)
         max_size_bytes = max_size_mb * 1024 * 1024
 
@@ -328,8 +341,10 @@ class MessageMediaFormatter:
 
         # 4. 检查大小超限
         is_over_limit = (file_size > 0) and (file_size > max_size_bytes)
-        
-        existing_caption = await self.data_cache.get_caption_by_hash(hash_val) if hash_val else None
+
+        existing_caption = (
+            await self.data_cache.get_caption_by_hash(hash_val) if hash_val else None
+        )
         if existing_caption:
             await self._update_existing_media_caption(
                 existing_caption,
@@ -366,7 +381,7 @@ class MessageMediaFormatter:
             tag = f"[视频:{hash_val}][时长:{dur_str}]"
         else:
             tag = f"[视频:{hash_val}]"
-        
+
         if not existing_caption:
             media_caption = MediaCaption(
                 hash_val=hash_val,
@@ -416,7 +431,9 @@ class MessageMediaFormatter:
 
             # 下载图片
             image_bytes = None
-            if file_name and (file_name.startswith("file://") or is_temp_or_local_path(file_name)):
+            if file_name and (
+                file_name.startswith("file://") or is_temp_or_local_path(file_name)
+            ):
                 safe_local_path = get_safe_local_media_path(file_name)
                 if safe_local_path:
                     try:
@@ -489,7 +506,9 @@ class MessageMediaFormatter:
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
                 await self._update_existing_media_caption(
-                    media_caption, url=db_url, file_name=db_file_name if file_name else None
+                    media_caption,
+                    url=db_url,
+                    file_name=db_file_name if file_name else None,
                 )
                 if getattr(media_caption, "is_captioned", True) or defer_caption:
                     return hash_val, media_caption
@@ -537,7 +556,11 @@ class MessageMediaFormatter:
                 return hash_val, media_caption
 
             # 会话级分钟频控检查 (默认 1 分钟最多 8 张)
-            session_key = f"{bot_name}:{group_or_user_id}" if (bot_name or group_or_user_id) else ""
+            session_key = (
+                f"{bot_name}:{group_or_user_id}"
+                if (bot_name or group_or_user_id)
+                else ""
+            )
             if session_key and not await self.rate_limiter.acquire(session_key):
                 logger.info(
                     f"[Giftia] 会话 {session_key} 达到 1 分钟内图片自动转述频控上限 (8张/分)，当前图片转为延迟转述 (defer_caption): hash={hash_val}"
@@ -625,7 +648,9 @@ class MessageMediaFormatter:
 
             # 语音的hash_val用url生成，如果是本地文件，使用本地内容生成hash
             audio_bytes = None
-            if file_name and (file_name.startswith("file://") or is_temp_or_local_path(file_name)):
+            if file_name and (
+                file_name.startswith("file://") or is_temp_or_local_path(file_name)
+            ):
                 safe_local_path = get_safe_local_media_path(file_name)
                 if safe_local_path:
                     try:
@@ -800,4 +825,3 @@ async def format_node_components(
             components.append(Plain(token))
 
     return components or [Plain("[无内容]")]
-
