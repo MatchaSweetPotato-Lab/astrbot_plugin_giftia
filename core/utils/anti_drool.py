@@ -76,8 +76,10 @@ def clean_llm_completion(text: str) -> str:
         if is_close:
             return f"</{tag_name}>"
 
-        # 提取合法的 key="value" 或 key='value' 属性对，或未加引号的 key=value
-        attrs = re.findall(r'([a-zA-Z_0-9:-]+)\s*=\s*("[^"]*"|\'[^\']*\'|[^>\s/]+)', attrs_part)
+        # 提取合法的 key="value" 或 key='value' 属性对，或未加引号的 key=value（支持包含中文字符的属性名）
+        attrs = re.findall(
+            r'([^\s=>/]+)\s*=\s*("[^"]*"|\'[^\']*\'|[^>\s/]+)', attrs_part
+        )
         seen = set()
         unique_attrs = []
         for name, val in attrs:

@@ -205,7 +205,9 @@ function openBotEditModal(botName = null) {
             replace_in_message: false,
             signature_voices: []
         },
-        enabled_interactive_features: (stateBotMetadata.interactive_features || []).map(f => typeof f === 'object' && f !== null && f.key ? f.key : f)
+        enabled_interactive_features: (stateBotMetadata.interactive_features || [])
+            .map(f => typeof f === 'object' && f !== null && f.key ? f.key : f)
+            .filter(key => key !== 'leave')
     };
 
     title.innerText = botName ? `编辑机器人: ${botName}` : '新增机器人配置';

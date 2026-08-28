@@ -775,6 +775,15 @@
                     <label>当前动作</label>
                     <input type="text" id="edit-status-action" placeholder="例如: 拿起手机聊天">
                 </div>
+                <div class="form-group" style="margin-top: 16px; border-top: 1px solid var(--border-color, #e2e8f0); padding-top: 12px;">
+                    <div class="flex-between" style="align-items: center; margin-bottom: 8px;">
+                        <label style="margin-bottom: 0; font-weight: 600;">常驻/低频状态 (如服装、场景、道具等)</label>
+                        <button type="button" class="btn btn-secondary btn-small" onclick="addCustomStatusRow()" style="padding: 2px 8px; font-size: 0.75rem;">+ 添加状态项</button>
+                    </div>
+                    <div id="edit-custom-status-list" style="display: flex; flex-direction: column; gap: 8px;">
+                        <!-- 动态生成的自定义状态行 -->
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" onclick="submitEditStatus()">确认修改</button>

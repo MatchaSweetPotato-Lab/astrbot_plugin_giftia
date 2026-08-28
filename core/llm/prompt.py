@@ -142,6 +142,9 @@ def build_decision_prompt(
     group_profile_text = normalize_profile_text(group_profile)
     if group_profile_text:
         user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
+    persistent_status_block = build_persistent_status_block(bot_status)
+    if persistent_status_block:
+        user_prompt.append(persistent_status_block)
 
     # 2. 半静态上下文区：任务看板、活跃成员摘要、合并转发索引与历史消息
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
@@ -348,6 +351,9 @@ def build_reply_prompt(
     group_profile_text = normalize_profile_text(group_profile)
     if group_profile_text:
         user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
+    persistent_status_block = build_persistent_status_block(bot_status)
+    if persistent_status_block:
+        user_prompt.append(persistent_status_block)
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
     if task_board_block:
         user_prompt.append(task_board_block)
@@ -555,6 +561,22 @@ def parse_status_to_str(status: Status) -> str:
             status_str += f"\n(距离上次状态更新已过去 {time_diff_str})"
 
     return status_str
+
+
+def build_persistent_status_block(status: Status | None) -> str:
+    """构建低频/常驻状态的 XML 块。若无有效常驻状态，返回空字符串。"""
+    if not status or not getattr(status, "custom_status", None):
+        return ""
+    lines = []
+    for k, v in status.custom_status.items():
+        k_str = str(k).strip()
+        v_str = str(v).strip()
+        if k_str and v_str:
+            lines.append(f"{k_str}：{v_str}")
+    if not lines:
+        return ""
+    status_content = "\n".join(lines)
+    return f"<bot_persistent_status>\n{status_content}\n</bot_persistent_status>"
 
 
 def build_memory_attrs(

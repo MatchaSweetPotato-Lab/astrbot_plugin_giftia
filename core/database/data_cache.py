@@ -246,18 +246,56 @@ class DataCache:
     async def set_bot_status(
         self, bot_name: str, group_id: str, status: Status
     ) -> None:
+        """更新指定会话的机器人状态并持久化。
+
+        注意：
+        - 仅对非空字段进行差分覆盖；
+        - 对 custom_status 为增量合并（非空字典才会合并更新），避免常规高频状态更新冲掉常驻状态；
+        - 若需显式删除或部分更新常驻状态键，请调用 update_bot_custom_status。
+        """
         current_status = await self.get_bot_status(bot_name, group_id)
         # 使用 asdict 将 dataclass 转换为字典，即便开启了 slots 也能正常工作
         status_data = asdict(status)
         # 仅对非空值进行差分覆盖
         for key, value in status_data.items():
-            if key not in ("timestamp", "last_updated") and value is not None and value != "":
+            if key in ("timestamp", "last_updated"):
+                continue
+            if key == "custom_status":
+                if isinstance(value, dict) and value:
+                    if current_status.custom_status is None:
+                        current_status.custom_status = {}
+                    current_status.custom_status.update(value)
+            elif value is not None and value != "":
                 setattr(current_status, key, value)
         await self.db.upsert_bot_status(
             bot_name=bot_name,
             group_or_user_id=group_id,
             status=current_status,
         )
+
+    async def update_bot_custom_status(
+        self, bot_name: str, group_id: str, custom_status_updates: dict[str, str]
+    ) -> Status:
+        """更新、添加或删除指定会话的自定义/常驻状态。
+        若值为空字符串或 None 则删除该状态键。"""
+        current_status = await self.get_bot_status(bot_name, group_id)
+        if current_status.custom_status is None:
+            current_status.custom_status = {}
+        for k, v in custom_status_updates.items():
+            clean_k = str(k).strip()
+            if not clean_k:
+                continue
+            clean_v = str(v).strip() if v is not None else ""
+            if clean_v:
+                current_status.custom_status[clean_k] = clean_v
+            else:
+                current_status.custom_status.pop(clean_k, None)
+        await self.db.upsert_bot_status(
+            bot_name=bot_name,
+            group_or_user_id=group_id,
+            status=current_status,
+        )
+        return current_status
 
     def set_bot_muted(
         self, bot_name: str, group_id: str, duration: int | float

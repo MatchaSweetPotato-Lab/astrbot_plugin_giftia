@@ -124,10 +124,16 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 memory TEXT,
                 action TEXT,
                 energy TEXT,
+                custom_status TEXT,
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """)
+        try:
+            await cursor.execute("ALTER TABLE bot_status ADD COLUMN custom_status TEXT")
+        except aiosqlite.OperationalError as e:
+            if "duplicate" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.warning(f"Failed to migrate bot_status column: {e}")
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_group_unique ON bot_status (group_or_user_id, bot_name)"

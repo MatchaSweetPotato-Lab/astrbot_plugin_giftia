@@ -350,6 +350,33 @@ class XmlParse:
                         SetCallNameRequest(user_id=user_id, name=name)
                     )
 
+                elif tag_name == "set_status":
+                    key = (
+                        self._attr_str(child, "key", "")
+                        or self._attr_str(child, "name", "")
+                    ).strip()
+                    value = self._attr_str(child, "value", "").strip()
+                    if key:
+                        if not value and not child.has_attr("value"):
+                            value = child.get_text(strip=True)
+                        result.set_custom_status[key] = value
+                    else:
+                        # 属性键值对模式，如 <set_status 服装="女仆装" 场景="客厅"/>
+                        for k, v in child.attrs.items():
+                            if k not in ("key", "name", "value") and isinstance(v, str):
+                                k_clean = k.strip()
+                                if k_clean:
+                                    result.set_custom_status[k_clean] = v.strip()
+                        # 也支持纯文本形式，如 "服装: 女仆装\n场景: 客厅"
+                        text_body = child.get_text(strip=True)
+                        if text_body:
+                            pairs = re.findall(r"([^\n:：]+)[:：]\s*([^\n]+)", text_body)
+                            for k, v in pairs:
+                                k_clean = k.strip()
+                                v_clean = v.strip().strip("\"'")
+                                if k_clean:
+                                    result.set_custom_status[k_clean] = v_clean
+
                 elif tag_name == "search_memory":
                     text = child.get_text(strip=True)
                     if text:
