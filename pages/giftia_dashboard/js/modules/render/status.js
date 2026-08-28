@@ -50,6 +50,19 @@ export function renderBotStatus(items) {
                 </button>
         ` : "";
 
+        const customStatus = item.custom_status || {};
+        const customStatusEntries = Object.entries(customStatus).filter(([k, v]) => k && v);
+        const customStatusHtml = customStatusEntries.length > 0 ? `
+            <div class="status-custom-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                ${customStatusEntries.map(([k, v]) => `
+                    <span class="status-pill status-pill-custom" style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.25);">
+                        <span class="pill-label" style="color: var(--primary, #6366f1); font-weight: 600;">${window.escapeHtml(k)}</span>
+                        <span class="pill-value">${window.escapeHtml(v)}</span>
+                    </span>
+                `).join("")}
+            </div>
+        ` : "";
+
         return `
             <div class="status-card card">
                 <div class="status-card-header">
@@ -87,6 +100,8 @@ export function renderBotStatus(items) {
                     </span>
                 </div>
 
+                ${customStatusHtml}
+
                 <div class="status-thought-box">
                     <div class="status-thought-header">
                         <span class="thought-icon">
@@ -100,7 +115,7 @@ export function renderBotStatus(items) {
                 ${taskBoardHtml}
 
                 <div class="status-actions">
-                    <button class="btn btn-secondary btn-small" onclick="window.openEditStatusModal('${botArg}', '${groupArg}', '${encodeStatusArg(mood)}', '${encodeStatusArg(state)}', '${encodeStatusArg(memory)}', '${encodeStatusArg(action)}')">调整状态</button>
+                    <button class="btn btn-secondary btn-small" onclick="window.openEditStatusModal('${botArg}', '${groupArg}', '${encodeStatusArg(mood)}', '${encodeStatusArg(state)}', '${encodeStatusArg(memory)}', '${encodeStatusArg(action)}', '${encodeStatusArg(JSON.stringify(customStatus))}')">调整状态</button>
                     <button class="btn btn-primary btn-small" onclick="window.fillEnergy('${botArg}', '${groupArg}')">补满能量</button>
                 </div>
             </div>

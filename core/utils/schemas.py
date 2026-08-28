@@ -27,6 +27,7 @@ class FeatureKey:
     STICKER = "sticker"
     MEMORY_QUERY_DELETE = "memory_query_delete"
     SET_CALL_NAME = "set_call_name"
+    PERSISTENT_STATUS = "persistent_status"
     LEAVE = "leave"
 
 
@@ -94,6 +95,7 @@ class Status:
     energy: str = ""
     timestamp: float = 0.0
     last_updated: float = 0.0
+    custom_status: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(repr=False, slots=True)
@@ -202,6 +204,7 @@ FLAT_CLOSABLE_TAGS = [
     "decision",
     "caption",
     "set_call_name",
+    "set_status",
 ]
 
 # 内嵌或容器类非平铺自动闭合标签
@@ -278,5 +281,7 @@ class XmlLlmResult:
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 修改用户称呼请求
     set_call_names: list[SetCallNameRequest] = field(default_factory=list)
+    # 更新常驻/低频状态请求 (键值对字典)
+    set_custom_status: dict[str, str] = field(default_factory=dict)
     # 保留 message / tts 在 LLM XML 中的出现顺序
     output_order: list[tuple[str, int]] = field(default_factory=list)

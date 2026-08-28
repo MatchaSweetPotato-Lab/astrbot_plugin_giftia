@@ -193,6 +193,13 @@ def build_xml_instructions(
             '  * **删除记忆**: `<delete_memory id="记忆ID"/>`。用于清理失效或不准确的记忆。'
         )
 
+    if is_enabled(FeatureKey.PERSISTENT_STATUS):
+        interactive_lines.append(
+            "- **常驻/低频状态管理**:\n"
+            '  * **更新/设置状态**: `<set_status 键="值" .../>` 或 `<set_status key="状态名" value="新状态"/>`。用于记录并维持你的低频常驻物理、环境、服装或道具状态（如：当前服装、所在场景、随身物品、长期生理/生活状态等）。\n'
+            '  * **说明**: 仅在剧情中发生明确换装、移动地点、状态改变或道具变动时使用。未发生改变时请勿输出此标签。若要移除某项状态，将对应值设为空即可（如 `<set_status key="随身物品" value=""/>`）。'
+        )
+
     if is_enabled(FeatureKey.LEAVE):
         interactive_lines.append(
             "- **退群**: `<leave/>`。退出当前群聊（请极度谨慎使用）。"

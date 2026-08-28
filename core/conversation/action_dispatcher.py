@@ -13,7 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from ..utils.event_utils import get_adapter_id
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
-from ..utils.schemas import ImageSendType, MessageData, XmlLlmResult
+from ..utils.schemas import FeatureKey, ImageSendType, MessageData, XmlLlmResult
 
 
 class ActionDispatcher:
@@ -181,6 +181,46 @@ class ActionDispatcher:
                     f"<set_call_name user_id={quoteattr(target_user_id)} "
                     f"result='failed' reason={quoteattr(str(e))}/>"
                 )
+
+        return logs
+
+    async def _dispatch_set_status_actions(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        group_or_user_id: str,
+        llm_result: XmlLlmResult,
+    ) -> list[str]:
+        if not llm_result.set_custom_status:
+            return []
+
+        if not self._interactive_feature_enabled(
+            FeatureKey.PERSISTENT_STATUS, bot_name
+        ):
+            logger.info(
+                f"[Giftia] Bot {bot_name} 未启用常驻状态管理，跳过 set_status 动作"
+            )
+            return []
+
+        logs = []
+        try:
+            await self.plugin.data_cache.update_bot_custom_status(
+                bot_name=bot_name,
+                group_id=group_or_user_id,
+                custom_status_updates=llm_result.set_custom_status,
+            )
+            for k, v in llm_result.set_custom_status.items():
+                if v:
+                    logs.append(
+                        f"<set_status key={quoteattr(k)} value={quoteattr(v)} result='success'/>"
+                    )
+                    logger.info(f"[Giftia] 会话 {group_or_user_id} 更新常驻状态: {k} = {v}")
+                else:
+                    logs.append(f"<set_status key={quoteattr(k)} result='deleted'/>")
+                    logger.info(f"[Giftia] 会话 {group_or_user_id} 删除常驻状态: {k}")
+        except Exception as e:
+            logger.error(f"[Giftia] 更新常驻状态失败: {e}", exc_info=True)
+            logs.append(f"<set_status result='failed' reason={quoteattr(str(e))}/>")
 
         return logs
 
@@ -514,7 +554,13 @@ class ActionDispatcher:
             group_or_user_id=group_or_user_id,
             llm_result=llm_result,
         )
-        common_logs = task_board_logs + set_call_name_logs
+        set_status_logs = await self._dispatch_set_status_actions(
+            event=event,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            llm_result=llm_result,
+        )
+        common_logs = task_board_logs + set_call_name_logs + set_status_logs
 
         # 区分 aiocqhttp / qq_official 平台与其它通用平台
         is_aiocqhttp = event.get_platform_name() == "aiocqhttp" and isinstance(

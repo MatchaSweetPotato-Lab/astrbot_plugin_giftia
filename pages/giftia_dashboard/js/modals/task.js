@@ -21,19 +21,53 @@ window.fillEnergy = async function(bot, group) {
 };
 
 // 2. Edit Bot Status
-window.openEditStatusModal = function(bot, group, mood, state, memory, action) {
+window.addCustomStatusRow = function(key = "", value = "") {
+    const list = document.getElementById("edit-custom-status-list");
+    if (!list) return;
+    const row = document.createElement("div");
+    row.className = "custom-status-row";
+    row.style.cssText = "display: flex; gap: 8px; align-items: center;";
+    row.innerHTML = `
+        <input type="text" class="custom-status-key" placeholder="状态名(如:服装)" value="${window.escapeHtml(key)}" style="flex: 1; min-width: 90px; padding: 6px 10px; border-radius: var(--radius-sm, 6px); border: 1px solid var(--border-color, #e2e8f0); background: var(--input-bg, #fff); color: var(--font-primary, inherit);">
+        <input type="text" class="custom-status-val" placeholder="状态值(如:日常校服)" value="${window.escapeHtml(value)}" style="flex: 2; padding: 6px 10px; border-radius: var(--radius-sm, 6px); border: 1px solid var(--border-color, #e2e8f0); background: var(--input-bg, #fff); color: var(--font-primary, inherit);">
+        <button type="button" class="btn btn-secondary btn-small" onclick="this.closest('.custom-status-row').remove()" style="padding: 4px 8px; color: var(--danger, #ef4444); border-color: rgba(239, 68, 68, 0.3);" title="删除该项">&times;</button>
+    `;
+    list.appendChild(row);
+};
+
+window.openEditStatusModal = function(bot, group, mood, state, memory, action, customStatusJson) {
     bot = decodeURIComponent(bot);
     group = decodeURIComponent(group);
     mood = decodeURIComponent(mood || "");
     state = decodeURIComponent(state || "");
     memory = decodeURIComponent(memory || "");
     action = decodeURIComponent(action || "");
+
+    let customStatus = {};
+    if (customStatusJson) {
+        try {
+            customStatus = JSON.parse(decodeURIComponent(customStatusJson));
+        } catch (e) {
+            customStatus = {};
+        }
+    }
+
     document.getElementById("edit-status-bot").value = bot;
     document.getElementById("edit-status-group").value = group;
     document.getElementById("edit-status-mood").value = mood;
     document.getElementById("edit-status-state").value = state;
     document.getElementById("edit-status-memory").value = memory;
     document.getElementById("edit-status-action").value = action;
+
+    const list = document.getElementById("edit-custom-status-list");
+    if (list) {
+        list.innerHTML = "";
+        const entries = Object.entries(customStatus || {});
+        if (entries.length > 0) {
+            entries.forEach(([k, v]) => window.addCustomStatusRow(k, v));
+        }
+    }
+
     window.openModal("edit-status-modal");
 };
 
@@ -45,6 +79,16 @@ window.submitEditStatus = async function() {
     const memory = document.getElementById("edit-status-memory").value.trim();
     const action = document.getElementById("edit-status-action").value.trim();
 
+    const customStatus = {};
+    const rows = document.querySelectorAll("#edit-custom-status-list .custom-status-row");
+    rows.forEach(row => {
+        const k = row.querySelector(".custom-status-key")?.value?.trim();
+        const v = row.querySelector(".custom-status-val")?.value?.trim();
+        if (k && v) {
+            customStatus[k] = v;
+        }
+    });
+
     try {
         const res = await window.apiPost("/status/update", {
             bot_name: bot,
@@ -52,7 +96,8 @@ window.submitEditStatus = async function() {
             mood: mood,
             state: state,
             memory: memory,
-            action: action
+            action: action,
+            custom_status: customStatus
         });
         if (res.status === "success") {
             window.showToast("Bot 状态调整成功！");
