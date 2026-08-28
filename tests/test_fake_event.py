@@ -170,18 +170,48 @@ class FakeEventTests(unittest.TestCase):
 class FakeEventImplSyncTests(unittest.TestCase):
     """名单与实现必须同步：漏补一个实例属性就会重演历史崩溃"""
 
-    def test_chat_manager_populates_every_known_attr(self):
-        source = (
+    @staticmethod
+    def _chat_manager_source() -> str:
+        return (
             pathlib.Path(__file__).resolve().parents[1]
             / "core"
             / "conversation"
             / "chat_manager.py"
         ).read_text(encoding="utf-8")
+
+    def test_chat_manager_populates_every_known_attr(self):
+        source = self._chat_manager_source()
         body = source.split("def fake_event(", 1)[1].split("return mock_event", 1)[0]
         populated = set(re.findall(r'^\s*"(\w+)":', body, re.MULTILINE))
         # _extras 由 bind_fake_event_extras 连同读写替身一起挂上
         missing = set(REAL_EVENT_INSTANCE_ATTRS) - populated - {"_extras"}
         self.assertEqual(missing, set(), "ChatManager.fake_event 漏补了实例属性")
+
+    def test_session_fallback_uses_sender_id_in_private_chat(self):
+        """私聊没有 group_id，会话标识兜底必须回退到 sender_id 而不是空串"""
+        tree = ast.parse(self._chat_manager_source())
+        funcs = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        build_session = funcs["build_fake_session"]
+        arg_names = [a.arg for a in build_session.args.args]
+        self.assertIn("sender_id", arg_names, "build_fake_session 未接收 sender_id")
+        fallback = ast.unparse(build_session).split("except", 1)[1]
+        self.assertIn("sender_id", fallback, "兜底分支未使用 sender_id")
+
+        call = funcs["fake_event"]
+        session_calls = [
+            node
+            for node in ast.walk(call)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "build_fake_session"
+        ]
+        self.assertTrue(session_calls, "fake_event 未调用 build_fake_session")
+        passed = ast.unparse(session_calls[0])
+        self.assertIn("sender_id", passed, "fake_event 调用处未传入 sender_id")
 
 
 class RealAstrBotEventDriftTests(unittest.TestCase):

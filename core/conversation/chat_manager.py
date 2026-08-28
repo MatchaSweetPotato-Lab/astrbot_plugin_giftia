@@ -611,9 +611,17 @@ class ChatManager:
         return msg_obj
 
     def build_fake_session(
-        self, unified_msg_origin: str, adapter_id: str, group_id: str
+        self,
+        unified_msg_origin: str,
+        adapter_id: str,
+        group_id: str,
+        sender_id: str = "",
     ) -> MessageSession:
-        """构造伪造事件的会话标识（真实事件的 `session` 同样是实例属性）"""
+        """构造伪造事件的会话标识（真实事件的 `session` 同样是实例属性）
+
+        兜底分支下私聊没有 `group_id`，会话标识必须回退到 `sender_id`，
+        否则 `session_id` 为空串会丢失用户身份，下游按会话取记忆 / 画像时全部落空。
+        """
         try:
             return MessageSession.from_str(unified_msg_origin)
         except Exception as e:
@@ -628,7 +636,7 @@ class ChatManager:
                     if group_id
                     else MessageType.FRIEND_MESSAGE
                 ),
-                session_id=str(group_id or ""),
+                session_id=str(group_id or sender_id or ""),
             )
 
     def fake_event(
@@ -657,7 +665,10 @@ class ChatManager:
             metadata = self.build_fallback_platform_meta(adapter_id, platform_name)
 
         session = self.build_fake_session(
-            unified_msg_origin, getattr(metadata, "id", "") or adapter_id, group_id
+            unified_msg_origin,
+            getattr(metadata, "id", "") or adapter_id,
+            group_id,
+            sender_id=sender_id,
         )
         message_obj = self.build_fake_message_obj(
             self_id=self_id,

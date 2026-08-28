@@ -700,10 +700,7 @@ class InspectMediaTool(FunctionTool):
         else:
             event = context
 
-        platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
-        bot_name = (
-            self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
-        )
+        bot_name = resolve_bot_name(self.plugin, event)
         group_or_user_id = ""
         if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
@@ -762,10 +759,7 @@ class SetUserAvatarDescriptionTool(FunctionTool):
         else:
             event = context
 
-        platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
-        bot_name = (
-            self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
-        )
+        bot_name = resolve_bot_name(self.plugin, event)
         group_or_user_id = ""
         if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
