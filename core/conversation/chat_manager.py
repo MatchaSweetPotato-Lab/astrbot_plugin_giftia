@@ -64,7 +64,7 @@ class ChatManager:
                         logger.error(f"处理撤回消息失败: {e}")
                 return
 
-        # 3. 跳过机器人自己的发言（通知类事件除外）
+        # 3. 跳过机器人自己的发言与自身主动发起的交互通知（如自身发出的普通消息、自身戳一戳、自身贴表情等）
         raw_msg = getattr(msg_obj, "raw_message", None) if msg_obj else None
         post_type = (
             (
@@ -75,9 +75,25 @@ class ChatManager:
             if raw_msg
             else ""
         )
-        if post_type != "notice" and event.get_sender_id() == event.get_self_id():
-            logger.debug(f"{event.platform_meta.id} 消息为机器人自己的消息，跳过处理")
-            return
+        self_id = str(event.get_self_id() or "").strip()
+        sender_id = str(event.get_sender_id() or "").strip()
+        if self_id and sender_id and sender_id == self_id:
+            # 仅放行可能影响机器人自身状态的系统通知事件（如群禁言、管理员变更、退群等）
+            is_state_notice = False
+            if raw_msg and post_type == "notice":
+                notice_type = (
+                    raw_msg.get("notice_type", "")
+                    if hasattr(raw_msg, "get")
+                    else getattr(raw_msg, "notice_type", "")
+                )
+                if notice_type in ("group_ban", "group_admin", "group_decrease"):
+                    is_state_notice = True
+
+            if not is_state_notice:
+                logger.debug(
+                    f"{event.platform_meta.id} 消息/通知为机器人自身发起 (sender={sender_id})，跳过处理"
+                )
+                return
 
         # Intercept event.send to capture bot replies (non-LLM responses/tool messages)
         original_send = event.send
@@ -298,6 +314,7 @@ class ChatManager:
             should_reply,
             relevant_memories,
             pending_recall_memories,
+            meme_tags,
         ) = await self.decision_engine.evaluate_decision(
             event=event,
             bot_name=bot_name,
@@ -328,6 +345,7 @@ class ChatManager:
                     current_message=current_message,
                     relevant_memories=relevant_memories,
                     pending_recall_memories=pending_recall_memories,
+                    meme_tags=meme_tags,
                 ):
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):

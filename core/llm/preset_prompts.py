@@ -83,6 +83,7 @@ def build_xml_instructions(
     enabled_features: list[str] | None,
     tts_instruction: str = "",
     is_qq_official: bool = False,
+    use_meme_manager: bool = False,
 ) -> str:
     """
     根据配置启用的内置交互功能列表，动态生成硬编码的 XML 提示词和交互规范说明。
@@ -151,11 +152,17 @@ def build_xml_instructions(
         )
 
     if is_enabled(FeatureKey.STICKER):
-        interactive_lines.append(
-            "- **发送与收集表情包**:\n"
-            '  * **发送**: `<sticker sticker_id="表情包ID"/>`。发送符合当前心情的可爱表情包。可以与文本消息共存，也可以单独只发表情包。\n'
-            '  * **收集**: `<add_sticker media_id="图片ID"/>`。当你看到群友发了极其可爱、有趣或与你高度相关的图片时，使用此标签将它收录到自己的表情包库中。'
-        )
+        if use_meme_manager:
+            interactive_lines.append(
+                "- **发送表情包**:\n"
+                '  * `<sticker sticker_id="表情包ID"/>`。发送符合当前心情的可爱表情包。可以与文本消息共存，也可以单独只发表情包。只能选用 <stickers> 列表中提供的 ID。'
+            )
+        else:
+            interactive_lines.append(
+                "- **发送与收集表情包**:\n"
+                '  * **发送**: `<sticker sticker_id="表情包ID"/>`。发送符合当前心情的可爱表情包。可以与文本消息共存，也可以单独只发表情包。\n'
+                '  * **收集**: `<add_sticker media_id="图片ID"/>`。当你看到群友发了极其可爱、有趣或与你高度相关的图片时，使用此标签将它收录到自己的表情包库中。'
+            )
 
     if is_enabled(FeatureKey.GROUP_ADMIN):
         if is_qq_official:
@@ -524,13 +531,21 @@ def get_sticker_analysis_prompt(
 ```"""
 
 
-DEFAULT_DECISION_RULES = """## 状态与检索判定 (use_rag)
+def get_decision_rules(use_meme_manager: bool = False) -> str:
+    """根据是否开启 meme_manager 动态生成决策模型提示词规范"""
+    meme_tags_rule = (
+        "\n- **表情包意图预测 (meme_tags)**：若判定需要回复（reply=\"true\"），请根据当前话题氛围与预期回复语气，预测 1~3 个可能使用的表情包情绪/场景标签（如 `傲娇, 生气`、`吃瓜, 看戏`、`开心, 卖萌`），多个标签用逗号分隔；若无需表情包则留空。"
+        if use_meme_manager
+        else ""
+    )
+    tag_attr = ' meme_tags="string"' if use_meme_manager else ""
+    return f"""## 状态与检索判定 (use_rag)
 - **决策时效**：状态仅供参考，请根据当前最新消息流自主做出在线/回复决策。
 - **RAG 触发条件**：在以下情况下，必须将 `use_rag` 设为 `true`：
   - 提及过往大事件、约定或询问过去的承诺。
   - 讨论之前聊天的久远细节。
   - 需要获取/更新某位群友的特定喜好、专属昵称或用户画像。
-- **检索词格式**：`rag_query` 必须为自然语言查询问题，严禁使用关键字拼接。
+- **检索词格式**：`rag_query` 必须为自然语言查询问题，严禁使用关键字拼接。{meme_tags_rule}
 
 # 输出格式规范
 你必须且只能严格输出以下 XML 格式，决策以外的思考必须写在 `<think>` 标签内，绝对禁止输出任何思维链之外的回复文本：
@@ -538,7 +553,10 @@ DEFAULT_DECISION_RULES = """## 状态与检索判定 (use_rag)
 <think>
 本次决策的理由和依据（思维链）
 </think>
-<decision reply="bool" use_rag="bool" rag_query="string"/>"""
+<decision reply="bool" use_rag="bool" rag_query="string"{tag_attr}/>"""
+
+
+DEFAULT_DECISION_RULES = get_decision_rules(False)
 
 
 # 兼容性常量别名

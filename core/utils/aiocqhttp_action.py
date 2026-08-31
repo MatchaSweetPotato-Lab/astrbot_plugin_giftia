@@ -532,7 +532,15 @@ class AIoCQHTTPAction:
                     "file": f"base64://{bs64}",
                 }
                 if isinstance(component, Image):
-                    if image_type == ImageSendType.STICKER:
+                    comp_sub_type = getattr(component, "sub_type", None)
+                    if comp_sub_type is None:
+                        comp_sub_type = getattr(component, "subType", None)
+                    if comp_sub_type is None:
+                        comp_sub_type = getattr(component, "subtype", None)
+
+                    if comp_sub_type == 1 or (
+                        comp_sub_type is None and image_type == ImageSendType.STICKER
+                    ):
                         # 显式标记为表情包/小图 (同时兼容NapCat/Lagrange/go-cqhttp的命名规范)
                         data_dict["subType"] = 1
                         data_dict["sub_type"] = 1

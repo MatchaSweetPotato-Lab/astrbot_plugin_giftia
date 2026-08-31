@@ -82,11 +82,29 @@
         "type": "object",
         "hint": "",
         "items": {
+            "use_meme_manager": {
+                "description": "接入 meme_manager 表情包库",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，表情包来源将接入 astrbot_plugin_meme_manager 的表情库，支持人设隔离与小模型标签预测直出。"
+            },
+            "default_meme_query": {
+                "description": "默认表情包检索词",
+                "type": "string",
+                "default": "日常, 开心, 互动",
+                "hint": "当跳过小模型（私聊/强制@回复）或小模型未输出表情意图时，使用的兜底检索标签/关键词，多个词用逗号分隔。"
+            },
+            "meme_candidate_count": {
+                "description": "meme_manager候选数量",
+                "type": "int",
+                "default": 5,
+                "hint": "单次带入主模型提示词的候选表情包数量（建议 3~8 个，过多会增加 Token 开销）。"
+            },
             "random_sticker_count": {
                 "description": "随机提取表情包数量",
                 "type": "int",
                 "default": 50,
-                "hint": "每次带入大模型上下文的随机表情包数量，过多会影响速度和占用大量Token"
+                "hint": "原生模式下每次带入大模型上下文的随机表情包数量，过多会影响速度和占用大量Token"
             },
             "sticker_summaries": {
                 "description": "表情包外显文字",

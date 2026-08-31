@@ -13,6 +13,7 @@ from astrbot.core.message.components import BaseMessageComponent
 from ..database.data_cache import DataCache
 from ..utils.anti_drool import clean_llm_completion
 from ..utils.emoji_manager import EmojiManager
+from ..utils.meme_manager_client import MemeManagerClient
 from ..utils.schemas import (
     FLAT_CLOSABLE_TAGS,
     Decision,
@@ -28,9 +29,11 @@ class XmlParse:
         data_cache: DataCache,
         emoji_manager: EmojiManager,
         sticker_summaries: list[str] | None = None,
+        meme_manager_client: MemeManagerClient | None = None,
     ):
         self.data_cache = data_cache
         self.emoji_manager = emoji_manager
+        self.meme_manager_client = meme_manager_client
         import random
 
         self.random = random
@@ -63,6 +66,9 @@ class XmlParse:
                 result.rag_query = str(
                     decision_node.get("rag_query", "")
                 ) or decision_node.get_text(strip=True)
+                raw_meme_tags = decision_node.get("meme_tags")
+                if raw_meme_tags:
+                    result.meme_tags = str(raw_meme_tags).strip()
             if result.reply_decision == 2 or result.use_rag == 2:
                 logger.error(f"决策数据无效: {result}, xml_str: {xml_str[:1000]}")
                 return None
@@ -696,6 +702,26 @@ class XmlParse:
         """加载表情包图片"""
         if not sticker_id:
             return None
+
+        # 1. 优先尝试从 meme_manager 加载短 ID (如 mm_104, mm:104, 或纯数字)
+        is_mm_id = sticker_id.startswith("mm_") or sticker_id.startswith("mm:")
+        clean_mm_id = None
+        if is_mm_id:
+            raw_id = sticker_id[3:]
+            if raw_id.isdigit():
+                clean_mm_id = int(raw_id)
+        elif sticker_id.isdigit() and self.meme_manager_client is not None:
+            clean_mm_id = int(sticker_id)
+
+        if clean_mm_id is not None and self.meme_manager_client is not None:
+            try:
+                comp = self.meme_manager_client.build_meme_component(clean_mm_id)
+                if comp:
+                    return comp
+            except Exception as e:
+                logger.error(f"[Giftia] 加载 meme_manager 表情包 {sticker_id} 失败: {e}")
+
+        # 2. 原生 Giftia 表情包加载
         local_path = self.emoji_manager.get_sticker_path(sticker_id)
         img = None
         if local_path:

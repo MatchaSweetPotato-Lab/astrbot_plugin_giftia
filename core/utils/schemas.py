@@ -103,6 +103,7 @@ class Decision:
     reply_decision: int = 2  # 0: 决策拒绝, 1: 决策通过, 2: 未决策
     use_rag: int = 2  # 0: 不使用RAG, 1: 使用RAG, 2: 未决策
     rag_query: str = ""
+    meme_tags: str | None = None
 
 
 @dataclass(repr=False, slots=True)
