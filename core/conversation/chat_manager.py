@@ -298,6 +298,7 @@ class ChatManager:
             should_reply,
             relevant_memories,
             pending_recall_memories,
+            meme_tags,
         ) = await self.decision_engine.evaluate_decision(
             event=event,
             bot_name=bot_name,
@@ -328,6 +329,7 @@ class ChatManager:
                     current_message=current_message,
                     relevant_memories=relevant_memories,
                     pending_recall_memories=pending_recall_memories,
+                    meme_tags=meme_tags,
                 ):
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):

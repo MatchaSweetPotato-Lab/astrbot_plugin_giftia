@@ -106,7 +106,7 @@ class ResolveStickerPathTests(unittest.TestCase):
 
 class GifConverterTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.stickers = Path(tempfile.mkdtemp()) / "stickers"
+        self.stickers = Path(tempfile.mkdtemp()).resolve() / "stickers"
         self.stickers.mkdir()
         (self.stickers / "thumbnails").mkdir()
 

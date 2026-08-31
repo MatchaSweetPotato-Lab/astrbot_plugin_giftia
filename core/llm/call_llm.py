@@ -26,6 +26,7 @@ from .preset_prompts import (
     DEFAULT_VIDEO_CAPTION_PROMPT,
     build_xml_instructions,
     get_audio_caption_prompt,
+    get_decision_rules,
     get_image_caption_prompt,
     get_sticker_analysis_prompt,
     get_video_caption_prompt,
@@ -125,14 +126,16 @@ class CallLLM:
         user_prompt: str,
         bot_name: str = "",
         group_or_user_id: str = "",
+        use_meme_manager: bool = False,
     ) -> Decision | None:
         """调用LLM进行决策"""
+        decision_rules = get_decision_rules(use_meme_manager=use_meme_manager)
         if system_prompt:
             actual_system_prompt = (
-                system_prompt.strip() + "\n\n" + DEFAULT_DECISION_RULES
+                system_prompt.strip() + "\n\n" + decision_rules
             )
         else:
-            actual_system_prompt = DEFAULT_DECISION_RULES
+            actual_system_prompt = decision_rules
 
         logger.debug(f"\n<system_prompt>{actual_system_prompt}</system_prompt>")
         logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
@@ -202,6 +205,7 @@ class CallLLM:
         tts_instruction: str = "",
         is_qq_official: bool = False,
         persona_tools: list[str] | None = None,
+        use_meme_manager: bool = False,
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
@@ -215,6 +219,7 @@ class CallLLM:
                         enabled_features,
                         tts_instruction,
                         is_qq_official=is_qq_official_flag,
+                        use_meme_manager=use_meme_manager,
                     )
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
                     tools_set = None

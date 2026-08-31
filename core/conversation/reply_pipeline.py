@@ -150,6 +150,7 @@ class ReplyPipeline:
         other_data: list[str] | None = None,
         times: int = 0,
         sent_messages: list[str] | None = None,
+        meme_tags: str | None = None,
     ):
         """
         集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
@@ -281,10 +282,24 @@ class ReplyPipeline:
                 limit=inject_limit,
             )
 
-        # 获取表情包池并抽取随机样本
-        bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(
-            bot_name
-        )
+        llm_reply_conf = bot_conf.get("llm_reply_conf", {})
+        persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
+
+        # 获取表情包池并抽取样本
+        if getattr(self.plugin, "use_meme_manager", False) and hasattr(self.plugin, "meme_manager_client") and self.plugin.meme_manager_client:
+            query = meme_tags if (meme_tags and meme_tags.strip()) else getattr(self.plugin, "default_meme_query", "日常, 开心, 互动")
+            count = getattr(self.plugin, "meme_candidate_count", 5)
+            candidates = await self.plugin.meme_manager_client.get_candidate_memes(
+                persona_id=persona_id,
+                query=query,
+                count=count,
+                event=event,
+            )
+            bot_sticker_cache = self.plugin.meme_manager_client.format_candidates_for_prompt(candidates)
+        else:
+            bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(
+                bot_name
+            )
 
         # 3. 构造回复提示词 Prompt
         user_prompt = build_reply_prompt(
@@ -315,9 +330,6 @@ class ReplyPipeline:
             message_truncate_limit=getattr(self.plugin, "reply_message_truncate_limit", 1500),
         )
         logger.debug(f"[Giftia] 触发大模型回复,构造回复提示词：{user_prompt}")
-
-        llm_reply_conf = bot_conf.get("llm_reply_conf", {})
-        persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
 
         persona = None
         persona_tools = None
@@ -374,6 +386,7 @@ class ReplyPipeline:
                 else ""
             ),
             timeout=self.plugin.tools_config.get("timeout", 120),
+            use_meme_manager=getattr(self.plugin, "use_meme_manager", False),
         )
 
         if not llm_result:
@@ -406,8 +419,8 @@ class ReplyPipeline:
                 status=llm_result.status,
             )
 
-        # 7. 后台分析与添加表情包
-        if llm_result.add_stickers:
+        # 7. 后台分析与添加表情包（仅原生模式生效，接入 meme_manager 时由其自行管理收集）
+        if llm_result.add_stickers and not getattr(self.plugin, "use_meme_manager", False):
             asyncio.create_task(
                 self.media_captioner.analyze_and_add_stickers(
                     event=event,
@@ -471,5 +484,6 @@ class ReplyPipeline:
                 times=times + 1,
                 other_data=other_data,
                 sent_messages=sent_messages,
+                meme_tags=meme_tags,
             ):
                 yield chunk

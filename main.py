@@ -34,6 +34,7 @@ from .core.utils.emoji_manager import EmojiManager
 from .core.utils.event_utils import resolve_bot_name
 from .core.utils.gif_convert import GifConverter
 from .core.utils.http_manager import HttpManager
+from .core.utils.meme_manager_client import MemeManagerClient
 from .core.utils.message_parse import MessageParser
 from .core.utils.qq_official_action import QQOfficialAction
 from .core.utils.scheduler import Scheduler
@@ -108,6 +109,11 @@ class Giftia(Star):
         self.debounce_at_map: dict[str, bool] = {}
         # 表情包配置
         self.sticker_config = self.conf.get("sticker_config", {})
+        self.use_meme_manager = self.sticker_config.get("use_meme_manager", False)
+        self.default_meme_query = self.sticker_config.get(
+            "default_meme_query", "日常, 开心, 互动"
+        )
+        self.meme_candidate_count = self.sticker_config.get("meme_candidate_count", 5)
         self.random_sticker_count = self.sticker_config.get("random_sticker_count", 20)
         # 常规配置
         self.normal_config = self.conf.get("normal_config", {})
@@ -222,11 +228,18 @@ class Giftia(Star):
         )
         # 依赖 emoji_manager.stickers_dir，必须在其之后实例化
         self.gif_converter = GifConverter(self.emoji_manager)
+        self.meme_manager_client = MemeManagerClient(context=self.context)
+        if self.use_meme_manager:
+            self.meme_manager_client.check_installed()
+            logger.info("[Giftia] 已启用 meme_manager 表情包管理器集成")
         sticker_summaries = self.conf.get("sticker_config", {}).get(
             "sticker_summaries", ["这是一张表情包"]
         )
         self.xml_parse = XmlParse(
-            self.data_cache, self.emoji_manager, sticker_summaries
+            self.data_cache,
+            self.emoji_manager,
+            sticker_summaries,
+            meme_manager_client=self.meme_manager_client,
         )
         self.call_llm = CallLLM(
             context=self.context,
