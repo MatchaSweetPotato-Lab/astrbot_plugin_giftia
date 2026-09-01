@@ -15,8 +15,29 @@ QQ_OFFICIAL_PLATFORMS = {
     "qqofficial",
     "qqofficial_webhook",
     "qq_official",
+    "qq_official_webhook",
     "qqchannel",
 }
+"""官方 QQ 平台注册名（含历史命名）。
+
+AstrBot 现行注册名是 `qq_official`（WebSocket）与 `qq_official_webhook`（Webhook）。
+漏掉 webhook 那个会让所有「按平台名字符串判定」的分支把 webhook 机器人当成通用平台，
+定时任务 / 主动消息的平台侧动作（引用回复、at、撤回、表情包外显）随之全部失效——
+被动回复因为还能靠事件类名兜底命中，所以这类漏名很难被发现。
+"""
+
+_QQ_OFFICIAL_PREFIXES = ("qqofficial", "qqchannel")
+
+
+def _match_platform_name(name: str) -> bool:
+    """判定平台名是否属于官方 QQ。
+
+    先抹掉下划线等分隔符再做前缀匹配，这样 `qqofficial` / `qq_official` /
+    `qq_official_webhook` / `qqofficial_webhook` 一视同仁，上游再调整命名
+    （加后缀、换下划线位置）也不会重演漏名。
+    """
+    normalized = re.sub(r"[^a-z0-9]", "", str(name or "").strip().lower())
+    return bool(normalized) and normalized.startswith(_QQ_OFFICIAL_PREFIXES)
 
 
 def is_qq_official(target: Any) -> bool:
@@ -24,11 +45,10 @@ def is_qq_official(target: Any) -> bool:
     if not target:
         return False
     if isinstance(target, str):
-        return target.strip().lower() in QQ_OFFICIAL_PLATFORMS
+        return _match_platform_name(target)
     try:
         if hasattr(target, "get_platform_name"):
-            pname = str(target.get_platform_name() or "").strip().lower()
-            if pname in QQ_OFFICIAL_PLATFORMS:
+            if _match_platform_name(str(target.get_platform_name() or "")):
                 return True
         cls_name = target.__class__.__name__.lower()
         return "qqofficial" in cls_name or "qqchannel" in cls_name
