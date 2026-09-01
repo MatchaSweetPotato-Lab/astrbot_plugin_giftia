@@ -10,7 +10,9 @@ from astrbot.api.message_components import Plain, Record
 from astrbot.api.star import StarTools
 from astrbot.core.provider.provider import TTSProvider
 
+from ..utils.audio_norm import describe_audio, normalize_wav, read_wav_info
 from ..utils.event_utils import resolve_bot_name
+from ..utils.qq_official_action import is_qq_official
 from ..utils.schemas import TTSRequest, XmlLlmResult
 from .constants import (
     LANGUAGE_LABELS,
@@ -273,7 +275,10 @@ class TTSManager:
                 logger.error(f"[Giftia TTS] 标志性语音文件不存在: {resolved_path}")
                 return None
             logger.info(f"[Giftia TTS] 使用标志性语音文件: {resolved_path}")
-            return Record.fromFileSystem(resolved_path, text=segment.text)
+            send_path = await self.prepare_audio_for_platform(event, resolved_path)
+            if not send_path:
+                return None
+            return Record.fromFileSystem(send_path, text=segment.text)
 
         resolved = self.resolve(segment, bot_conf)
         if not resolved:
@@ -298,7 +303,12 @@ class TTSManager:
                         event.track_temporary_local_file(audio_path)
 
                     logger.info(f"[Giftia TTS] 语音合成完成: {audio_path}")
-                    return Record.fromFileSystem(audio_path, text=segment.text)
+                    send_path = await self.prepare_audio_for_platform(event, audio_path)
+                    if not send_path:
+                        # 平台侧转码不可行时重试合成也是白费（同一提供商同一参数），
+                        # 直接放弃该段语音，由调用方按「未合成」处理。
+                        return None
+                    return Record.fromFileSystem(send_path, text=segment.text)
             except Exception as e:
                 last_exception = e
                 logger.warning(
@@ -318,6 +328,91 @@ class TTSManager:
                 f"[Giftia TTS] 语音合成连续 {max_attempts} 次失败（未获取到音频路径），终止重试。"
             )
         return None
+
+    async def prepare_audio_for_platform(self, event, audio_path: str) -> str:
+        """按平台把音频调整成可发送的形态，返回可发送路径（空串表示发不了）。
+
+        目前只有官方 QQ 需要特殊处理：那边不收 wav，AstrBot 核心发送前会转腾讯
+        silk（`MediaResolver.to_path(target_format="tencent_silk")`）。核心那条链路
+        转换失败时只打一句 `处理语音时出错: {e}`——不打异常类型也不打 traceback，
+        于是最典型的故障（流式 TTS 的 wav 头声明约 2GiB，核心照此分配内存抛
+        `MemoryError`，而该异常不带消息）在日志里只剩孤零零一句话，语音被静默丢弃。
+
+        所以这里先把音频修成头长度正确、24kHz/单声道/16bit 的 PCM wav，再用核心同一套
+        转换预检一次：失败就带真实异常与 traceback 记日志并放弃该段语音，
+        不再出现「语音无声消失、日志什么都没说」。其他平台原样返回。
+        """
+        if not audio_path or not is_qq_official(event):
+            return audio_path
+
+        if self.data_dir:
+            norm_path = os.path.join(
+                str(self.data_dir),
+                "tts_qq_official",
+                f"{os.path.splitext(os.path.basename(audio_path))[0]}_24k.wav",
+            )
+        else:
+            norm_path = f"{os.path.splitext(audio_path)[0]}_24k.wav"
+
+        send_path, note = normalize_wav(audio_path, norm_path)
+        logger.info(
+            f"[Giftia TTS] 官方 QQ 语音规范化: {note} | 待发送: {describe_audio(send_path)}"
+        )
+        if send_path != audio_path and hasattr(event, "track_temporary_local_file"):
+            # 规范化产物同样交给核心的事件级临时文件清理，避免堆积
+            event.track_temporary_local_file(send_path)
+
+        info = read_wav_info(send_path)
+        if info and info.header_lies:
+            # 规范化没成功（非 PCM / audioop 不可用等），此时连预检都不能做：
+            # 核心与预检都会照着头里声明的长度去分配内存，小内存机器上可能
+            # 不是干净地抛 MemoryError，而是直接触发 OOM。
+            logger.error(
+                "[Giftia TTS] 官方 QQ 语音的 wav 头长度不可信且未能修正，放弃发送该段语音"
+                f"（核心会照头声明的 {info.declared_frames} 帧分配内存）: {send_path}"
+            )
+            return ""
+
+        if not await self.probe_tencent_silk(send_path):
+            return ""
+        return send_path
+
+    async def probe_tencent_silk(self, audio_path: str) -> bool:
+        """用核心同一套转换预检音频能否转成腾讯 silk，失败时打出真实异常。
+
+        转换代码与核心发送时走的完全是同一条（`MediaResolver` → `wav_to_tencent_silk`
+        → `pysilk.encode`），所以这里失败就意味着核心也必然失败。核心不可用（版本较老、
+        模块改名）时一律放行，不因为预检本身的问题拦住语音。
+        """
+        try:
+            from astrbot.core.utils.media_utils import MediaResolver
+        except Exception as e:
+            logger.debug(
+                f"[Giftia TTS] 核心媒体转换模块不可用，跳过官方 QQ 语音预检: {e}"
+            )
+            return True
+
+        silk_path = ""
+        try:
+            silk_path = await MediaResolver(
+                audio_path, media_type="audio", default_suffix=".wav"
+            ).to_path(target_format="tencent_silk")
+            return True
+        except Exception as e:
+            logger.error(
+                "[Giftia TTS] 官方 QQ 语音转 silk 失败，放弃发送该段语音"
+                f"（核心同一处只会打一句空消息）: {type(e).__module__}.{type(e).__name__}: "
+                f"{e or '(该异常不带消息)'} | 文件: {audio_path} | {describe_audio(audio_path)}",
+                exc_info=True,
+            )
+            return False
+        finally:
+            # 预检产物没人要，核心发送时会自己再转一份
+            if silk_path:
+                try:
+                    os.remove(silk_path)
+                except OSError as e:
+                    logger.debug(f"[Giftia TTS] 清理预检 silk 文件失败: {e}")
 
     def resolve_audio_path(self, path: str) -> str:
         path = path.strip()
