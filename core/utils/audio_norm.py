@@ -16,8 +16,9 @@
    `record_file_path = None` 静默丢弃语音、只发文本——线上完全无从排查。
    （aiocqhttp 不解析 wav 头，同一个文件在 OneBot 上照发无事，所以只有官方 QQ 中招。）
 
-所以交给核心之前先自己把音频修成编码器最保险的形式：**按文件实际字节数**重算 PCM
-长度（绝不相信头里的声明），再统一成 24kHz / 单声道 / 16bit PCM 重新写一份头正确的 wav。
+所以交给核心之前先自己把音频修成编码器最保险的形式：**用文件实际可读字节校验头里的
+声明**（声明值多出来或少报的部分无法解释成后续 chunk 时一律按实际字节），再统一成
+24kHz / 单声道 / 16bit PCM 重新写一份头正确的 wav。
 
 本模块只依赖标准库（手写 RIFF 解析 + `audioop`），不引入 AstrBot，便于单测覆盖。
 `audioop` 在 Python 3.13 已从标准库移除，缺失时本模块整体降级为「原样返回」，
@@ -41,7 +42,9 @@ TARGET_CHANNELS = 1
 TARGET_SAMPWIDTH = 2
 
 _WAVE_FORMAT_PCM = 1
-# 正常 TTS 语音只有几百 KB；上限纯粹是防御坏头/异常大文件把内存吃穿
+# 正常 TTS 语音只有几百 KB；上限纯粹是防御坏头/异常大文件把内存吃穿。
+# 超过上限一律**拒绝规范化并说明原因**，绝不截断——截断后的音频看不出异常，
+# 会被当成完整语音发出去。
 _MAX_PCM_BYTES = 64 * 1024 * 1024
 # audioop.tomono 只处理双声道；lin2lin 支持 1/2/3/4 字节位宽
 _MIXABLE_CHANNELS = (1, 2)
@@ -50,7 +53,7 @@ _CONVERTIBLE_SAMPWIDTHS = (1, 2, 3, 4)
 
 @dataclass(slots=True)
 class WavInfo:
-    """wav 参数（`frames` 已按文件实际字节修正，不是头里声明的值）"""
+    """wav 参数（`frames` 已按文件实际可读字节校验过，不是头里声明的值）"""
 
     channels: int
     sampwidth: int
@@ -73,7 +76,8 @@ class WavInfo:
         """头里声明的帧数与实际数据不符（流式 TTS 的占位长度就属于这种）。
 
         这种文件必须重写：核心用标准库 `wave` 读会照着声明长度分配内存，
-        轻则读到一堆空数据，重则直接 `MemoryError`。
+        轻则读到一堆空数据，重则直接 `MemoryError`；声明值**少报**时则相反，
+        核心只会读出前面一小截，把语音悄悄截短。
         """
         return self.declared_frames != self.frames
 
@@ -81,12 +85,51 @@ class WavInfo:
         return f"{self.rate}Hz/{self.channels}ch/{self.sampwidth * 8}bit"
 
 
+def _looks_like_chunk_header(raw: bytes, remaining: int) -> bool:
+    """这 8 字节是否像一个 RIFF chunk 头（4 个可打印 ASCII 的 id + 落在文件内的长度）。
+
+    只看 id 会有约 2% 的误判率（PCM 采样点恰好四个字节都落在可打印区间），
+    所以把声明长度一并校验：真 chunk 的长度不会超出文件剩余部分。
+    """
+    if len(raw) < 8 or not all(0x20 <= b < 0x7F for b in raw[:4]):
+        return False
+    return int.from_bytes(raw[4:8], "little") <= remaining
+
+
+def _resolve_data_bytes(f, declared_bytes: int, data_offset: int, size: int) -> int:
+    """确定 data chunk 真正可读的字节数。
+
+    头里声明的长度有两种失真，都不能信：
+    - **多报**：流式 TTS 写的占位最大值（实测 0x7FFFFF80），照此分配内存会 `MemoryError`；
+    - **少报**：写头时长度算错或写入中断，照此读会把语音尾巴悄悄丢掉。
+
+    但「声明值小于剩余字节」还有一种完全合法的情况：data 之后跟着别的 chunk
+    （LIST/INFO/id3 之类的元数据）。这时声明值才是对的，多出来的字节是元数据，
+    当成 PCM 读进去会在音频末尾拼上一段噪音。所以只在「紧随其后的字节确实像下一个
+    chunk 头」时才承认声明值，其余一律以文件实际可读字节为准。
+    """
+    available = max(0, size - data_offset)
+    if declared_bytes <= 0 or declared_bytes >= available:
+        return available
+    tail = data_offset + declared_bytes + (declared_bytes & 1)
+    if tail + 8 > size:
+        # 余下的字节连一个 chunk 头都放不下，说明声明值是少报的
+        return available
+    try:
+        f.seek(tail)
+        if _looks_like_chunk_header(f.read(8), size - tail - 8):
+            return declared_bytes
+    except OSError:  # pragma: no cover - 读尾部失败时按实际字节处理
+        pass
+    return available
+
+
 def _parse_riff(path: str) -> WavInfo | None:
     """手写 RIFF/WAVE 解析，只认未压缩 PCM，解析不了返回 None。
 
-    刻意不用标准库 `wave`：它信任 data chunk 里声明的长度，而流式生成的 wav
-    这个值是占位最大值，`readframes` 会直接 `MemoryError`。这里一律以
-    「文件实际剩余字节」为准，并把头里的声明值一并带出来供日志说明。
+    刻意不用标准库 `wave`：它无条件信任 data chunk 里声明的长度，而流式生成的 wav
+    这个值是占位最大值，`readframes` 会直接 `MemoryError`。这里用文件实际可读字节
+    校验声明值（见 `_resolve_data_bytes`），并把声明值一并带出来供日志说明。
     """
     try:
         size = os.path.getsize(path)
@@ -127,14 +170,13 @@ def _parse_riff(path: str) -> WavInfo | None:
             if not fmt or not data_offset:
                 return None
 
-        channels, sampwidth, rate = fmt
-        if channels <= 0 or sampwidth <= 0 or rate <= 0:
-            return None
+            channels, sampwidth, rate = fmt
+            if channels <= 0 or sampwidth <= 0 or rate <= 0:
+                return None
 
-        block = channels * sampwidth
-        available = max(0, size - data_offset)
-        # 声明值只在「不超过实际可读字节」时才可信
-        data_bytes = declared_bytes if 0 < declared_bytes <= available else available
+            block = channels * sampwidth
+            data_bytes = _resolve_data_bytes(f, declared_bytes, data_offset, size)
+
         data_bytes -= data_bytes % block
         declared_frames = declared_bytes // block if declared_bytes > 0 else 0
         return WavInfo(
@@ -179,9 +221,14 @@ def describe_audio(path: str) -> str:
 
 
 def _read_pcm(info: WavInfo, path: str) -> bytes:
+    """读出整段 PCM。超过内存上限时抛异常而不是截断——截半的音频发出去看不出异常。"""
+    if info.data_bytes > _MAX_PCM_BYTES:
+        raise ValueError(
+            f"PCM 数据 {info.data_bytes} 字节超过上限 {_MAX_PCM_BYTES}，拒绝截断"
+        )
     with open(path, "rb") as f:
         f.seek(info.data_offset)
-        return f.read(min(info.data_bytes, _MAX_PCM_BYTES))
+        return f.read(info.data_bytes)
 
 
 def normalize_wav(src: str, dst: str) -> tuple[str, str]:

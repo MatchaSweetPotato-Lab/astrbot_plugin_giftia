@@ -15,18 +15,21 @@
    判定的分支把 webhook 机器人当成通用平台，平台侧动作全部失效。
 
 与 test_gif_convert.py 一致：先把 astrbot 相关模块 stub 进 sys.modules 再导入被测模块。
+
+本模块**不导入 `audioop`**（Python 3.13 已移除）：被测模块在 `audioop` 缺失时整体降级
+为「原样返回」，测试也必须能在这种环境下收集并跑完解析相关的用例，只跳过真正需要
+重采样的那几条。造 wav 的辅助函数因此手写 PCM，不借 `audioop`。
 """
 
 import ast
-import audioop
 import logging
 import pathlib
-import struct
 import sys
 import tempfile
 import types
 import unittest
 import wave
+from unittest import mock
 
 
 def _stub_module(name: str, **attrs) -> types.ModuleType:
@@ -59,6 +62,7 @@ if "astrbot.api" not in sys.modules:
 if "aiohttp" not in sys.modules:
     _stub_module("aiohttp", ClientError=Exception)
 
+from core.utils import audio_norm  # noqa: E402
 from core.utils.audio_norm import (  # noqa: E402
     TARGET_RATE,
     describe_audio,
@@ -67,29 +71,33 @@ from core.utils.audio_norm import (  # noqa: E402
 )
 from core.utils.qq_official_action import is_qq_official  # noqa: E402
 
+# audioop 缺失（Python 3.13+）时规范化整体降级为原样返回，重写类用例不适用
+requires_audioop = unittest.skipUnless(
+    audio_norm.audioop is not None,
+    "audioop 已从 Python 3.13 标准库移除，规范化降级为原样返回",
+)
+
 
 def write_wav(
     path: str, *, rate: int, channels: int, sampwidth: int, seconds: float = 0.5
 ) -> str:
     """造一个指定参数的 PCM wav；frames=0 时写出只有头没有数据的空 wav。"""
     frames = int(rate * seconds)
-    samples = []
+    peak = 2 ** (sampwidth * 8 - 1) - 1
+    pcm = bytearray()
     for i in range(frames):
-        value = int(0.4 * (2 ** (sampwidth * 8 - 1) - 1) * ((i % 40) / 40 - 0.5) * 2)
-        samples.append(value)
-    pcm = b"".join(
-        value.to_bytes(sampwidth, "little", signed=True) for value in samples
-    )
-    if sampwidth == 1:
-        # 8bit wav 是无符号的，按 audioop 的约定转一下
-        pcm = audioop.lin2lin(b"".join(struct.pack("<h", v) for v in samples), 2, 1)
-    if channels == 2:
-        pcm = audioop.tostereo(pcm, sampwidth, 1.0, 1.0)
+        value = int(0.4 * peak * ((i % 40) / 40 - 0.5) * 2)
+        if sampwidth == 1:
+            # 8bit wav 按 RIFF 约定是无符号的，0x80 为静音中点
+            sample = (value + 128).to_bytes(1, "little")
+        else:
+            sample = value.to_bytes(sampwidth, "little", signed=True)
+        pcm += sample * channels  # 左右声道同信号
     with wave.open(path, "wb") as out:
         out.setnchannels(channels)
         out.setsampwidth(sampwidth)
         out.setframerate(rate)
-        out.writeframes(pcm)
+        out.writeframes(bytes(pcm))
     return path
 
 
@@ -106,15 +114,31 @@ def write_lying_header_wav(
     seconds: float = 0.5,
     declared_bytes: int = STREAMED_PLACEHOLDER_BYTES,
 ) -> str:
-    """复刻线上故障文件：参数正常，但 data chunk 长度是占位最大值。
+    """改写 data chunk 的声明长度，默认复刻线上故障文件（占位最大值 ≈ 2GiB）。
 
     标准库 `wave` 会照着这个假长度去分配内存（`readframes` 直接 MemoryError），
-    所以测试里**绝不能**对这种文件调 readframes。
+    所以测试里**绝不能**对这种文件调 readframes。传入较小的 `declared_bytes`
+    即可复刻另一个方向的失真：声明值少报，照此读会把语音尾巴悄悄丢掉。
     """
     write_wav(path, rate=rate, channels=channels, sampwidth=sampwidth, seconds=seconds)
     raw = bytearray(pathlib.Path(path).read_bytes())
     marker = raw.index(b"data")
     raw[marker + 4 : marker + 8] = declared_bytes.to_bytes(4, "little")
+    pathlib.Path(path).write_bytes(bytes(raw))
+    return path
+
+
+def append_chunk(path: str, chunk_id: bytes = b"LIST", body: bytes = b"INFOhi") -> str:
+    """在 data chunk 之后追加一个合法的元数据 chunk。
+
+    RIFF 允许 data 后面还有 chunk，此时「声明长度 < 剩余字节」是完全正常的，
+    多出来的字节是元数据而不是音频——当成 PCM 读进去会在末尾拼上一段噪音。
+    """
+    raw = bytearray(pathlib.Path(path).read_bytes())
+    raw += chunk_id + len(body).to_bytes(4, "little") + body
+    if len(body) & 1:
+        raw += b"\x00"  # chunk 按偶数字节对齐
+    raw[4:8] = (len(raw) - 8).to_bytes(4, "little")  # RIFF 总长度要跟着涨
     pathlib.Path(path).write_bytes(bytes(raw))
     return path
 
@@ -135,6 +159,7 @@ class NormalizeWavTests(unittest.TestCase):
         )
         self.assertGreater(info.frames, 0, "规范化后不能是空音频")
 
+    @requires_audioop
     def test_stereo_44100_downmixed_and_resampled(self):
         src = write_wav(str(self.tmp / "s.wav"), rate=44100, channels=2, sampwidth=2)
         dst = self._dst()
@@ -142,6 +167,7 @@ class NormalizeWavTests(unittest.TestCase):
         self.assertEqual(got, dst, note)
         self._assert_is_target(dst)
 
+    @requires_audioop
     def test_32bit_source_is_converted(self):
         """32bit wav 是核心会带着异常位宽进编码器的场景，必须先转成 16bit"""
         src = write_wav(str(self.tmp / "f32.wav"), rate=44100, channels=1, sampwidth=4)
@@ -168,8 +194,12 @@ class NormalizeWavTests(unittest.TestCase):
         self.assertEqual(got, str(src))
         self.assertIn("非标准 PCM wav", note)
 
-    def test_lying_header_is_detected_and_rewritten(self):
-        """线上故障本体：流式 TTS 的 wav 头声明约 2GiB，核心照此分配内存直接 MemoryError"""
+    def test_lying_header_is_detected(self):
+        """线上故障本体：流式 TTS 的 wav 头声明约 2GiB，核心照此分配内存直接 MemoryError
+
+        检测这一步不依赖 audioop：manager 靠 `header_lies` 决定「修不了就别发」，
+        所以 Python 3.13 上这条也必须成立。
+        """
         src = write_lying_header_wav(str(self.tmp / "streamed.wav"), seconds=0.4)
 
         # 标准库会被假头骗到（这就是核心 readframes 炸掉的原因），故不能碰 readframes
@@ -183,6 +213,9 @@ class NormalizeWavTests(unittest.TestCase):
         self.assertTrue(info.header_lies)
         self.assertIn("已按实际字节修正", describe_audio(src))
 
+    @requires_audioop
+    def test_lying_header_is_rewritten(self):
+        src = write_lying_header_wav(str(self.tmp / "streamed.wav"), seconds=0.4)
         dst = self._dst("streamed_24k.wav")
         got, note = normalize_wav(src, dst)
         self.assertEqual(got, dst, note)
@@ -194,6 +227,77 @@ class NormalizeWavTests(unittest.TestCase):
                 len(fixed.readframes(fixed.getnframes())), fixed.getnframes() * 2
             )
 
+    def test_underreported_header_is_not_trusted(self):
+        """另一个方向的失真：声明长度少报，照此读会把语音尾巴悄悄丢掉
+
+        标准库 `wave` 只会读出声明的那一小截，所以少报同样必须按实际字节修正。
+        """
+        seconds, rate = 0.4, 44100
+        actual_bytes = int(rate * seconds) * 2
+        src = write_lying_header_wav(
+            str(self.tmp / "short_claim.wav"),
+            rate=rate,
+            seconds=seconds,
+            declared_bytes=actual_bytes // 2,
+        )
+
+        with wave.open(src, "rb") as fooled:
+            self.assertEqual(fooled.getnframes(), actual_bytes // 4, "少报头未生效")
+
+        info = read_wav_info(src)
+        boundary = pathlib.Path(src).read_bytes()[
+            info.data_offset + actual_bytes // 2 :
+        ][:4]
+        self.assertFalse(
+            all(0x20 <= b < 0x7F for b in boundary),
+            "用例前提：声明长度之后的字节不能恰好像一个 chunk id",
+        )
+        self.assertEqual(info.frames, actual_bytes // 2, "少报时也要按实际字节数算帧数")
+        self.assertTrue(info.header_lies, "少报同样是坏头，必须重写")
+
+    def test_trailing_metadata_chunk_keeps_declared_length(self):
+        """data 之后跟元数据 chunk 是合法的，那些字节不能当音频读进来"""
+        seconds, rate = 0.3, TARGET_RATE
+        src = append_chunk(
+            write_wav(
+                str(self.tmp / "with_meta.wav"),
+                rate=rate,
+                channels=1,
+                sampwidth=2,
+                seconds=seconds,
+            )
+        )
+
+        info = read_wav_info(src)
+        self.assertEqual(info.frames, int(rate * seconds), "元数据被当成 PCM 读了")
+        self.assertFalse(info.header_lies, "声明值与音频一致，不该判成坏头")
+
+        got, note = normalize_wav(src, self._dst("with_meta_24k.wav"))
+        self.assertEqual(got, src, note)
+        self.assertIn("已是目标格式", note)
+
+    @requires_audioop
+    def test_oversized_pcm_is_refused_instead_of_truncated(self):
+        """超过内存上限时只能拒绝并说明原因——截半的音频发出去看不出异常"""
+        src = write_wav(str(self.tmp / "big.wav"), rate=44100, channels=1, sampwidth=2)
+        dst = self._dst("big_24k.wav")
+        with mock.patch.object(audio_norm, "_MAX_PCM_BYTES", 1024):
+            got, note = normalize_wav(src, dst)
+        self.assertEqual(got, src, note)
+        self.assertIn("超过上限", note)
+        self.assertFalse(pathlib.Path(dst).exists(), "拒绝规范化时不该留下半截产物")
+
+    def test_missing_audioop_falls_back_to_source(self):
+        """Python 3.13 起 audioop 不在标准库里，此时只能原样放行，不能拦住语音"""
+        src = write_wav(str(self.tmp / "s313.wav"), rate=44100, channels=2, sampwidth=2)
+        dst = self._dst("s313_24k.wav")
+        with mock.patch.object(audio_norm, "audioop", None):
+            got, note = normalize_wav(src, dst)
+        self.assertEqual(got, src, note)
+        self.assertIn("audioop 不可用", note)
+        self.assertFalse(pathlib.Path(dst).exists())
+
+    @requires_audioop
     def test_target_format_with_lying_header_is_still_rewritten(self):
         """参数已达标也不能放过：假头本身就会让核心炸在 readframes 上"""
         src = write_lying_header_wav(
