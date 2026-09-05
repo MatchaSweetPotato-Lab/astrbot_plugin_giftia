@@ -40,6 +40,7 @@ window.GiftiaApp = {
     // Chat History
     loadChatHistory: history.loadChatHistory,
     renderChatHistory: history.renderChatHistory,
+    get deleteChatMessage() { return window.deleteChatMessage; },
 
     // Memories
     loadMemories: memories.loadMemories,

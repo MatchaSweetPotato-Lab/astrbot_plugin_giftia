@@ -202,8 +202,10 @@ class CommandHandler:
     async def delete_message(self, event: AstrMessageEvent):
         """根据ID删除消息"""
         message_id = None
+        reply_comp = None
         for comp in event.get_messages():
             if isinstance(comp, Reply):
+                reply_comp = comp
                 message_id = comp.id
                 break
         if not message_id:
@@ -213,12 +215,21 @@ class CommandHandler:
         if not bot_name:
             return
         group_or_user_id = event.get_group_id() or event.get_sender_id()
-        await self.plugin.data_cache.delete_message(
+        success = await self.plugin.data_cache.delete_message(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             message_id=str(message_id),
         )
-        yield await event.send(MessageChain([Plain("删除消息成功")]))
+        if success:
+            yield await event.send(MessageChain([Plain("删除消息成功")]))
+        else:
+            yield await event.send(
+                MessageChain(
+                    [
+                        Plain("删除消息失败：指令响应消息请前往 WebUI 决策审计页面手动删除。")
+                    ]
+                )
+            )
 
     async def delete_memory(self, event: AstrMessageEvent, memory_id: str):
         """根据ID删除记忆"""
@@ -400,15 +411,125 @@ caption: {media_caption.caption}"""
             else:
                 yield await event.send(MessageChain([Plain("未找到媒体转述缓存")]))
 
-    async def delete_table(self, event: AstrMessageEvent, table_name: str):
-        """删除数据表"""
-        result = await self.plugin.db.drop_table(table_name)
-        if result:
+    async def set_persistent_status(
+        self, event: AstrMessageEvent, status_name: str, status_value: str = ""
+    ):
+        """设置或删除当前会话Bot的常驻状态"""
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+
+        status_name = str(status_name or "").strip()
+        if not status_name:
             yield await event.send(
-                MessageChain([Plain(f"数据表 {table_name} 删除成功")])
+                MessageChain([Plain("状态名不能为空。用法：/设置常驻状态 <状态名> [状态值]")])
+            )
+            return
+
+        status_value = str(status_value or "").strip()
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+        # 若状态值为空，或为 "删除" / "清空" / "无"，则删除该常驻状态项
+        if not status_value or status_value in ("删除", "清空", "无"):
+            await self.plugin.data_cache.update_bot_custom_status(
+                bot_name=bot_name,
+                group_id=group_or_user_id,
+                custom_status_updates={status_name: ""},
+            )
+            yield await event.send(
+                MessageChain([Plain(f"已清除 Bot【{bot_name}】的常驻状态「{status_name}」")])
             )
         else:
-            yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
+            await self.plugin.data_cache.update_bot_custom_status(
+                bot_name=bot_name,
+                group_id=group_or_user_id,
+                custom_status_updates={status_name: status_value},
+            )
+            yield await event.send(
+                MessageChain(
+                    [
+                        Plain(
+                            f"已设置 Bot【{bot_name}】的常驻状态「{status_name}」为：{status_value}"
+                        )
+                    ]
+                )
+            )
+
+    async def get_bot_status(self, event: AstrMessageEvent):
+        """获取当前会话的临时+常驻状态"""
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+
+        bot_conf = self.plugin.bot_map.get(bot_name, {})
+        nickname = bot_conf.get("nickname", bot_name)
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+        status = await self.plugin.data_cache.get_bot_status(bot_name, group_or_user_id)
+
+        custom_status = status.custom_status or {}
+        if custom_status:
+            custom_lines = "\n".join(
+                f"• {k}：{v}" for k, v in custom_status.items() if str(v).strip()
+            )
+            if not custom_lines:
+                custom_lines = "• 暂无常驻状态"
+        else:
+            custom_lines = "• 暂无常驻状态"
+
+        energy_val = (
+            status.energy
+            if (status.energy is not None and str(status.energy).strip() != "")
+            else "100.0"
+        )
+        energy_str = f"{energy_val}%" if not str(energy_val).endswith("%") else str(energy_val)
+
+        msg = (
+            f"【Bot 状态看板】\n"
+            f"🤖 机器人：{nickname} ({bot_name})\n\n"
+            f"📊 临时状态：\n"
+            f"• 心情：{status.mood or '平稳'}\n"
+            f"• 状态：{status.state or '空闲'}\n"
+            f"• 动作：{status.action or '待机'}\n"
+            f"• 能量：{energy_str}\n\n"
+            f"📌 常驻状态：\n"
+            f"{custom_lines}"
+        )
+        yield await event.send(MessageChain([Plain(msg)]))
+
+    async def silence_session(self, event: AstrMessageEvent):
+        """将当前会话的状态设置为不活跃"""
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+
+        bot_conf = self.plugin.bot_map.get(bot_name, {})
+        nickname = bot_conf.get("nickname", bot_name)
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+        # 1. 重置当前群/会话的接话活跃分析窗口为 0
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        self.plugin.active_reply_counters[fmt_key] = 0
+
+        # 2. 将当前会话 Bot 的临时状态更新为「不活跃」并持久化
+        await self.plugin.data_cache.set_bot_status(
+            bot_name=bot_name,
+            group_id=group_or_user_id,
+            status=Status(state="不活跃"),
+        )
+
+        yield await event.send(
+            MessageChain(
+                [
+                    Plain(
+                        f"已将【{nickname}】在当前会话的状态设置为「不活跃」，接话分析窗口已重置。"
+                    )
+                ]
+            )
+        )
 
     async def force_summarize(
         self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str

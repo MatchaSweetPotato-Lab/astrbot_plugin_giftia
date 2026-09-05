@@ -9,6 +9,12 @@
                 "type": "int",
                 "default": 50,
                 "hint": "消息历史数量"
+            },
+            "block_command_messages": {
+                "description": "指令消息入库屏蔽",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，用户发送的 AstrBot 指令以及 Bot 对指令的响应均不会存入聊天记录数据库。注：无论此开关是否开启，插件内部的「删除消息」指令及其响应均强制屏蔽入库。"
             }
         }
     },

@@ -2,10 +2,10 @@ import { state } from '../state.js';
 
 export async function loadChatHistory() {
     const listContainer = document.getElementById("history-list");
-    listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+    listContainer.innerHTML = `<tr><td colspan="7" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
     if (!document.getElementById("history-bot-name").value) {
         state.pagination.history.total = 0;
-        listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="7" class="no-data-row">暂无可用 Bot</td></tr>`;
         window.renderPagination("history-pagination", state.pagination.history, () => {});
         return;
     }
@@ -39,14 +39,14 @@ export async function loadChatHistory() {
             throw new Error(res.message || "请求失败");
         }
     } catch (e) {
-        listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="7" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
     }
 }
 
 export function renderChatHistory(items, lastSummarizedId = 0) {
     const container = document.getElementById("history-list");
     if (!items || items.length === 0) {
-        container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关聊天记录</td></tr>`;
+        container.innerHTML = `<tr><td colspan="7" class="no-data-row">暂无相关聊天记录</td></tr>`;
         return;
     }
 
@@ -88,6 +88,13 @@ export function renderChatHistory(items, lastSummarizedId = 0) {
                 </td>
                 <td data-label="判定结果">${decisionBadge}</td>
                 <td data-label="RAG状态">${ragBadge}</td>
+                <td data-label="操作" class="text-right history-action-cell">
+                    <div class="history-action-wrap">
+                        <button class="btn btn-danger btn-small" onclick="window.deleteChatMessage(${item.id})" title="删除此消息">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: -1px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>删除
+                        </button>
+                    </div>
+                </td>
             </tr>
         `;
     }).join("");

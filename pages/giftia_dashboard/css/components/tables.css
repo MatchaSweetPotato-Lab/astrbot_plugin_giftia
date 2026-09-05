@@ -267,4 +267,35 @@ html[data-theme="dark"] .forward-detail-summary {
         color: var(--font-secondary);
         font-size: 13px;
     }
+
+    .history-action-wrap {
+        opacity: 1 !important;
+        transform: none !important;
+        pointer-events: auto !important;
+    }
 }
+
+/* Chat History Table Hover-Reveal Action Button */
+.history-action-cell {
+    width: 80px;
+    text-align: right;
+    padding-right: 14px !important;
+    white-space: nowrap;
+}
+
+.history-action-wrap {
+    display: inline-flex;
+    justify-content: flex-end;
+    align-items: center;
+    opacity: 0;
+    transform: translateX(12px);
+    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+
+#tab-chat-history tr:hover .history-action-wrap {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+

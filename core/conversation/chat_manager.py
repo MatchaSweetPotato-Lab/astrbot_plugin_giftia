@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import time
 import uuid
 from typing import Any
@@ -29,6 +30,60 @@ from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
 from .reply_pipeline import ReplyPipeline
 
+_bot_msg_id_capture_ctx: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "_bot_msg_id_capture_ctx", default=None
+)
+
+
+def _extract_captured_message_id(res: Any, captured_ids: list[str]) -> None:
+    if isinstance(res, dict):
+        mid = res.get("message_id")
+        if mid is None and isinstance(res.get("data"), dict):
+            mid = res["data"].get("message_id")
+        if mid is not None:
+            captured_ids.append(str(mid))
+
+
+def _patch_bot_for_message_id_capture(bot: Any) -> None:
+    """幂等包装 bot 对象的底层发送方法，通过 ContextVar 上下文捕获 message_id，避免并发竞态。"""
+    if not bot or getattr(bot, "_giftia_capture_patched", None) is True:
+        return
+
+    orig_call_action = getattr(bot, "call_action", None)
+    if callable(orig_call_action):
+        async def wrapped_call_action(action, **params):
+            res = await orig_call_action(action, **params)
+            ctx = _bot_msg_id_capture_ctx.get()
+            if ctx is not None and action in ("send_group_msg", "send_private_msg", "send_msg"):
+                _extract_captured_message_id(res, ctx)
+            return res
+        bot.call_action = wrapped_call_action
+
+    orig_send_group = getattr(bot, "send_group_msg", None)
+    if callable(orig_send_group):
+        async def wrapped_send_group(*args, **kwargs):
+            res = await orig_send_group(*args, **kwargs)
+            ctx = _bot_msg_id_capture_ctx.get()
+            if ctx is not None:
+                _extract_captured_message_id(res, ctx)
+            return res
+        bot.send_group_msg = wrapped_send_group
+
+    orig_send_private = getattr(bot, "send_private_msg", None)
+    if callable(orig_send_private):
+        async def wrapped_send_private(*args, **kwargs):
+            res = await orig_send_private(*args, **kwargs)
+            ctx = _bot_msg_id_capture_ctx.get()
+            if ctx is not None:
+                _extract_captured_message_id(res, ctx)
+            return res
+        bot.send_private_msg = wrapped_send_private
+
+    try:
+        bot._giftia_capture_patched = True
+    except (AttributeError, TypeError):
+        pass
+
 
 class ChatManager:
     def __init__(self, plugin):
@@ -37,11 +92,54 @@ class ChatManager:
         self.reply_pipeline = ReplyPipeline(plugin)
         self.action_dispatcher = ActionDispatcher(plugin)
 
+    def _check_command_info(self, event: AstrMessageEvent) -> tuple[bool, bool]:
+        """检查当前事件是否激活了指令 Handler。
+
+        Returns:
+            (is_command, is_delete_cmd): 是否为 AstrBot 标准指令，是否为内部「删除消息」指令
+        """
+        is_command = False
+        is_delete_cmd = False
+        activated_handlers = event.get_extra("activated_handlers", []) or []
+        for handler in activated_handlers:
+            h_name = getattr(handler, "handler_name", "")
+            if h_name == "on_message":
+                continue
+            for filter_obj in getattr(handler, "event_filters", []):
+                if filter_obj.__class__.__name__ in (
+                    "CommandFilter",
+                    "CommandGroupFilter",
+                ):
+                    is_command = True
+                    cmd_names = []
+                    if hasattr(filter_obj, "get_complete_command_names"):
+                        try:
+                            cmd_names = filter_obj.get_complete_command_names()
+                        except Exception:
+                            cmd_names = []
+                    elif hasattr(filter_obj, "command_name"):
+                        cmd_names = [getattr(filter_obj, "command_name", "")]
+
+                    if h_name == "delete_message" or any(
+                        "删除消息" in str(name) for name in cmd_names
+                    ):
+                        is_delete_cmd = True
+                    break
+            if is_delete_cmd:
+                break
+        return is_command, is_delete_cmd
+
     async def handle_message(self, event: AstrMessageEvent):
         """接收并处理消息"""
         # 1. 检查白名单拦截
         if not self.decision_engine.check_whitelists(event):
             return
+
+        # 检查指令状态与入库屏蔽规则
+        is_command, is_delete_cmd = self._check_command_info(event)
+        block_commands = getattr(self.plugin, "block_command_messages", False)
+        if is_delete_cmd or (is_command and block_commands):
+            event._giftia_bypass_logging = True
 
         # 2. 处理撤回消息通知
         msg_obj = getattr(event, "message_obj", None)
@@ -101,7 +199,20 @@ class ChatManager:
         async def intercepted_send(message: MessageChain):
             logger.debug(f"[Giftia] intercepted_send triggered for message: {message}")
             bypass = getattr(event, "_giftia_bypass_logging", False)
-            ret = await original_send(message)
+
+            # 尝试捕获 OneBot / 协议端返回的真实 message_id
+            captured_ids: list[str] = []
+            bot = getattr(event, "bot", None)
+            if bot:
+                _patch_bot_for_message_id_capture(bot)
+
+            token = _bot_msg_id_capture_ctx.set(captured_ids)
+            try:
+                ret = await original_send(message)
+            finally:
+                _bot_msg_id_capture_ctx.reset(token)
+
+            assigned_message_id = captured_ids[-1] if captured_ids else ""
             if getattr(self.plugin, "_terminated", False):
                 return ret
             if bypass:
@@ -142,7 +253,7 @@ class ChatManager:
                             user_id=event.get_self_id(),
                             group_or_user_id=group_or_user_id,
                             time=datetime.now().isoformat(),
-                            message_id="",
+                            message_id=assigned_message_id,
                             content=parsed_msg.content,
                             is_recalled=0,
                             media_id_list=parsed_msg.media_id_list,
@@ -189,10 +300,21 @@ class ChatManager:
 
     async def job(self, event: AstrMessageEvent):
         # 获取基础信息
-        bot_name = self.plugin.adapter_id_map[event.platform_meta.id]
-        bot_conf = self.plugin.bot_map[bot_name]
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            return
+        bot_conf = self.plugin.bot_map.get(bot_name, {})
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+        # 检查指令入库屏蔽（或强制屏蔽删除消息指令）
+        is_command, is_delete_cmd = self._check_command_info(event)
+        block_commands = getattr(self.plugin, "block_command_messages", False)
+        if is_delete_cmd or (is_command and block_commands):
+            logger.debug(
+                f"[Giftia] {bot_name} 指令消息入库已屏蔽 (is_delete={is_delete_cmd}, is_command={is_command})，跳过解析入库与LLM回复"
+            )
+            return
 
         # 检查是否开启延迟多媒体转述 (仅在没有 @ 且不在发言窗口时延迟)
         caption_config = self.plugin.get_caption_config(bot_conf)
@@ -224,22 +346,6 @@ class ChatManager:
             ) = await self.plugin.message_parser.parse_user_message(
                 event, bot_name, defer_caption=should_defer
             )
-
-        # Check if the message is a command-type message
-        is_command = False
-        activated_handlers = event.get_extra("activated_handlers", [])
-        for handler in activated_handlers:
-            if handler.handler_name == "on_message":
-                continue
-            for filter_obj in handler.event_filters:
-                if filter_obj.__class__.__name__ in (
-                    "CommandFilter",
-                    "CommandGroupFilter",
-                ):
-                    is_command = True
-                    break
-            if is_command:
-                break
 
         if is_command:
             logger.debug(

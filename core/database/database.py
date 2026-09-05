@@ -1,4 +1,3 @@
-import re
 import aiosqlite
 
 from astrbot.api import logger
@@ -149,8 +148,20 @@ class Database(ProfileStoreMixin):
     ):
         return await self.chat_history_repo.update_message_recall(bot_name, group_or_user_id, message_ids, is_recalled)
 
-    async def delete_message(self, bot_name: str, group_or_user_id: str, message_id: str):
-        return await self.chat_history_repo.delete_message(bot_name, group_or_user_id, message_id)
+    async def delete_message(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_id: str,
+    ) -> bool:
+        return await self.chat_history_repo.delete_message(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            message_id=message_id,
+        )
+
+    async def delete_message_by_db_id(self, message_db_id: int):
+        return await self.chat_history_repo.delete_message_by_db_id(message_db_id)
 
     # =========================================================================
     # Forwarded Messages Delegations
@@ -393,24 +404,6 @@ class Database(ProfileStoreMixin):
     # =========================================================================
     # Misc Maintenance (Retained in main database class)
     # =========================================================================
-    async def drop_table(self, table_name: str):
-        """删除数据表"""
-        if not table_name or not re.fullmatch(r"^[a-zA-Z0-9_]+$", table_name):
-            logger.warning(f"[Giftia Security] 拒绝删除非法表名: {table_name}")
-            return False
-        async with self.conn.execute(
-            """
-            SELECT name FROM sqlite_master WHERE type='table' AND name=?
-            """,
-            (table_name,),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
-            return False
-        await self.conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-        await self.conn.commit()
-        return True
-
     async def backup_chat_history_db(self, last_backup_time: float):
         """备份数据库，VACUUM INTO"""
         wal_path = self.db_path.with_name(f"{self.db_path.name}-wal")

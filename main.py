@@ -9,6 +9,12 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.core import AstrBotConfig
 from astrbot.core.utils.session_lock import session_lock_manager
 
+try:
+    from astrbot.core.star.filter.command import GreedyStr
+except ImportError:
+    class GreedyStr(str):
+        pass
+
 from .core.bot.bot_config_manager import BotConfigManager
 from .core.conversation.chat_manager import ChatManager
 from .core.database.data_cache import DataCache
@@ -66,6 +72,7 @@ class Giftia(Star):
         # 聊天记录配置
         msg_history = self.conf.get("msg_history", {})
         self.msg_number = msg_history.get("msg_number", 300)
+        self.block_command_messages = msg_history.get("block_command_messages", False)
 
         # 白名单配置
         self.whitelist_config = self.conf.get("whitelist_config", {})
@@ -506,10 +513,27 @@ class Giftia(Star):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("删除数据表")
-    async def delete_table(self, event: AstrMessageEvent, table_name: str):
-        """删除数据表"""
-        async for chunk in self.cmd_handler.delete_table(event, table_name):
+    @filter.command("设置常驻状态")
+    async def set_persistent_status(
+        self, event: AstrMessageEvent, status_name: str, status_value: GreedyStr = GreedyStr("")
+    ):
+        """设置或删除当前会话Bot的常驻状态：/设置常驻状态 <状态名> [状态值]"""
+        async for chunk in self.cmd_handler.set_persistent_status(
+            event, status_name, status_value
+        ):
+            yield chunk
+
+    @filter.command("查看状态", alias={"状态"})
+    async def get_bot_status(self, event: AstrMessageEvent):
+        """查看当前会话Bot的临时与常驻状态：/查看状态 或 /状态"""
+        async for chunk in self.cmd_handler.get_bot_status(event):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("静默", alias={"休眠", "闭嘴"})
+    async def silence(self, event: AstrMessageEvent):
+        """将当前会话的状态设置为不活跃：/静默 或 /休眠"""
+        async for chunk in self.cmd_handler.silence_session(event):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)
