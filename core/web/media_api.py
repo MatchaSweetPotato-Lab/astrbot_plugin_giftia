@@ -204,6 +204,47 @@ class MediaApi:
             logger.error(f"[Giftia API] get_media error: {e}")
             return error_response(f"获取媒体转述列表失败: {str(e)}")
 
+    async def get_media_detail(self, hash_val: str):
+        """Get single media caption detail by hash."""
+        try:
+            if not self._is_valid_hash(hash_val):
+                return error_response("无效的 hash_val 参数", status_code=400)
+
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times, created_at
+                FROM media_caption
+                WHERE hash_val = ?
+                """,
+                (hash_val,),
+            ) as cursor:
+                r = await cursor.fetchone()
+                if not r:
+                    return error_response("未找到该媒体转述记录", status_code=404)
+
+                r_keys = r.keys() if hasattr(r, "keys") else []
+                item = {
+                    "id": r["id"],
+                    "hash_val": r["hash_val"],
+                    "file_name": r["file_name"],
+                    "url": r["url"],
+                    "media_type": r["media_type"],
+                    "genre": r["genre"],
+                    "character": r["character"],
+                    "source": r["source"],
+                    "text": r["text"],
+                    "caption": r["caption"],
+                    "is_captioned": bool(r["is_captioned"]),
+                    "duration": float(r["duration"]) if "duration" in r_keys and r["duration"] is not None else 0.0,
+                    "file_size": int(r["file_size"]) if "file_size" in r_keys and r["file_size"] is not None else 0,
+                    "query_times": r["query_times"],
+                    "created_at": r["created_at"],
+                }
+                return json_response({"status": "success", "data": item})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_media_detail error: {e}")
+            return error_response(f"获取媒体转述详情失败: {str(e)}")
+
     async def update_media(self):
         """Update media caption text."""
         try:

@@ -84,7 +84,7 @@ export function renderChatHistory(items, lastSummarizedId = 0) {
                 <td data-label="时间" style="white-space: nowrap;">${window.formatDate(item.created_at)}</td>
                 <td data-label="发送人">${senderDisp}</td>
                 <td data-label="消息内容">
-                    <div style="max-width: 480px; word-break: break-all;">${window.escapeHtml(item.content)}</div>
+                    <div style="max-width: 480px; word-break: break-all;">${window.renderMessageWithMediaTags ? window.renderMessageWithMediaTags(item.content) : window.escapeHtml(item.content)}</div>
                 </td>
                 <td data-label="判定结果">${decisionBadge}</td>
                 <td data-label="RAG状态">${ragBadge}</td>
