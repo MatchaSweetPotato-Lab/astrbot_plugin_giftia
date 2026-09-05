@@ -29,6 +29,32 @@ window.escapeHtml = function(text) {
         .replace(/'/g, "&#039;");
 };
 
+window.renderMessageWithMediaTags = function(rawContent) {
+    if (!rawContent) return "";
+    // 1. 先进行 HTML 安全转义，防范 XSS
+    const safeContent = window.escapeHtml(rawContent);
+
+    // 2. 匹配媒体占位符 [图片:hash], [语音:hash], [视频:hash]
+    const mediaTagRegex = /\[(图片|语音|视频):([a-zA-Z0-9_\-]+)\]/g;
+
+    return safeContent.replace(mediaTagRegex, (match, type, hash) => {
+        let icon = "🖼️";
+        let typeHint = "image";
+        if (type === "语音") {
+            icon = "🎙️";
+            typeHint = "audio";
+        } else if (type === "视频") {
+            icon = "🎬";
+            typeHint = "video";
+        }
+
+        const safeHash = window.escapeHtml(hash);
+        const safeType = window.escapeHtml(type);
+
+        return `<span class="media-tag-chip" onclick="window.openEditMediaModalByHash('${safeHash}', '${typeHint}'); if (event) event.stopPropagation();"><span class="media-tag-icon">${icon}</span><span class="media-tag-label">${safeType}</span><code class="media-tag-hash">${safeHash}</code></span>`;
+    });
+};
+
 window.showToast = function(message) {
     const toast = document.getElementById("toast-message");
     if (toast) {

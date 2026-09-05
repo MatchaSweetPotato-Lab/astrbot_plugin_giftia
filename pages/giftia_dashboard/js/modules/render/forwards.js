@@ -215,7 +215,7 @@ export function renderForwardDetail(item) {
                     <strong>${window.escapeHtml(sender)}</strong>
                     ${nodeTime ? `<span>${window.escapeHtml(nodeTime)}</span>` : ""}
                 </div>
-                <div class="forward-node-content">${window.escapeHtml(node.content || "") || "空消息"}</div>
+                <div class="forward-node-content">${window.renderMessageWithMediaTags ? window.renderMessageWithMediaTags(node.content || "") : (window.escapeHtml(node.content || "") || "空消息")}</div>
                 ${mediaHtml}
                 ${nestedHtml}
             </div>

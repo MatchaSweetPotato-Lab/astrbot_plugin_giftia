@@ -16,6 +16,12 @@ class WebUIManager:
             desc="Get media captions list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/detail/<hash_val>",
+            view_handler=self.web_api.get_media_detail,
+            methods=["GET"],
+            desc="Get single media caption detail by hash",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/media/update",
             view_handler=self.web_api.update_media,
             methods=["POST"],

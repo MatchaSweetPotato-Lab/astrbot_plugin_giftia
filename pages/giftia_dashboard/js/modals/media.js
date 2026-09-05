@@ -46,15 +46,15 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
                              (type !== "image" && gridEl && gridEl.src && gridEl.src.startsWith("data:"));
 
     if (isOriginalLoaded && gridEl && gridEl.src && gridEl.src.startsWith("data:")) {
-        if (type === "image" && url) {
+        if (type === "image") {
             const uniqueId = `edit-media-preview-img-${hash}`;
             previewContainer.innerHTML = `<img id="${uniqueId}" src="${gridEl.src}">`;
-        } else if ((type === "audio" || type === "voice") && url) {
+        } else if (type === "audio" || type === "voice") {
             const uniqueId = `edit-media-preview-audio-${hash}`;
             const dataUrl = gridEl.src;
             const mimeMatch = dataUrl.match(/^data:([^;,]+)/);
             const mimeType = mimeMatch ? mimeMatch[1] : "";
-            if (window.GiftiaApp.isClientPlayableAudio(mimeType)) {
+            if (window.GiftiaApp && window.GiftiaApp.isClientPlayableAudio && window.GiftiaApp.isClientPlayableAudio(mimeType)) {
                 previewContainer.innerHTML = `<audio id="${uniqueId}" src="${dataUrl}" controls></audio>`;
             } else {
                 const friendly = mimeType ? mimeType.replace("audio/", "").toUpperCase() : "未知";
@@ -81,21 +81,25 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }
     } else {
-        if (type === "image" && url) {
+        if (type === "image") {
             const uniqueId = `edit-media-preview-img-${hash}`;
             previewContainer.innerHTML = `<img id="${uniqueId}" src="placeholder.png" alt="加载中...">`;
-            window.GiftiaApp.loadMediaFileB64(hash, uniqueId, url, type, false);
+            if (window.GiftiaApp && window.GiftiaApp.loadMediaFileB64) {
+                window.GiftiaApp.loadMediaFileB64(hash, uniqueId, url, type, false);
+            }
             
-            if (gridEl && window.GiftiaApp.loadedOriginalMediaG) {
+            if (gridEl && window.GiftiaApp && window.GiftiaApp.loadedOriginalMediaG) {
                 if (!window.GiftiaApp.loadedOriginalMediaG.has(hash)) {
                     window.GiftiaApp.loadMediaFileB64(hash, gridElId, url, type, false);
                     window.GiftiaApp.loadedOriginalMediaG.add(hash);
                 }
             }
-        } else if ((type === "audio" || type === "voice") && url) {
+        } else if (type === "audio" || type === "voice") {
             const uniqueId = `edit-media-preview-audio-${hash}`;
             previewContainer.innerHTML = `<audio id="${uniqueId}" controls></audio>`;
-            window.GiftiaApp.loadMediaFileB64(hash, uniqueId, url, type);
+            if (window.GiftiaApp && window.GiftiaApp.loadMediaFileB64) {
+                window.GiftiaApp.loadMediaFileB64(hash, uniqueId, url, type);
+            }
         } else if (type === "video") {
             const uniqueId = `edit-media-preview-video-${hash}`;
             previewContainer.innerHTML = `
@@ -110,6 +114,35 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
     }
     
     window.openModal("edit-media-modal");
+};
+
+// Open Edit Media Modal directly by hash (fetches details from backend)
+window.openEditMediaModalByHash = async function(hash, mediaTypeHint = "image") {
+    if (!hash) return;
+
+    try {
+        const res = await window.apiGet(`/media/detail/${hash}`);
+        if (res && res.status === "success" && res.data) {
+            const item = res.data;
+            const encodeMediaArg = value => encodeURIComponent(value || "").replace(/'/g, "%27");
+            window.openEditMediaModal(
+                item.hash_val,
+                encodeMediaArg(item.url),
+                item.media_type || mediaTypeHint,
+                encodeMediaArg(item.caption),
+                encodeMediaArg(item.genre),
+                encodeMediaArg(item.character),
+                encodeMediaArg(item.source),
+                encodeMediaArg(item.text)
+            );
+        } else {
+            const msg = res ? (res.message || "记录不存在") : "请求未成功";
+            window.showToast(`未找到该媒体记录: ${msg}`);
+        }
+    } catch (e) {
+        console.error("Failed to load media detail for hash:", hash, e);
+        window.showToast(`获取媒体详情失败: ${e.message}`);
+    }
 };
 
 window.submitEditMedia = async function() {
