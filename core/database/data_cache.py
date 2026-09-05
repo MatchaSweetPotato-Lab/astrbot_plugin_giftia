@@ -229,19 +229,51 @@ class DataCache:
         )
 
     async def delete_message(
-        self, bot_name: str, group_or_user_id: str, message_id: str
-    ) -> None:
-        """删除消息"""
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_id: str,
+    ) -> bool:
+        """删除消息（按 message_id 精确删除）。
+
+        Returns:
+            bool: 数据库或缓存中是否成功匹配并删除了消息
+        """
         fmt_key = f"{bot_name}:{group_or_user_id}"
         messages = self.recent_messages.get(fmt_key)
+        found_in_cache = False
         if messages:
             for msg in messages:
                 if msg.message_id == message_id:
                     messages.remove(msg)
+                    found_in_cache = True
                     break
-        await self.db.delete_message(
-            bot_name=bot_name, group_or_user_id=group_or_user_id, message_id=message_id
+
+        db_deleted = await self.db.delete_message(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            message_id=message_id,
         )
+        return db_deleted or found_in_cache
+
+    async def delete_message_by_db_id(self, message_db_id: int) -> bool:
+        """根据数据库主键 id 删除单条消息，并同步清理内存缓存"""
+        deleted_info = await self.db.delete_message_by_db_id(message_db_id)
+        if not deleted_info:
+            return False
+
+        bot_name = deleted_info["bot_name"]
+        group_or_user_id = deleted_info["group_or_user_id"]
+        message_id = deleted_info.get("message_id")
+
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        messages = self.recent_messages.get(fmt_key)
+        if messages:
+            for msg in messages:
+                if (getattr(msg, "db_id", None) and msg.db_id == message_db_id) or (message_id and msg.message_id == message_id):
+                    messages.remove(msg)
+                    break
+        return True
 
     async def set_bot_status(
         self, bot_name: str, group_id: str, status: Status

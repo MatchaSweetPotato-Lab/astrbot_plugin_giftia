@@ -489,23 +489,76 @@ class ChatHistoryRepository(BaseRepository):
         await self.conn.commit()
 
     async def delete_message(
-        self, bot_name: str, group_or_user_id: str, message_id: str
-    ):
-        await self.conn.execute(
-            """
-            DELETE FROM forwarded_message
-            WHERE owner_message_id = ? AND group_or_user_id = ? AND bot_name = ?
-            """,
-            (message_id, group_or_user_id, bot_name),
-        )
-        await self.conn.execute(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_id: str,
+    ) -> bool:
+        """根据平台 message_id 精确删除单条聊天记录并级联清理 forwarded_message。
+
+        Returns:
+            bool: 是否成功删除了消息记录
+        """
+        del_chat = await self.conn.execute(
             """
             DELETE FROM chat_history
             WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
             """,
             (message_id, group_or_user_id, bot_name),
         )
+        deleted = del_chat.rowcount > 0
+        if deleted:
+            await self.conn.execute(
+                """
+                DELETE FROM forwarded_message
+                WHERE owner_message_id = ? AND group_or_user_id = ? AND bot_name = ?
+                """,
+                (message_id, group_or_user_id, bot_name),
+            )
         await self.conn.commit()
+        return deleted
+
+    async def delete_message_by_db_id(self, message_db_id: int) -> dict | None:
+        """根据数据库主键 id 删除单条聊天记录，并级联清理关联的 forwarded_message"""
+        async with self.conn.execute(
+            """
+            SELECT id, bot_name, group_or_user_id, message_id, content
+            FROM chat_history
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (message_db_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        bot_name = row["bot_name"]
+        group_or_user_id = row["group_or_user_id"]
+        message_id = row["message_id"]
+
+        if message_id:
+            await self.conn.execute(
+                """
+                DELETE FROM forwarded_message
+                WHERE owner_message_id = ? AND group_or_user_id = ? AND bot_name = ?
+                """,
+                (message_id, group_or_user_id, bot_name),
+            )
+
+        await self.conn.execute(
+            "DELETE FROM chat_history WHERE id = ?",
+            (message_db_id,),
+        )
+        await self.conn.commit()
+
+        return {
+            "id": message_db_id,
+            "bot_name": bot_name,
+            "group_or_user_id": group_or_user_id,
+            "message_id": message_id,
+        }
 
     async def auto_clean_chat_history(
         self,

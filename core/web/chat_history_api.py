@@ -208,6 +208,28 @@ class ChatHistoryApi:
             logger.error(f"[Giftia API] delete_chat_history error: {e}")
             return error_response(f"清空当前会话消息失败: {str(e)}")
 
+    async def delete_single_message(self):
+        """Delete a single chat history message by its database id."""
+        try:
+            body = await request.json()
+            msg_id = body.get("id")
+            if msg_id is None:
+                return error_response("缺少 id 参数")
+
+            try:
+                msg_id = int(msg_id)
+            except (ValueError, TypeError):
+                return error_response("无效的消息 id")
+
+            success = await self.giftia.data_cache.delete_message_by_db_id(msg_id)
+            if not success:
+                return error_response("未找到该消息或已被删除")
+
+            return json_response({"status": "success", "message": "删除消息成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] delete_single_message error: {e}")
+            return error_response(f"删除消息失败: {str(e)}")
+
     async def get_auto_clean_chat_history_config(self):
         """获取聊天记录自动清理配置。"""
         try:

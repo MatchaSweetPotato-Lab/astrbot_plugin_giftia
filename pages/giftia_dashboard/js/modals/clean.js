@@ -31,6 +31,27 @@ window.clearChatHistory = async function() {
     });
 };
 
+// 1.1 Delete single chat message
+window.deleteChatMessage = function(id) {
+    window.showConfirm("确认删除消息", `确定要删除消息 #${id} 吗？此操作无法撤销。`, async () => {
+        try {
+            const res = await window.apiPost("/chat_history/message/delete", { id: id });
+            if (res && res.status === "success") {
+                window.showToast("消息删除成功");
+                if (window.GiftiaApp) {
+                    await window.GiftiaApp.refreshScopedFilters("history", true);
+                    await window.GiftiaApp.loadChatHistory();
+                }
+            } else {
+                window.showToast(`删除失败: ${res?.message || "未知错误"}`);
+            }
+        } catch (e) {
+            console.error("Failed to delete chat message:", e);
+            window.showToast(`删除消息出错: ${e.message}`);
+        }
+    });
+};
+
 // 2. Chat History Auto Clean Modal JS
 window.openChatHistoryAutoCleanModal = async function() {
     await window.loadAutoCleanChatHistoryConfig();

@@ -226,6 +226,12 @@ class WebUIManager:
             desc="Delete chat history for a session",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/message/delete",
+            view_handler=self.web_api.delete_single_message,
+            methods=["POST"],
+            desc="Delete a single chat history message by database id",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/chat_history/auto_clean/config",
             view_handler=self.web_api.get_auto_clean_chat_history_config,
             methods=["GET"],
