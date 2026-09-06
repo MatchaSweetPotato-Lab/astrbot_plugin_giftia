@@ -533,7 +533,7 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.get_bot_status(event):
             yield chunk
 
-    @filter.command("画像")
+    @filter.command("画像", alias={"查看用户画像", "用户画像"})
     async def get_user_profile(self, event: AstrMessageEvent, target: GreedyStr):
         """Show a user's profile in this session: /画像 @user or /画像 user_id."""
         # A GreedyStr annotation accepts empty text for structured mentions too.

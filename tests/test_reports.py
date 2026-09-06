@@ -1,5 +1,8 @@
+import asyncio
 import base64
 from io import BytesIO
+from pathlib import Path
+from threading import Barrier, BrokenBarrierError
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -82,6 +85,56 @@ def test_uploaded_image_is_validated_and_embedded_for_remote_t2i(service, tmp_pa
         == asset["name"]
     )
     assert len(service.list_assets()) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_uploads_enforce_limit_and_allow_existing_assets(
+    service, monkeypatch
+):
+    raw = BytesIO()
+    Image.new("RGB", (20, 20), "white").save(raw, format="WEBP")
+    for index in range(99):
+        (service.assets_dir / f"{index:064x}.webp").write_bytes(raw.getvalue())
+    uploads = []
+    for color in ("red", "blue"):
+        raw = BytesIO()
+        Image.new("RGB", (20, 20), color).save(raw, format="PNG")
+        uploads.append(base64.b64encode(raw.getvalue()).decode())
+
+    original_glob = Path.glob
+    counted = Barrier(2, timeout=2)
+
+    def concurrent_glob(path, pattern):
+        snapshot = list(original_glob(path, pattern))
+        if path == service.assets_dir and pattern == "*.webp":
+            # Expose stale counts when uploads are not serialized. A protected
+            # upload times out alone, then lets the next upload count its file.
+            try:
+                counted.wait()
+            except BrokenBarrierError:
+                pass
+        return iter(snapshot)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "glob", concurrent_glob)
+        results = await asyncio.gather(
+            *(asyncio.to_thread(service.upload_asset, encoded) for encoded in uploads),
+            return_exceptions=True,
+        )
+
+    succeeded = [
+        index for index, result in enumerate(results) if isinstance(result, dict)
+    ]
+    failed = [
+        index for index, result in enumerate(results) if isinstance(result, ValueError)
+    ]
+    assert len(succeeded) == len(failed) == 1
+    assert str(results[failed[0]]) == "最多保存 100 张素材图片"
+    assert len(list(service.assets_dir.glob("*.webp"))) == 100
+    with pytest.raises(ValueError, match="最多保存 100 张素材图片"):
+        service.upload_asset(uploads[failed[0]])
+    assert service.upload_asset(uploads[succeeded[0]]) == results[succeeded[0]]
+    assert len(list(service.assets_dir.glob("*.webp"))) == 100
 
 
 @pytest.mark.parametrize(

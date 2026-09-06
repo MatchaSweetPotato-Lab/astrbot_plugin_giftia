@@ -199,8 +199,11 @@ def test_report_normalizes_missing_fields_without_mutating_record(command, relat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command_name", ["画像", "查看用户画像", "用户画像"])
 @pytest.mark.parametrize("target", ["", "001234", "@小 明(123456)"])
-async def test_actual_command_wrapper_accepts_empty_and_full_arguments(command, target):
+async def test_actual_command_wrapper_accepts_aliases_and_full_arguments(
+    command, command_name, target
+):
     handler, plugin, event = command
     # Load the real wrapper without registering all plugin handlers or starting services.
     source = Path(__file__).resolve().parents[1] / "main.py"
@@ -220,17 +223,24 @@ async def test_actual_command_wrapper_accepts_empty_and_full_arguments(command, 
         namespace,
     )
     wrapper = namespace["get_user_profile"]
-    command_filter = CommandFilter("画像", handler_md=SimpleNamespace(handler=wrapper))
-    parsed = command_filter.validate_and_convert_params(
-        target.split(), command_filter.handler_params
+    command_filter = CommandFilter(
+        ast.literal_eval(decorator.args[0]),
+        **{
+            keyword.arg: ast.literal_eval(keyword.value)
+            for keyword in decorator.keywords
+        },
+        handler_md=SimpleNamespace(handler=wrapper),
     )
-    assert parsed == {"target": target}
+    event.is_at_or_wake_command = True
+    event.get_message_str = Mock(return_value=f"{command_name} {target}")
+    event.set_extra = Mock()
+    assert command_filter.filter(event, {})
+    event.set_extra.assert_called_once_with("parsed_params", {"target": target})
+    parsed = event.set_extra.call_args.args[1]
     plugin.cmd_handler = handler
+    event.get_messages.return_value = [Plain(f"/{command_name} {target}")]
     if target != "001234":
-        event.get_messages.return_value = [
-            Plain("/画像 "),
-            At(qq="123456", name="小 明"),
-        ]
+        event.get_messages.return_value.append(At(qq="123456", name="小 明"))
     _ = [chunk async for chunk in wrapper(plugin, event, **parsed)]
     plugin.data_cache.get_user_profile_record.assert_awaited_once_with(
         "bot", "group", "001234" if target == "001234" else "123456"

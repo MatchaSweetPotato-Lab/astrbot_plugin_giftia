@@ -8,6 +8,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import Lock
 
 from jinja2 import StrictUndefined, TemplateError
 from jinja2.sandbox import ImmutableSandboxedEnvironment
@@ -39,6 +40,7 @@ class ReportService:
         self.root = Path(data_dir) / "reports"
         self.assets_dir = self.root / "assets"
         self.assets_dir.mkdir(parents=True, exist_ok=True)
+        self._asset_lock = Lock()
         self.definitions: dict[str, ReportDefinition] = {}
         self.environment = ImmutableSandboxedEnvironment(
             autoescape=True, undefined=StrictUndefined
@@ -258,10 +260,12 @@ class ReportService:
             raise ValueError("无法读取图片，请上传有效的图片文件") from exc
         name = sha256(content).hexdigest() + ".webp"
         path = self.assets_dir / name
-        if not path.exists():
-            if len(list(self.assets_dir.glob("*.webp"))) >= 100:
-                raise ValueError("最多保存 100 张素材图片")
-            path.write_bytes(content)
+        # Uploads run in worker threads; keep deduplication and quota checks together.
+        with self._asset_lock:
+            if not path.exists():
+                if len(list(self.assets_dir.glob("*.webp"))) >= 100:
+                    raise ValueError("最多保存 100 张素材图片")
+                path.write_bytes(content)
         return {"name": name, "size": len(content), "url": self.asset_url(name)}
 
     def list_assets(self) -> list[dict]:
