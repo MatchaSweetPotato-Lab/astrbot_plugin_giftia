@@ -1,3 +1,4 @@
+import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,6 +54,26 @@ def normalize_memory_importance(value, default: int = 5) -> int:
     except (TypeError, ValueError):
         normalized = int(default)
     return max(1, min(10, normalized))
+
+
+def normalize_energy(value, default: int = 100) -> str:
+    """Normalize energy to a clamped integer percentage string.
+
+    Args:
+        value: Raw energy value, optionally containing a percent sign.
+        default: Fallback percentage for missing or invalid values.
+
+    Returns:
+        An integer percentage represented as a string.
+    """
+    raw = "" if value is None else str(value).strip().strip('"').strip("'")
+    raw = raw.rstrip("%").strip()
+    try:
+        parsed = float(raw) if raw else float(default)
+        normalized = round(parsed) if math.isfinite(parsed) else default
+    except (TypeError, ValueError):
+        normalized = default
+    return str(max(0, min(100, int(normalized))))
 
 
 @dataclass(repr=False, slots=True)

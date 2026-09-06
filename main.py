@@ -33,6 +33,7 @@ from .core.llm.llm_tools import (
 from .core.llm.xml_parse import XmlParse
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
+from .core.reports.service import ReportService
 from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
 from .core.utils.compat import ensure_avx2_supported
@@ -276,6 +277,9 @@ class Giftia(Star):
         self.task_board = TaskBoardManager(self)
         self.passive_memory_manager = PassiveMemoryManager(self)
         self.tts_manager = TTSManager(self)
+        self.reports = ReportService(
+            self, StarTools.get_data_dir("astrbot_plugin_giftia")
+        )
         self.cmd_handler = CommandHandler(self)
         self.chat_manager = ChatManager(self)
 
@@ -527,6 +531,13 @@ class Giftia(Star):
     async def get_bot_status(self, event: AstrMessageEvent):
         """查看当前会话Bot的临时与常驻状态：/查看状态 或 /状态"""
         async for chunk in self.cmd_handler.get_bot_status(event):
+            yield chunk
+
+    @filter.command("画像")
+    async def get_user_profile(self, event: AstrMessageEvent, target: GreedyStr):
+        """Show a user's profile in this session: /画像 @user or /画像 user_id."""
+        # A GreedyStr annotation accepts empty text for structured mentions too.
+        async for chunk in self.cmd_handler.get_user_profile(event, target):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)

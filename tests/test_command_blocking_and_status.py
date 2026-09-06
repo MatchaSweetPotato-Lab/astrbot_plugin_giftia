@@ -468,7 +468,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("心情：开心", output_text)
         self.assertIn("状态：空闲", output_text)
         self.assertIn("动作：品茶", output_text)
-        self.assertIn("能量：95.5%", output_text)
+        self.assertIn("能量：96%", output_text)
         self.assertIn("服装：水手服", output_text)
         self.assertIn("场景：教室", output_text)
 
@@ -476,6 +476,70 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         """验证 delete_table 指令已从 CommandHandler 彻底移除"""
         cmd_handler = CommandHandler(self.plugin)
         self.assertFalse(hasattr(cmd_handler, "delete_table"))
+
+    async def test_status_image_response_uses_current_private_session(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        self.plugin.conf = {"report_config": {"render_mode": "图片响应"}}
+        self.plugin.data_cache.get_bot_status.return_value = Status(
+            mood="开心", energy="0"
+        )
+        event = self._create_mock_event()
+        event.get_group_id.return_value = ""
+        with TemporaryDirectory() as folder:
+            image_path = Path(folder) / "status.jpg"
+            image_path.write_bytes(b"rendered")
+            self.plugin.reports.render_image = AsyncMock(return_value=str(image_path))
+            component = object()
+            with patch(
+                "core.handlers.commands.Image.fromFileSystem",
+                return_value=component,
+                create=True,
+            ):
+                chunks = [
+                    chunk
+                    async for chunk in CommandHandler(self.plugin).get_bot_status(event)
+                ]
+            self.assertIs(chunks[0].chain[0], component)
+            self.assertFalse(image_path.exists())
+        self.plugin.data_cache.get_bot_status.assert_awaited_once_with(
+            "Giftia", "12345678"
+        )
+        data = self.plugin.reports.render_image.call_args.args[1]
+        self.assertEqual(data["session_id"], "12345678")
+        self.assertEqual(data["energy"], "0%")
+
+    async def test_status_render_error_falls_back_to_text(self):
+        self.plugin.conf = {"report_config": {"render_mode": "图片响应"}}
+        self.plugin.reports.render_image = AsyncMock(
+            side_effect=RuntimeError("t2i unavailable")
+        )
+        self.plugin.data_cache.get_bot_status.return_value = Status(
+            mood="开心", custom_status={"服装": "水手服"}
+        )
+        chunks = [
+            chunk
+            async for chunk in CommandHandler(self.plugin).get_bot_status(
+                self._create_mock_event()
+            )
+        ]
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("心情：开心", chunks[0].chain[0].text)
+        self.assertIn("服装：水手服", chunks[0].chain[0].text)
+
+    async def test_status_default_text_does_not_call_renderer(self):
+        self.plugin.conf = {}
+        self.plugin.reports.render_image = AsyncMock()
+        self.plugin.data_cache.get_bot_status.return_value = Status()
+        chunks = [
+            chunk
+            async for chunk in CommandHandler(self.plugin).get_bot_status(
+                self._create_mock_event()
+            )
+        ]
+        self.assertIn("暂无常驻状态", chunks[0].chain[0].text)
+        self.plugin.reports.render_image.assert_not_called()
 
     async def test_delete_message_command_and_logging(self):
         """测试 /删除消息 指令的执行过程与各层日志记录"""

@@ -7,6 +7,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import (
+    At,
     File,
     Image,
     Node,
@@ -16,6 +17,8 @@ from astrbot.api.message_components import (
     Reply,
 )
 
+from ..reports.status import build_status_report
+from ..reports.user_profile import build_user_profile_report
 from ..utils.schemas import Status
 
 
@@ -469,35 +472,134 @@ caption: {media_caption.caption}"""
 
         status = await self.plugin.data_cache.get_bot_status(bot_name, group_or_user_id)
 
-        custom_status = status.custom_status or {}
-        if custom_status:
-            custom_lines = "\n".join(
-                f"• {k}：{v}" for k, v in custom_status.items() if str(v).strip()
-            )
-            if not custom_lines:
-                custom_lines = "• 暂无常驻状态"
-        else:
-            custom_lines = "• 暂无常驻状态"
+        report = build_status_report(bot_name, nickname, group_or_user_id, status)
+        mode = self.plugin.conf.get("report_config", {}).get("render_mode", "文本响应")
+        if mode == "图片响应":
+            try:
+                path = await self.plugin.reports.render_image("status", report)
+            except Exception:
+                logger.exception(
+                    "[Giftia Reports] Status image failed; falling back to text"
+                )
+            else:
+                try:
+                    yield await event.send(MessageChain([Image.fromFileSystem(path)]))
+                finally:
+                    Path(path).unlink(missing_ok=True)
+                return
 
-        energy_val = (
-            status.energy
-            if (status.energy is not None and str(status.energy).strip() != "")
-            else "100.0"
+        custom_lines = "\n".join(
+            f"• {k}：{v}" for k, v in report["custom_status"].items()
         )
-        energy_str = f"{energy_val}%" if not str(energy_val).endswith("%") else str(energy_val)
+        custom_lines = custom_lines or "• 暂无常驻状态"
 
         msg = (
             f"【Bot 状态看板】\n"
             f"🤖 机器人：{nickname} ({bot_name})\n\n"
             f"📊 临时状态：\n"
-            f"• 心情：{status.mood or '平稳'}\n"
-            f"• 状态：{status.state or '空闲'}\n"
-            f"• 动作：{status.action or '待机'}\n"
-            f"• 能量：{energy_str}\n\n"
+            f"• 心情：{report['mood']}\n"
+            f"• 状态：{report['state']}\n"
+            f"• 动作：{report['action']}\n"
+            f"• 能量：{report['energy']}\n\n"
             f"📌 常驻状态：\n"
             f"{custom_lines}"
         )
         yield await event.send(MessageChain([Plain(msg)]))
+
+    async def get_user_profile(self, event: AstrMessageEvent, target: str = ""):
+        """Send a stored user profile using the shared report rendering mode.
+
+        Args:
+            event: Command event, including structured mention components.
+            target: Remaining command text, used when no user is mentioned.
+
+        Yields:
+            The result of sending the profile or a usage/not-found message.
+        """
+        try:
+            user_id = self._profile_target(event, target)
+        except ValueError as exc:
+            yield await event.send(MessageChain([Plain(str(exc))]))
+            return
+
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        nickname = self.plugin.bot_map.get(bot_name, {}).get("nickname", bot_name)
+        session_id = event.get_group_id() or event.get_sender_id()
+        record = await self.plugin.data_cache.get_user_profile_record(
+            bot_name, session_id, user_id
+        )
+        if record is None:
+            yield await event.send(
+                MessageChain([Plain(f"当前会话中暂无用户 {user_id} 的画像记录。")])
+            )
+            return
+
+        report = build_user_profile_report(
+            bot_name, nickname, session_id, user_id, record
+        )
+        mode = self.plugin.conf.get("report_config", {}).get("render_mode", "文本响应")
+        if mode == "图片响应":
+            try:
+                path = await self.plugin.reports.render_image("user_profile", report)
+            except Exception:
+                logger.exception(
+                    "[Giftia Reports] User profile image failed; falling back to text"
+                )
+            else:
+                try:
+                    yield await event.send(MessageChain([Image.fromFileSystem(path)]))
+                finally:
+                    Path(path).unlink(missing_ok=True)
+                return
+
+        profile_lines = "\n".join(
+            f"• {label}：{value}" for label, value in report["profile_fields"].items()
+        )
+        msg = (
+            f"【{report['title']}】\n"
+            f"🤖 机器人：{report['nickname']} ({report['bot_name']})\n"
+            f"👤 用户 ID：{report['user_id']}\n"
+            f"🤝 好感度：{report['relation']}\n"
+            f"🏷️ 关系称谓：{report['relation_title']}\n\n"
+            f"{profile_lines}"
+        )
+        yield await event.send(MessageChain([Plain(msg)]))
+
+    @staticmethod
+    def _profile_target(event: AstrMessageEvent, target: str) -> str:
+        """Resolve a single mention before falling back to an explicit user ID.
+
+        Args:
+            event: Event containing structured mentions; bot wake mentions are ignored.
+            target: Raw argument text, which can include adapter-generated mention names.
+
+        Returns:
+            The platform user ID without numeric conversion.
+
+        Raises:
+            ValueError: If the target is missing, ambiguous, or an everyone mention.
+        """
+        mentions = set()
+        command_started = False
+        for component in event.get_messages():
+            if isinstance(component, Plain) and component.text.strip():
+                command_started = True
+            elif isinstance(component, At):
+                user_id = str(component.qq)
+                if user_id == str(event.get_self_id()) and not command_started:
+                    continue
+                mentions.add(user_id)
+        if "all" in mentions or len(mentions) > 1:
+            raise ValueError("请只 @ 一位用户，或使用 /画像 用户ID 查询。")
+        if mentions:
+            return mentions.pop()
+        user_id = target.strip()
+        if len(user_id.split()) != 1 or user_id.startswith("@") or user_id == "all":
+            raise ValueError("用法：/画像 @一位用户 或 /画像 用户ID")
+        return user_id
 
     async def silence_session(self, event: AstrMessageEvent):
         """将当前会话的状态设置为不活跃"""
@@ -633,6 +735,3 @@ caption: {media_caption.caption}"""
             yield await event.send(
                 MessageChain([Plain(f"已成功退出群聊 {group_id_str}！")])
             )
-
-
-

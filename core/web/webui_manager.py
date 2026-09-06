@@ -9,6 +9,20 @@ class WebUIManager:
     def register_routes(self):
         ctx = self.plugin.context
 
+        for route, handler, method in (
+            ("/reports/templates", self.web_api.get_report_templates, "GET"),
+            ("/reports/templates/save", self.web_api.update_report_template, "POST"),
+            ("/reports/preview", self.web_api.preview_report, "POST"),
+            ("/reports/assets", self.web_api.get_report_assets, "GET"),
+            ("/reports/assets/upload", self.web_api.upload_report_asset, "POST"),
+        ):
+            ctx.register_web_api(
+                route=f"/astrbot_plugin_giftia{route}",
+                view_handler=handler,
+                methods=[method],
+                desc="Manage report templates, previews and images",
+            )
+
         ctx.register_web_api(
             route="/astrbot_plugin_giftia/media",
             view_handler=self.web_api.get_media,

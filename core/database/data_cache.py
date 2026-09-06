@@ -18,6 +18,7 @@ from ..utils.schemas import (
     MessageData,
     SessionRecallMemory,
     Status,
+    normalize_energy,
     normalize_memory_importance,
 )
 from .database import Database
@@ -196,17 +197,20 @@ class DataCache:
         # 当前时间
         current_time = time.time()
 
-        if status.timestamp > 0:
-            # 恢复的能量
-            recovered_energy = (
-                current_time - status.timestamp
-            ) / self.energy_recovery_interval
-            clean_energy = status.energy.strip().strip('"').strip("'")
-            try:
-                status.energy = str(min(float(clean_energy) + recovered_energy, 100.0))
-            except Exception as e:
-                logger.error(f"能量数据异常：{e}，自动重置为100")
-                status.energy = "100.0"
+        clean_energy = "" if status.energy is None else str(status.energy)
+        clean_energy = clean_energy.strip().strip('"').strip("'").rstrip("%").strip()
+        try:
+            energy_value = float(clean_energy)
+            if status.timestamp > 0:
+                # 恢复的能量
+                recovered_energy = (
+                    current_time - status.timestamp
+                ) / self.energy_recovery_interval
+                energy_value += recovered_energy
+            status.energy = normalize_energy(energy_value)
+        except Exception as e:
+            logger.error(f"能量数据异常：{e}，自动重置为100")
+            status.energy = normalize_energy(None)
 
         status.timestamp = current_time
         return status

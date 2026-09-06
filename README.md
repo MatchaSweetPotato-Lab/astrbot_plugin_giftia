@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.2.5-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.2.6-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -69,6 +69,25 @@
    - **被动状态维护**：开启“启用被动状态维护”，并在 **被动总结模型提供商** 中配置相应的模型提供商，以自动提炼聊天记忆、好感度与用户画像。
 
 ---
+
+## 状态、用户画像与报告模板
+
+在 AstrBot 插件配置的 **报告渲染配置 → 渲染模式** 中选择 **文本响应**（默认）或 **图片响应**。`/查看状态`、`/状态` 和 `/画像` 共用此配置；图片渲染失败时自动回退到文本。
+
+- `/查看状态` 或 `/状态`：返回当前群聊或私聊的机器人状态。
+- `/画像 @一位用户` 或 `/画像 123456789`：查询指定用户的画像，展示称呼、外号、性格、兴趣、互动态度、约定、补充、头像描述及好感度和关系称谓。@ 用户优先使用消息中的真实用户 ID；也支持直接输入平台用户 ID。
+
+画像只查询**当前机器人、当前群聊或私聊**已有的记录，不跨会话查询，也不会触发新的画像生成；未找到时会提示暂无记录。每次只能查询一位用户。
+
+在插件 WebUI 的 **报告模板** 页签中，选择 **状态报告** 或 **用户画像**，分别编辑 HTML / Jinja2 模板，停止输入约半秒后自动更新示例预览。展开变量说明可查看支持的字段，展开预览数据可修改示例 JSON；这些数据仅用于预览，指令始终读取当前会话的实际记录。点击 **保存模板** 后生效，**载入默认模板** 会先载入编辑器，保存后才替换现有模板。切换页签会保留未保存的草稿。
+
+点击 **上传图片** 添加素材，再点击素材将图片标签插入编辑器光标处。支持 PNG、JPEG、WebP、GIF，每张不超过 2 MB、1600 万像素，共最多 100 张；GIF 使用首帧。图片统一转换为 WebP，并通过 `{{ asset('素材名称.webp') }}` 内嵌，也可用于 CSS 背景。模板支持内联 CSS，不执行 JavaScript，不加载外部图片、字体或样式；常规模板变量默认进行 HTML 转义。
+
+**t2i 试渲染** 使用当前编辑器内容和示例数据调用 AstrBot 的实际渲染服务。正式出图同样调用 AstrBot `html_render`，沿用 AstrBot 配置的 t2i 服务；浏览器预览与 t2i 的字体和视口可能不同，以实际出图为准。[AstrBot HTML 渲染说明](https://docs.astrbot.app/en/dev/star/guides/html-to-pic.html)
+
+自定义模板和图片分别保存在插件数据目录的 `reports/<报告类型>.html` 与 `reports/assets/` 下，重载插件后保留。默认状态模板位于 `core/reports/templates/status.html`，默认画像模板位于 `core/reports/templates/user_profile.html`；两种自定义模板分别存储为 `status.html` 和 `user_profile.html`。
+
+后续扩展其他报告时，使用 `plugin.reports.register(report_type, ReportDefinition(...))` 注册默认模板、示例数据和字段说明，再由对应指令构建数据并调用 `await plugin.reports.render_image(report_type, data)`。新报告类型自动出现在编辑器中，共用模板存储、图片素材、预览和 t2i 渲染流程。返回值为临时图片路径，由调用方在发送或读取完成后清理；数据构造示例见 `core/reports/status.py` 和 `core/reports/user_profile.py`。
 
 ## 更多详情与高级使用
 

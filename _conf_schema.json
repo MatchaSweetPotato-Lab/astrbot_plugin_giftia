@@ -122,6 +122,19 @@
             }
         }
     },
+    "report_config": {
+        "description": "报告渲染配置",
+        "type": "object",
+        "items": {
+            "render_mode": {
+                "description": "渲染模式",
+                "type": "string",
+                "options": ["文本响应", "图片响应"],
+                "default": "文本响应",
+                "hint": "查看状态和画像指令的响应形式。图片响应使用 AstrBot t2i；可在插件管理页的报告模板页签分别编辑 HTML 模板，渲染失败时回退为文本。"
+            }
+        }
+    },
     "normal_config": {
         "description": "常规配置",
         "type": "object",

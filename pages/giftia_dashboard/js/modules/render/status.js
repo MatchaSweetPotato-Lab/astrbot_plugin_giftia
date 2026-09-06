@@ -23,7 +23,7 @@ export function renderBotStatus(items) {
 
     container.innerHTML = items.map(item => {
         const encodeStatusArg = value => encodeURIComponent(value || "").replace(/'/g, "%27");
-        const energy = Math.max(0, Math.min(100, parseFloat(item.energy) || 0));
+        const energy = Math.max(0, Math.min(100, Math.round(parseFloat(item.energy) || 0)));
         const energyClass = energy < 20 ? "low-energy" : "";
         const mood = item.mood || "平静";
         const state = item.state || "发呆";
@@ -81,7 +81,7 @@ export function renderBotStatus(items) {
                         <span class="energy-icon">
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
                         </span>
-                        <strong>${energy.toFixed(1)}%</strong>
+                        <strong>${energy}%</strong>
                     </div>
                 </div>
 
