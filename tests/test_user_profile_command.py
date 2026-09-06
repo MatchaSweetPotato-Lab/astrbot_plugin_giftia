@@ -94,11 +94,27 @@ async def test_bot_mention_after_command_is_a_target(command):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["", " \n "])
+@pytest.mark.parametrize("group_id", ["group", ""])
+@pytest.mark.parametrize("wake_mention", [False, True])
+async def test_empty_target_uses_sender_id(command, target, group_id, wake_mention):
+    handler, plugin, event = command
+    event.get_group_id.return_value = group_id
+    event.get_sender_id.return_value = "001234"
+    event.get_messages.return_value = ([At(qq="bot-id")] if wake_mention else []) + [
+        Plain("/画像")
+    ]
+    _ = [chunk async for chunk in handler.get_user_profile(event, target)]
+    plugin.data_cache.get_user_profile_record.assert_awaited_once_with(
+        "bot", group_id or "001234", "001234"
+    )
+    assert "用户 ID：001234" in event.send.call_args.args[0].chain[0].text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("target", "mentions"),
     [
-        ("", []),
-        (" ", ["bot-id"]),
         ("123 456", []),
         ("@小明", []),
         ("", ["all"]),
@@ -200,9 +216,17 @@ def test_report_normalizes_missing_fields_without_mutating_record(command, relat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command_name", ["画像", "查看用户画像", "用户画像"])
-@pytest.mark.parametrize("target", ["", "001234", "@小 明(123456)"])
+@pytest.mark.parametrize(
+    ("target", "mention", "expected_user"),
+    [
+        ("", False, "sender"),
+        ("", True, "123456"),
+        ("001234", False, "001234"),
+        ("@小 明(123456)", True, "123456"),
+    ],
+)
 async def test_actual_command_wrapper_accepts_aliases_and_full_arguments(
-    command, command_name, target
+    command, command_name, target, mention, expected_user
 ):
     handler, plugin, event = command
     # Load the real wrapper without registering all plugin handlers or starting services.
@@ -239,9 +263,9 @@ async def test_actual_command_wrapper_accepts_aliases_and_full_arguments(
     parsed = event.set_extra.call_args.args[1]
     plugin.cmd_handler = handler
     event.get_messages.return_value = [Plain(f"/{command_name} {target}")]
-    if target != "001234":
+    if mention:
         event.get_messages.return_value.append(At(qq="123456", name="小 明"))
     _ = [chunk async for chunk in wrapper(plugin, event, **parsed)]
     plugin.data_cache.get_user_profile_record.assert_awaited_once_with(
-        "bot", "group", "001234" if target == "001234" else "123456"
+        "bot", "group", expected_user
     )

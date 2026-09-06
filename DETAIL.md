@@ -65,7 +65,7 @@
 ### 5. 记忆检索配置 (`memory_config`)
 - **启用嵌入模型 (`embedding_conf.enabled`)**: 是否启用本地或外部 Embedding 提供商，开启后才能使用长期记忆检索功能（注：底层向量库 LanceDB 在 x86 架构下需要 CPU 支持 AVX2 指令集；若不支持，插件在启动时会检测并抛出异常中止加载以保护 AstrBot 本体稳定运行；若确信误报可配置 `ignore_avx2_check` 强制跳过）。
 - **启用重排模型 (`rerank_conf.enabled`)**: 是否启用 Rerank 提供商对检索到的向量记忆进行重排，以获取更精确的参考。
-- **启用被动状态维护 (`passive_memory_enabled`)**: 开启后台闲聊自动总结归纳。机器人会在后台对聊天片段进行总结，动态更新用户画像、群画像、好感度与关系头衔。
+- **启用被动状态维护 (`passive_memory_enabled`)**: 开启后台闲聊自动总结归纳。机器人会在后台对聊天片段进行总结，动态更新用户画像、好感度与关系头衔。群规仅通过管理员指令 `/群规 具体规则` 或 WebUI 手动覆写，不再被动维护。
 - **被动总结模型提供商 (`passive_memory_provider_ids`)**: 指定用于后台总结与画像提取的大模型通道。
 - **被动总结静默触发阈值 (`passive_memory_silence_threshold`)**: 机器人发言后，群聊沉寂静默多少条消息后触发后台被动总结。
 - **被动总结溢出触发阈值 (`passive_memory_overflow_threshold`)**: 机器人活跃时，未处理缓存消息累计达到多少条后触发后台总结。

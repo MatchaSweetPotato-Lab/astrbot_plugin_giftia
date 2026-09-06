@@ -135,13 +135,13 @@ def build_decision_prompt(
     )
 
     user_prompt = []
-    # 1. 静态前缀区：群基础数据与群画像/群规（最稳固，优先命中前缀缓存）
+    # Keep session data and manually maintained rules in the stable prefix.
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
-    # 群画像
-    group_profile_text = normalize_profile_text(group_profile)
-    if group_profile_text:
-        user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
+    # Manually maintained group rules.
+    group_rules_text = (group_profile or "").strip()
+    if group_rules_text:
+        user_prompt.append(f"<group_rules>\n{group_rules_text}\n</group_rules>")
     persistent_status_block = build_persistent_status_block(bot_status)
     if persistent_status_block:
         user_prompt.append(persistent_status_block)
@@ -344,13 +344,13 @@ def build_reply_prompt(
 
     user_prompt = []
 
-    # 1. 静态前缀区：群基础数据、群画像/群规、短期任务看板、活跃成员摘要（极度稳固，优先命中前缀缓存）
+    # Keep rules, tasks, and member summaries in the stable prefix.
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
-    # 群画像
-    group_profile_text = normalize_profile_text(group_profile)
-    if group_profile_text:
-        user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
+    # Manually maintained group rules.
+    group_rules_text = (group_profile or "").strip()
+    if group_rules_text:
+        user_prompt.append(f"<group_rules>\n{group_rules_text}\n</group_rules>")
     persistent_status_block = build_persistent_status_block(bot_status)
     if persistent_status_block:
         user_prompt.append(persistent_status_block)
