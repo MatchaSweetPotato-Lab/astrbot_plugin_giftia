@@ -530,12 +530,7 @@ class Giftia(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("群规")
     async def set_group_rules(self, event: AstrMessageEvent, rules: GreedyStr):
-        """Overwrite this session's group rules or display them with usage.
-
-        Args:
-            event: Administrator command event.
-            rules: Complete replacement text; empty input displays current rules.
-        """
+        """覆写或查看当前会话的群规：/群规 [具体规则]"""
         async for chunk in self.cmd_handler.set_group_rules(event, rules):
             yield chunk
 
@@ -547,12 +542,7 @@ class Giftia(Star):
 
     @filter.command("画像", alias={"查看用户画像", "用户画像"})
     async def get_user_profile(self, event: AstrMessageEvent, target: GreedyStr):
-        """Show the sender's profile or an explicitly selected user's profile.
-
-        Args:
-            event: Command event containing the sender and optional mentions.
-            target: Optional user ID or mention text after the command.
-        """
+        """查看自己或指定用户的画像：/画像 [@用户/用户ID]"""
         # GreedyStr accepts empty text for self lookup and structured mentions.
         async for chunk in self.cmd_handler.get_user_profile(event, target):
             yield chunk
