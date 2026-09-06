@@ -527,6 +527,18 @@ class Giftia(Star):
         ):
             yield chunk
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("群规")
+    async def set_group_rules(self, event: AstrMessageEvent, rules: GreedyStr):
+        """Overwrite this session's group rules or display them with usage.
+
+        Args:
+            event: Administrator command event.
+            rules: Complete replacement text; empty input displays current rules.
+        """
+        async for chunk in self.cmd_handler.set_group_rules(event, rules):
+            yield chunk
+
     @filter.command("查看状态", alias={"状态"})
     async def get_bot_status(self, event: AstrMessageEvent):
         """查看当前会话Bot的临时与常驻状态：/查看状态 或 /状态"""
@@ -535,8 +547,13 @@ class Giftia(Star):
 
     @filter.command("画像", alias={"查看用户画像", "用户画像"})
     async def get_user_profile(self, event: AstrMessageEvent, target: GreedyStr):
-        """Show a user's profile in this session: /画像 @user or /画像 user_id."""
-        # A GreedyStr annotation accepts empty text for structured mentions too.
+        """Show the sender's profile or an explicitly selected user's profile.
+
+        Args:
+            event: Command event containing the sender and optional mentions.
+            target: Optional user ID or mention text after the command.
+        """
+        # GreedyStr accepts empty text for self lookup and structured mentions.
         async for chunk in self.cmd_handler.get_user_profile(event, target):
             yield chunk
 

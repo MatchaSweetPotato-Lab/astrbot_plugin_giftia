@@ -414,10 +414,10 @@
                 <div class="filter-card card">
                     <div class="filter-row">
                         <div class="filter-group">
-                            <label>画像类型</label>
+                            <label>内容类型</label>
                             <select id="profile-type">
                                 <option value="user-profiles">用户画像</option>
-                                <option value="group-profiles">群聊画像</option>
+                                <option value="group-profiles">群规</option>
                             </select>
                         </div>
                         <div class="filter-group">
@@ -1017,19 +1017,19 @@
         </div>
     </div>
 
-    <!-- MODAL: Edit Group Profile -->
+    <!-- MODAL: Edit Group Rules -->
     <div id="edit-group-profile-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>修改群聊画像</h2>
+                <h2>修改群规</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-group-profile-modal')">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="edit-group-prof-bot">
                 <input type="hidden" id="edit-group-prof-group">
                 <div class="form-group">
-                    <label>画像总结内容 <span class="required">*</span></label>
-                    <textarea id="edit-group-prof-text" rows="8" placeholder="输入本群聊天主题风格、氛围、群友共同偏好描述..."></textarea>
+                    <label>群规内容 <span class="required">*</span></label>
+                    <textarea id="edit-group-prof-text" rows="8" placeholder="输入当前会话需要遵守的具体规则；保存后覆写原有群规，不会被动更新。"></textarea>
                 </div>
             </div>
             <div class="modal-footer">

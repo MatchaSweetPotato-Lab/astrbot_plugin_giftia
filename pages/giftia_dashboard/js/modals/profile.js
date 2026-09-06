@@ -139,7 +139,7 @@ window.submitAddUserAlias = async function() {
         });
         if (res.status === "success") {
             aliasInput.value = "";
-            window.showToast("外号已新增");
+            window.showToast(res.message || "外号已新增");
             await window.loadUserAliases();
             window.GiftiaApp.loadUserProfiles();
         } else {
@@ -217,7 +217,7 @@ window.deleteUserProfile = function(bot, group, user) {
     });
 };
 
-// 2. Edit Group Profile
+// 2. Edit Group Rules
 window.openEditGroupProfileModal = function(bot, group, profileEncoded) {
     const profile = decodeURIComponent(profileEncoded);
     document.getElementById("edit-group-prof-bot").value = bot;
@@ -232,7 +232,7 @@ window.submitEditGroupProfile = async function() {
     const profile = document.getElementById("edit-group-prof-text").value.trim();
 
     if (!profile) {
-        window.showToast("画像内容不能为空！");
+        window.showToast("群规内容不能为空！");
         return;
     }
 
@@ -255,14 +255,14 @@ window.submitEditGroupProfile = async function() {
 };
 
 window.deleteGroupProfile = function(bot, group) {
-    window.showConfirm("确认删除群聊画像", "确定要删除该群聊的画像总结吗？此操作不可逆。", async () => {
+    window.showConfirm("确认删除群规", "确定要删除当前会话的群规吗？此操作不可逆。", async () => {
         try {
             const res = await window.apiPost("/profiles/group/delete", {
                 bot_name: bot,
                 group_or_user_id: group
             });
             if (res.status === "success") {
-                window.showToast("删除画像成功");
+                window.showToast("删除群规成功");
                 window.GiftiaApp.loadGroupProfiles();
             } else {
                 window.showToast(`删除失败: ${res.message}`);

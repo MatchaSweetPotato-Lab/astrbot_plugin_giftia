@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.2.7-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.2.8-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -70,12 +70,20 @@
 
 ---
 
+## 群规
+
+AstrBot 管理员可使用 `/群规 具体规则` 覆写当前机器人、当前群聊的群规，支持空格和多行；不带内容时显示用法，并在已有群规时展示当前内容，不清空已有规则。也可以在 WebUI 的 **画像管理 → 群规** 中修改或删除。
+
+群规以 `<group_rules>` 注入接话判断和回复提示词，不再由后台总结自动维护。原有群画像内容保留为群规，可手动覆写。
+
+外号在同一机器人、同一会话内只允许归属一人，冲突写入会被跳过；已有重复归属暂停自动累计，需在 WebUI 删除错误记录。外号计数仅接受本轮总结确认、且在其他成员当前发言中实际出现的称呼，每轮同一用户的同一外号最多累计一次，不再因文字命中自动增长。
+
 ## 状态、用户画像与报告模板
 
 在 AstrBot 插件配置的 **报告渲染配置 → 渲染模式** 中选择 **文本响应**（默认）或 **图片响应**。`/查看状态`、`/状态` 和 `/画像` 共用此配置；图片渲染失败时自动回退到文本。
 
 - `/查看状态` 或 `/状态`：返回当前群聊或私聊的机器人状态，包括心情、状态、动作、思考、能量和常驻状态。
-- `/画像 @一位用户` 或 `/画像 123456789`：查询指定用户的画像，展示称呼、外号、性格、兴趣、互动态度、约定、补充、头像描述及好感度和关系称谓。@ 用户优先使用消息中的真实用户 ID；也支持直接输入平台用户 ID。
+- `/画像`：默认查询发送者自己的画像。也可使用 `/画像 @一位用户` 或 `/画像 123456789` 查询指定用户，展示称呼、外号、性格、兴趣、互动态度、约定、补充、头像描述及好感度和关系称谓。@ 用户优先使用消息中的真实用户 ID；也支持直接输入平台用户 ID。
 
 画像只查询**当前机器人、当前群聊或私聊**已有的记录，不跨会话查询，也不会触发新的画像生成；未找到时会提示暂无记录。每次只能查询一位用户。
 

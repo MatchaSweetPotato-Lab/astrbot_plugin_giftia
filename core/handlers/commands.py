@@ -459,6 +459,44 @@ caption: {media_caption.caption}"""
                 )
             )
 
+    async def set_group_rules(self, event: AstrMessageEvent, rules: str = ""):
+        """Replace or display the rules for the current bot and session.
+
+        Args:
+            event: Command event identifying the bot and session.
+            rules: Complete replacement text; blank input shows usage and current rules.
+
+        Yields:
+            The result of sending a confirmation, current rules, or usage message.
+        """
+        # CommandFilter collapses whitespace; recover the original multiline text.
+        command_parts = event.get_message_str().lstrip().split(maxsplit=1)
+        if command_parts and command_parts[0].endswith("群规"):
+            rules = command_parts[1] if len(command_parts) > 1 else ""
+        rules = rules.strip()
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        session_id = event.get_group_id() or event.get_sender_id()
+        if not rules:
+            message = "用法：/群规 具体规则（覆写当前会话的全部群规）"
+            current_rules = await self.plugin.data_cache.get_group_profile(
+                bot_name=bot_name, group_or_user_id=session_id
+            )
+            if current_rules and current_rules.strip():
+                message += f"\n\n当前会话的群规：\n{current_rules}"
+            yield await event.send(MessageChain([Plain(message)]))
+            return
+        await self.plugin.data_cache.set_group_profile(
+            bot_name=bot_name,
+            group_or_user_id=session_id,
+            profile=rules,
+        )
+        yield await event.send(
+            MessageChain([Plain(f"已覆写当前会话的群规：\n{rules}")])
+        )
+
     async def get_bot_status(self, event: AstrMessageEvent):
         """获取当前会话的临时+常驻状态"""
         bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
@@ -512,7 +550,7 @@ caption: {media_caption.caption}"""
 
         Args:
             event: Command event, including structured mention components.
-            target: Remaining command text, used when no user is mentioned.
+            target: Remaining command text; empty input defaults to the sender.
 
         Yields:
             The result of sending the profile or a usage/not-found message.
@@ -571,17 +609,17 @@ caption: {media_caption.caption}"""
 
     @staticmethod
     def _profile_target(event: AstrMessageEvent, target: str) -> str:
-        """Resolve a single mention before falling back to an explicit user ID.
+        """Resolve a single mention, explicit user ID, or the sender by default.
 
         Args:
             event: Event containing structured mentions; bot wake mentions are ignored.
-            target: Raw argument text, which can include adapter-generated mention names.
+            target: Raw arguments; empty text uses the sender when no user is mentioned.
 
         Returns:
             The platform user ID without numeric conversion.
 
         Raises:
-            ValueError: If the target is missing, ambiguous, or an everyone mention.
+            ValueError: If the resolved ID is empty, invalid, ambiguous, or everyone.
         """
         mentions = set()
         command_started = False
@@ -597,7 +635,7 @@ caption: {media_caption.caption}"""
             raise ValueError("请只 @ 一位用户，或使用 /画像 用户ID 查询。")
         if mentions:
             return mentions.pop()
-        user_id = target.strip()
+        user_id = target.strip() or str(event.get_sender_id() or "").strip()
         if len(user_id.split()) != 1 or user_id.startswith("@") or user_id == "all":
             raise ValueError("用法：/画像 @一位用户 或 /画像 用户ID")
         return user_id

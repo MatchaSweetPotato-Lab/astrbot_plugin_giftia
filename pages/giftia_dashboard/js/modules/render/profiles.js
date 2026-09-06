@@ -178,13 +178,13 @@ export async function loadGroupProfiles() {
 export function renderGroupProfiles(items) {
     const container = document.getElementById("group-profile-list");
     if (!items || items.length === 0) {
-        container.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无相关群聊画像记录</div>`;
+        container.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无相关群规记录</div>`;
         return;
     }
 
     container.innerHTML = items.map(item => {
         const encodedProfile = encodeURIComponent(item.profile || "");
-        const profileHtml = window.renderProfileCard(item.profile || "", null, true);
+        const profileHtml = `<div class="profile-raw-content"><span class="text-content" style="white-space: pre-wrap;">${window.escapeHtml(item.profile || "")}</span></div>`;
 
         return `
             <div class="profile-item-card card">

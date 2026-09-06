@@ -62,7 +62,7 @@ class DataCache:
         # 用户画像缓存
         self.user_profiles: dict[str, str] = {}
         self.user_profile_records: dict[str, dict] = {}
-        # 群画像缓存
+        # Manually maintained group rules, using the legacy storage name.
         self.group_profiles: dict[str, str] = {}
         self.bot_status: dict[str, Status] = {}
 
@@ -546,7 +546,15 @@ class DataCache:
     async def get_group_profile(
         self, bot_name: str, group_or_user_id: str
     ) -> str | None:
-        """获取群画像"""
+        """Read manually maintained rules from the legacy group profile store.
+
+        Args:
+            bot_name: Bot owning the rules.
+            group_or_user_id: Session whose rules are requested.
+
+        Returns:
+            Stored rules, or None when the session has no rules.
+        """
         fmt_key = f"{bot_name}:{group_or_user_id}"
         profile = self.group_profiles.get(fmt_key)
         if profile:
@@ -563,14 +571,20 @@ class DataCache:
     async def set_group_profile(
         self, bot_name: str, group_or_user_id: str, profile: str
     ) -> None:
-        """设置群画像"""
+        """Replace group rules and refresh the cache after persistence succeeds.
+
+        Args:
+            bot_name: Bot owning the rules.
+            group_or_user_id: Session whose rules are replaced.
+            profile: Complete replacement rules in the legacy storage field.
+        """
         fmt_key = f"{bot_name}:{group_or_user_id}"
-        self.group_profiles[fmt_key] = profile
         await self.db.upsert_group_profile(
             group_or_user_id=group_or_user_id,
             bot_name=bot_name,
             profile=profile,
         )
+        self.group_profiles[fmt_key] = profile
 
     async def update_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str, relation: int

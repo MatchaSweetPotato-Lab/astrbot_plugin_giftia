@@ -277,77 +277,6 @@ class PassiveContextMixin:
         bot_refs.discard("")
         return target in bot_refs or resolved in bot_refs
 
-    async def _refresh_known_alias_observations(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        self_id: str,
-        db_messages: list,
-    ) -> None:
-        aliases = await self.plugin.db.get_session_user_aliases(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-        )
-        if not aliases:
-            return
-
-        scan_messages = []
-        for msg in db_messages or []:
-            sender_id = str(msg.user_id or "").strip()
-            content = str(msg.content or "")
-            if not sender_id or not content:
-                continue
-            if self._is_bot_reference(
-                sender_id,
-                sender_id,
-                self_id,
-                bot_name=bot_name,
-            ):
-                continue
-            scan_messages.append((sender_id, content))
-
-        if not scan_messages:
-            return
-
-        observations = []
-        observed_keys = set()
-        for item in aliases:
-            target_user_id = str(item.get("user_id") or "").strip()
-            alias = str(item.get("alias") or "").strip()
-            if not target_user_id or not alias:
-                continue
-            if self._is_bot_reference(
-                target_user_id,
-                target_user_id,
-                self_id,
-                bot_name=bot_name,
-            ):
-                continue
-
-            observed = any(
-                sender_id != target_user_id and alias in content
-                for sender_id, content in scan_messages
-            )
-            key = (target_user_id, alias)
-            if observed and key not in observed_keys:
-                observed_keys.add(key)
-                observations.append((target_user_id, alias, 1))
-
-        if not observations:
-            return
-
-        await self.plugin.db.increment_user_alias_counts(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            observations=observations,
-        )
-        for target_user_id, _, _ in observations:
-            fmt_key = f"{bot_name}:{group_or_user_id}:{target_user_id}"
-            self.plugin.data_cache.user_profile_records.pop(fmt_key, None)
-        logger.debug(
-            f"[Giftia Passive Memory] 已刷新旧外号观测次数: {len(observations)} 条"
-        )
-
     async def _build_summary_context(
         self,
         bot_name: str,
@@ -431,11 +360,6 @@ class PassiveContextMixin:
             )
             user_profile_blocks.append("\n".join(block_lines))
 
-        group_profile = await self.plugin.data_cache.get_group_profile(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-        )
-
         media_captions_block = ""
         if remaining_captions:
             media_captions_block = "\n".join(
@@ -448,7 +372,6 @@ class PassiveContextMixin:
             "active_users_in_range": active_users_in_range,
             "active_users_text": "\n".join(active_user_lines) or "无",
             "user_profiles_text": "\n---\n".join(user_profile_blocks) or "无",
-            "group_profile": group_profile or "无",
             "media_captions_block": media_captions_block,
             "chat_history_text": chat_history_text,
             "alias_observation_messages": db_messages,
@@ -472,7 +395,6 @@ class PassiveContextMixin:
         user_prompt_parts = [
             f"<session_id>{group_or_user_id}</session_id>",
             f"<current_user_profiles>\n{context['user_profiles_text']}\n</current_user_profiles>",
-            f"<current_group_profile>\n{context['group_profile']}\n</current_group_profile>",
         ]
         if context["media_captions_block"]:
             user_prompt_parts.append(

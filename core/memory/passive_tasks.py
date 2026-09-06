@@ -4,6 +4,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 
+from ..database.utils import parse_aliases
 from ..utils.schemas import normalize_memory_importance
 from ..utils.token_utils import extract_tokens_robust
 from .passive_context import PassiveContextMixin
@@ -175,12 +176,17 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             return False
 
         logger.info(f"[Giftia Passive Memory] 关系画像维护返回内容:\n{completion_text}")
-        await self._refresh_known_alias_observations(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            self_id=self_id,
-            db_messages=context.get("alias_observation_messages") or [],
-        )
+        alias_messages = [
+            (str(msg.user_id or ""), str(msg.content or ""))
+            for msg in context.get("alias_observation_messages") or []
+            if msg.user_id
+            and not getattr(msg, "is_recalled", False)
+            and getattr(msg, "role", "message") not in ("assistant", "operation_log")
+            and not self._is_bot_reference(
+                msg.user_id, msg.user_id, self_id, bot_name=bot_name
+            )
+        ]
+        observed_aliases = set()
 
         user_profile_matches = re.finditer(
             r"<summary_user_profile\s+([^>]*)>(.*?)</summary_user_profile>",
@@ -251,6 +257,21 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             profile_fields = {}
             if has_profile_content:
                 profile_fields = self._parse_session_profile_fields(profile_content)
+            if "aliases" in profile_fields:
+                # The model resolves the addressee; old profile text alone is not evidence.
+                aliases = []
+                for alias in parse_aliases(profile_fields.pop("aliases")):
+                    key = (resolved_user_id, alias.lower())
+                    if key in observed_aliases:
+                        continue
+                    if any(
+                        sender_id != resolved_user_id and alias in content
+                        for sender_id, content in alias_messages
+                    ):
+                        aliases.append(alias)
+                        observed_aliases.add(key)
+                if aliases:
+                    profile_fields["aliases"] = "，".join(aliases)
 
             if (
                 not profile_fields
@@ -281,21 +302,6 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 logger.info(
                     f"[Giftia Passive Memory] 用户 {resolved_user_id} 好感度变动 {delta}，原因: {reason}"
                 )
-
-        group_profile_matches = re.finditer(
-            r"<summary_group_profile>(.*?)</summary_group_profile>",
-            completion_text,
-            re.DOTALL,
-        )
-        for match in group_profile_matches:
-            group_profile_content = match.group(1).strip()
-            if group_profile_content and group_profile_content != "无":
-                await self.plugin.data_cache.set_group_profile(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    profile=group_profile_content,
-                )
-                logger.info("[Giftia Passive Memory] 已更新群画像")
 
         return True
 

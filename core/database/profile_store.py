@@ -65,70 +65,6 @@ class ProfileStoreMixin:
         )
         return "，".join(item["alias"] for item in aliases)
 
-    async def get_session_user_aliases(
-        self, bot_name: str, group_or_user_id: str
-    ) -> list[dict]:
-        """获取当前会话内所有已知用户外号，用于后端观测计数。"""
-        async with self.conn.execute(
-            """
-            SELECT ua.user_id, ua.alias
-            FROM user_aliases ua
-            LEFT JOIN user_profiles up ON ua.bot_name = up.bot_name
-                AND ua.group_or_user_id = up.group_or_user_id
-                AND ua.user_id = up.user_id
-            WHERE ua.bot_name = ? AND ua.group_or_user_id = ?
-                AND (up.call_name IS NULL OR LOWER(TRIM(ua.alias)) != LOWER(TRIM(up.call_name)))
-            ORDER BY ua.user_id ASC, ua.alias_count DESC, ua.first_seen_at ASC, ua.id ASC
-            """,
-            (bot_name, group_or_user_id),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
-
-    async def increment_user_alias_counts(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        observations: list[tuple[str, str, int]],
-    ) -> None:
-        """批量增加已知外号的观测次数。不存在的外号不会被创建。"""
-        if not observations:
-            return
-
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for user_id, alias, count in observations:
-            clean_user_id = str(user_id or "").strip()
-            clean_alias = str(alias or "").strip()
-            try:
-                clean_count = max(1, int(count or 1))
-            except (TypeError, ValueError):
-                clean_count = 1
-            if not clean_user_id or not clean_alias:
-                continue
-            await self.conn.execute(
-                """
-                UPDATE user_aliases
-                SET
-                    alias_count = alias_count + ?,
-                    last_seen_at = ?,
-                    updated_at = ?
-                WHERE bot_name = ?
-                  AND group_or_user_id = ?
-                  AND user_id = ?
-                  AND alias = ?
-                """,
-                (
-                    clean_count,
-                    update_time,
-                    update_time,
-                    bot_name,
-                    group_or_user_id,
-                    clean_user_id,
-                    clean_alias,
-                ),
-            )
-        await self.conn.commit()
-
     async def upsert_user_aliases(
         self,
         bot_name: str,
@@ -136,11 +72,22 @@ class ProfileStoreMixin:
         user_id: str,
         aliases: str | list[str] | tuple[str, ...] | None,
         increment_count: bool = True,
-    ) -> None:
-        """记录用户外号。increment_count=True 表示本窗口观测到一次。"""
+    ) -> list[str]:
+        """Record aliases without assigning another member's alias to this user.
+
+        Args:
+            bot_name: Bot owning the session.
+            group_or_user_id: Session containing the observations.
+            user_id: Member addressed by these aliases.
+            aliases: Aliases observed or entered manually.
+            increment_count: Whether this is a new observation window.
+
+        Returns:
+            Aliases rejected because another member already owns them.
+        """
         alias_items = parse_aliases(aliases)
         if not alias_items:
-            return
+            return []
 
         call_name = None
         async with self.conn.execute(
@@ -163,10 +110,12 @@ class ProfileStoreMixin:
                 updated_at=excluded.updated_at
             """
 
+        rejected_aliases = []
         for alias in alias_items:
             if call_name and alias.strip().lower() == call_name:
                 continue
-            await self.conn.execute(
+            # Check ownership in the write itself to prevent concurrent claims.
+            cursor = await self.conn.execute(
                 f"""
                 INSERT INTO user_aliases (
                     bot_name,
@@ -179,7 +128,12 @@ class ProfileStoreMixin:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                SELECT ?, ?, ?, ?, 1, ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM user_aliases
+                    WHERE bot_name = ? AND group_or_user_id = ?
+                      AND user_id != ? AND LOWER(TRIM(alias)) = LOWER(?)
+                )
                 ON CONFLICT(bot_name, group_or_user_id, user_id, alias) DO UPDATE SET
                     {conflict_update}
                 """,
@@ -192,9 +146,16 @@ class ProfileStoreMixin:
                     update_time,
                     update_time,
                     update_time,
+                    bot_name,
+                    group_or_user_id,
+                    user_id,
+                    alias,
                 ),
             )
+            if cursor.rowcount == 0:
+                rejected_aliases.append(alias)
         await self.conn.commit()
+        return rejected_aliases
 
     async def delete_user_aliases(
         self, bot_name: str, group_or_user_id: str, user_id: str
@@ -555,7 +516,15 @@ class ProfileStoreMixin:
     async def get_group_profile(
         self, group_or_user_id: str, bot_name: str
     ) -> str | None:
-        """获取群画像"""
+        """Read group rules from the legacy profile table.
+
+        Args:
+            group_or_user_id: Session whose rules are requested.
+            bot_name: Bot owning the session.
+
+        Returns:
+            Stored rules, or None when no record exists.
+        """
         async with self.conn.execute(
             """
             SELECT profile FROM group_profiles WHERE group_or_user_id = ? AND bot_name = ?
@@ -583,11 +552,15 @@ class ProfileStoreMixin:
         await self.conn.commit()
 
     async def delete_group_profile(self, bot_name: str, group_or_user_id: str):
-        """删除群画像"""
+        """Delete the rules for one bot and session.
+
+        Args:
+            bot_name: Bot owning the session.
+            group_or_user_id: Session whose rules are deleted.
+        """
         await self.conn.execute(
             """
             DELETE FROM group_profiles WHERE group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
             """,
             (group_or_user_id, bot_name),
         )
@@ -740,4 +713,3 @@ class ProfileStoreMixin:
             deleted_count = cursor.rowcount
         await self.conn.commit()
         return deleted_count
-

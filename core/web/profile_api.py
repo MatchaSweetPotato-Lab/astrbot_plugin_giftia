@@ -341,7 +341,7 @@ class ProfileApi:
             if not alias:
                 return error_response("外号不能为空")
 
-            await self.giftia.db.upsert_user_aliases(
+            rejected_aliases = await self.giftia.db.upsert_user_aliases(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
@@ -351,7 +351,14 @@ class ProfileApi:
             self._invalidate_user_profile_record_cache(
                 bot_name, group_or_user_id, user_id
             )
-            return json_response({"status": "success", "message": "新增外号成功"})
+            message = "新增外号成功"
+            if rejected_aliases:
+                message = (
+                    "已跳过当前会话中归属冲突的外号："
+                    + "，".join(rejected_aliases)
+                    + "；其余有效外号已保存。请先删除错误归属再重新添加。"
+                )
+            return json_response({"status": "success", "message": message})
         except Exception as e:
             logger.error(f"[Giftia API] add_user_alias error: {e}")
             return error_response(f"新增用户外号失败: {str(e)}")
@@ -534,7 +541,7 @@ class ProfileApi:
             )
         except Exception as e:
             logger.error(f"[Giftia API] get_group_profiles error: {e}")
-            return error_response(f"获取群聊画像列表失败: {str(e)}")
+            return error_response(f"获取群规列表失败: {str(e)}")
 
     async def get_group_profile_filter_options(self):
         """Get bot/session filter options for group profiles."""
@@ -599,10 +606,10 @@ class ProfileApi:
             )
         except Exception as e:
             logger.error(f"[Giftia API] get_group_profile_filter_options error: {e}")
-            return error_response(f"获取群画像筛选项失败: {str(e)}")
+            return error_response(f"获取群规筛选项失败: {str(e)}")
 
     async def update_group_profile(self):
-        """Update/Upsert group profile."""
+        """Replace the session's manually maintained group rules."""
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
@@ -614,18 +621,18 @@ class ProfileApi:
                     "缺少必要参数 (bot_name, group_or_user_id, profile)"
                 )
 
-            await self.giftia.db.upsert_group_profile(
+            await self.giftia.data_cache.set_group_profile(
                 group_or_user_id=group_or_user_id,
                 bot_name=bot_name,
                 profile=profile,
             )
-            return json_response({"status": "success", "message": "更新群聊画像成功"})
+            return json_response({"status": "success", "message": "更新群规成功"})
         except Exception as e:
             logger.error(f"[Giftia API] update_group_profile error: {e}")
-            return error_response(f"更新群聊画像失败: {str(e)}")
+            return error_response(f"更新群规失败: {str(e)}")
 
     async def delete_group_profile(self):
-        """Delete group profile."""
+        """Delete group rules and invalidate the session cache."""
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
@@ -638,7 +645,10 @@ class ProfileApi:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
             )
-            return json_response({"status": "success", "message": "删除群聊画像成功"})
+            self.giftia.data_cache.group_profiles.pop(
+                f"{bot_name}:{group_or_user_id}", None
+            )
+            return json_response({"status": "success", "message": "删除群规成功"})
         except Exception as e:
             logger.error(f"[Giftia API] delete_group_profile error: {e}")
-            return error_response(f"删除群聊画像失败: {str(e)}")
+            return error_response(f"删除群规失败: {str(e)}")

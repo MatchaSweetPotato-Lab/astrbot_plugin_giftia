@@ -206,7 +206,6 @@ FLAT_CLOSABLE_TAGS = [
     "kick",
     "leave",
     "summary_user_profile",
-    "summary_group_profile",
     "save_memory",
     "search_memory",
     "search_chat_history",
