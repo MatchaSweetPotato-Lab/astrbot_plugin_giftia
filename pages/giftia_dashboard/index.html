@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="css/components/switches.css">
     <link rel="stylesheet" href="css/components/priority_select.css">
     <link rel="stylesheet" href="css/components/stickers.css">
+    <link rel="stylesheet" href="css/components/reports.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
@@ -44,6 +45,10 @@
                 <button class="nav-tab" data-tab="bot-status">
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
                     会话状态
+                </button>
+                <button class="nav-tab" data-tab="report-templates">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M7 8h10M7 12h6M7 16h10"></path></svg>
+                    报告模板
                 </button>
                 <button class="nav-tab" data-tab="media-captions">
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
@@ -74,6 +79,53 @@
 
         <!-- Main Body -->
         <main class="main-content">
+            <section id="tab-report-templates" class="tab-panel">
+                <div class="card report-toolbar">
+                    <div class="report-toolbar-info">
+                        <h2>报告模板</h2>
+                        <p>自定义每一张报告的样子。编辑后自动预览，保存后用于指令响应。</p>
+                    </div>
+                    <div class="report-toolbar-controls">
+                        <div class="report-type-selector-container">
+                            <span class="report-type-label">
+                                <svg class="report-type-label-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M7 8h10M7 12h6M7 16h10"></path></svg>
+                                报告类型
+                            </span>
+                            <div id="report-type-segmented" class="report-type-segmented" role="tablist" aria-label="报告类型选择"></div>
+                            <select id="report-type" class="report-type-native-hidden" disabled aria-label="报告类型选择"></select>
+                        </div>
+                        <div class="report-actions">
+                            <button id="report-default" class="btn btn-secondary" disabled>
+                                <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                                载入默认模板
+                            </button>
+                            <button id="report-save" class="btn btn-primary" disabled>
+                                <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                                保存模板
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="report-message" class="report-message" role="status" aria-live="polite"></div>
+                <div class="report-workspace">
+                    <div class="card report-editor-panel">
+                        <div class="report-panel-heading"><label for="report-html">HTML / Jinja2</label><span id="report-dirty">加载中</span></div>
+                        <textarea id="report-html" class="report-code" spellcheck="false" disabled aria-label="报告 HTML 模板"></textarea>
+                        <details class="report-details"><summary>模板变量与图片用法</summary><div id="report-fields"></div><p>状态报告遍历常驻状态：<code>{% for key, value in custom_status.items() %}{{ key }}：{{ value }}{% endfor %}</code></p><p>用户画像遍历画像字段：<code>{% for label, value in profile_fields.items() %}{{ label }}：{{ value }}{% endfor %}</code></p><p>点击下方图片可在光标处插入图片标签；背景图可用 <code>background-image: url('{{ asset("图片名称.webp") }}')</code>。图片需先上传，支持内联 CSS，不执行 JavaScript，不加载外部资源。</p></details>
+                        <details class="report-details"><summary>预览数据（JSON，仅用于预览）</summary><textarea id="report-data" class="report-code report-data" spellcheck="false" aria-label="报告预览数据"></textarea></details>
+                    </div>
+                    <div class="card report-preview-panel">
+                        <div class="report-panel-heading"><span>实时预览</span><button id="report-render" class="btn btn-secondary btn-small" disabled>t2i 试渲染</button></div>
+                        <div id="report-preview-error" class="report-message error" role="alert" hidden></div>
+                        <div class="report-preview-scroll"><iframe id="report-preview" title="报告实时预览" sandbox="" referrerpolicy="no-referrer"></iframe></div>
+                        <div id="report-render-result" hidden><p class="report-hint">t2i 实际出图</p><img id="report-image" alt="报告 t2i 试渲染结果"></div>
+                    </div>
+                </div>
+                <div class="card report-assets-panel">
+                    <div class="report-panel-heading"><div>图片素材 <span class="report-hint">点击插入 · 每张最多 2 MB · GIF 使用首帧</span></div><label class="btn btn-secondary report-upload-label">上传图片<input id="report-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled></label></div>
+                    <div id="report-assets" class="report-assets"><span class="report-hint">加载素材中…</span></div>
+                </div>
+            </section>
             <!-- TAB 1: Chat History -->
             <section id="tab-chat-history" class="tab-panel active">
                 <div class="filter-card card">
@@ -1563,4 +1615,3 @@
     <div id="toast-message" class="toast">提示信息</div>
 </body>
 </html>
-

@@ -2,7 +2,9 @@ import time
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
+
 from ..database.repositories.bot_status import parse_custom_status_json
+from ..utils.schemas import normalize_energy
 
 
 class BotStatusApi:
@@ -46,7 +48,7 @@ class BotStatusApi:
                         "state": r["state"],
                         "memory": r["memory"],
                         "action": r["action"],
-                        "energy": r["energy"],
+                        "energy": normalize_energy(r["energy"]),
                         "custom_status": custom_status,
                         "created_at": r["created_at"],
                         "updated_at": r["updated_at"],
@@ -119,4 +121,3 @@ class BotStatusApi:
         except Exception as e:
             logger.error(f"[Giftia API] update_bot_status error: {e}")
             return error_response(f"更新 Bot 状态失败: {str(e)}")
-

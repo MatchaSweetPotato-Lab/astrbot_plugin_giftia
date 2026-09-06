@@ -5,6 +5,7 @@ import * as filters from './modules/filters.js';
 import * as history from './modules/render/history.js';
 import * as memories from './modules/render/memories.js';
 import * as status from './modules/render/status.js';
+import * as reports from './modules/render/reports.js';
 import * as media from './modules/render/media.js';
 import * as stickers from './modules/render/stickers.js';
 import * as forwards from './modules/render/forwards.js';
@@ -49,6 +50,7 @@ window.GiftiaApp = {
     // Bot Status
     loadBotStatus: status.loadBotStatus,
     renderBotStatus: status.renderBotStatus,
+    loadReportTemplates: reports.loadReportTemplates,
 
     // Media
     loadMedia: media.loadMedia,

@@ -1,0 +1,48 @@
+<html lang="zh-CN">
+<head>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 44px; background: #edf4f1; color: #183c32; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+.report { background: #fff; border: 1px solid #d9e7e0; border-radius: 28px; padding: 42px; }
+.eyebrow { color: #49806a; font-size: 18px; letter-spacing: 3px; }
+h1 { margin: 18px 0 10px; font-size: 44px; overflow-wrap: anywhere; }
+.subtitle, footer { color: #72867d; font-size: 18px; }
+.energy { margin: 32px 0; padding: 24px; background: #f1f8f4; border-radius: 18px; }
+.energy-label { display: flex; justify-content: space-between; font-size: 23px; }
+.track { height: 10px; border-radius: 8px; background: #dcebe2; margin-top: 18px; overflow: hidden; }
+.fill { height: 100%; background: #3ba47a; }
+.states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.state { border: 1px solid #e5ece8; padding: 22px; border-radius: 16px; }
+.label { color: #7b8c82; font-size: 18px; margin-bottom: 12px; }
+.value { font-size: 26px; font-weight: 600; overflow-wrap: anywhere; white-space: pre-wrap; }
+h2 { font-size: 22px; margin: 32px 0 12px; }
+.custom { display: grid; grid-template-columns: minmax(100px, 1fr) 3fr; gap: 20px; padding: 16px 0; border-bottom: 1px solid #edf1ee; }
+.custom .label { margin: 0; overflow-wrap: anywhere; }
+.custom .value { font-size: 22px; font-weight: 400; }
+footer { margin-top: 30px; display: flex; justify-content: space-between; gap: 16px; }
+</style>
+</head>
+<body>
+<article class="report">
+    <div class="eyebrow">GIFTIA · {{ title }}</div>
+    <h1>{{ nickname }}</h1>
+    <div class="subtitle">{{ bot_name }} · 此刻的我</div>
+    <section class="energy">
+        <div class="energy-label"><span>能量</span><strong>{{ energy }}</strong></div>
+        <div class="track"><div class="fill" style="width: {{ energy_percent }}%"></div></div>
+    </section>
+    <section class="states">
+        {% for label, value in [('心情', mood), ('状态', state), ('动作', action)] %}
+        <div class="state"><div class="label">{{ label }}</div><div class="value">{{ value }}</div></div>
+        {% endfor %}
+    </section>
+    <h2>常驻状态</h2>
+    {% for label, value in custom_status.items() %}
+    <div class="custom"><div class="label">{{ label }}</div><div class="value">{{ value }}</div></div>
+    {% else %}
+    <div class="label">暂无常驻状态</div>
+    {% endfor %}
+    <footer><span>状态报告</span><span>{{ generated_at }}</span></footer>
+</article>
+</body>
+</html>

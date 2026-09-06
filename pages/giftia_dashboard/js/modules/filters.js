@@ -222,6 +222,8 @@ export function loadActiveTabData() {
         initializeScopedView("memories");
     } else if (state.activeTab === "bot-status") {
         app.loadBotStatus();
+    } else if (state.activeTab === "report-templates") {
+        app.loadReportTemplates();
     } else if (state.activeTab === "media-captions") {
         app.loadMedia();
     } else if (state.activeTab === "stickers") {
