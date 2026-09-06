@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.2.6-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.2.7-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -74,7 +74,7 @@
 
 在 AstrBot 插件配置的 **报告渲染配置 → 渲染模式** 中选择 **文本响应**（默认）或 **图片响应**。`/查看状态`、`/状态` 和 `/画像` 共用此配置；图片渲染失败时自动回退到文本。
 
-- `/查看状态` 或 `/状态`：返回当前群聊或私聊的机器人状态。
+- `/查看状态` 或 `/状态`：返回当前群聊或私聊的机器人状态，包括心情、状态、动作、思考、能量和常驻状态。
 - `/画像 @一位用户` 或 `/画像 123456789`：查询指定用户的画像，展示称呼、外号、性格、兴趣、互动态度、约定、补充、头像描述及好感度和关系称谓。@ 用户优先使用消息中的真实用户 ID；也支持直接输入平台用户 ID。
 
 画像只查询**当前机器人、当前群聊或私聊**已有的记录，不跨会话查询，也不会触发新的画像生成；未找到时会提示暂无记录。每次只能查询一位用户。

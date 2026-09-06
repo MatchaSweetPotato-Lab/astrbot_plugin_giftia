@@ -4,7 +4,7 @@ from ..utils.schemas import normalize_energy
 
 
 def build_status_report(bot_name: str, nickname: str, session_id: str, status) -> dict:
-    """Build the public status data shared by text and image reports.
+    """Build the session status data shared by text and image reports.
 
     Args:
         bot_name: Internal bot name.
@@ -13,7 +13,7 @@ def build_status_report(bot_name: str, nickname: str, session_id: str, status) -
         status: Current cached bot status.
 
     Returns:
-        JSON-compatible template data, excluding private thoughts and memory.
+        JSON-compatible template data, including the current thought in memory.
     """
     energy_text = f"{normalize_energy(status.energy)}%"
     percent = int(energy_text.rstrip("%"))
@@ -27,6 +27,7 @@ def build_status_report(bot_name: str, nickname: str, session_id: str, status) -
         "mood": status.mood or "平稳",
         "state": status.state or "空闲",
         "action": status.action or "待机",
+        "memory": str(status.memory or "").strip() or "暂无思考",
         "energy": energy_text,
         "energy_percent": percent,
         "custom_status": {
