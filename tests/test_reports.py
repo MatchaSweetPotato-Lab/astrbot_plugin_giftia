@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from threading import Barrier, BrokenBarrierError
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from core.reports.service import MAX_TEMPLATE_BYTES, ReportDefinition, ReportService
 from core.reports.status import build_status_report
+from core.utils.schemas import Status
 from PIL import Image
 
 
@@ -20,7 +22,10 @@ def service(tmp_path):
 
 
 def test_default_report_and_text_escape(service):
-    data = service.get_template("status")["sample_data"]
+    info = service.get_template("status")
+    data = info["sample_data"]
+    assert "思考" in info["fields"]["memory"]
+    assert data["memory"]
     data["nickname"] = '<script>alert("x")</script>'
     data["custom_status"] = {"场景": "<教室>"}
     rendered = service.render_html("status", data)
@@ -28,7 +33,21 @@ def test_default_report_and_text_escape(service):
     assert "<script>" not in rendered
     assert "&lt;教室&gt;" in rendered
     assert "96%" in rendered
+    assert data["memory"] in rendered
     assert "Content-Security-Policy" in rendered
+
+
+@pytest.mark.parametrize("memory", [None, "", " \n\t", "<想法> & 灵感\n下一步"])
+def test_status_thought_is_rendered_with_empty_fallback_and_escaping(service, memory):
+    status = Status(memory=memory)
+    data = build_status_report("bot", "小吉", "10001", status)
+    expected = (memory or "").strip() or "暂无思考"
+    assert data["memory"] == expected
+    assert status.memory == memory
+    rendered = service.render_html("status", data)
+    assert "<h2>思考</h2>" in rendered
+    assert escape(expected) in rendered
+    assert "<想法>" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -188,19 +207,18 @@ async def test_image_render_uses_astrbot_t2i_without_second_jinja_evaluation(ser
         ("abc", "100%", 100),
     ],
 )
-def test_status_public_data_and_energy(energy, display, percent):
+def test_status_data_and_energy(energy, display, percent):
     status = SimpleNamespace(
         energy=energy,
         mood="",
         state=None,
         action="",
         custom_status={"空": " ", "服装": "水手服"},
-        memory="private",
+        memory="想和大家聊聊天",
     )
     data = build_status_report("bot", "小吉", "10001", status)
     assert data["energy"] == display
     assert data["energy_percent"] == percent
     assert data["custom_status"] == {"服装": "水手服"}
     assert data["mood"] == "平稳"
-    assert "memory" not in data
-    assert "private" not in str(data)
+    assert data["memory"] == "想和大家聊聊天"

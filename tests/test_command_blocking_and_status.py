@@ -454,6 +454,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
             mood="开心",
             state="空闲",
             action="品茶",
+            memory="想和大家聊聊今天的趣事",
             energy="95.5",
             custom_status={"服装": "水手服", "场景": "教室"},
         )
@@ -468,6 +469,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("心情：开心", output_text)
         self.assertIn("状态：空闲", output_text)
         self.assertIn("动作：品茶", output_text)
+        self.assertIn("思考：想和大家聊聊今天的趣事", output_text)
         self.assertIn("能量：96%", output_text)
         self.assertIn("服装：水手服", output_text)
         self.assertIn("场景：教室", output_text)
@@ -483,7 +485,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
 
         self.plugin.conf = {"report_config": {"render_mode": "图片响应"}}
         self.plugin.data_cache.get_bot_status.return_value = Status(
-            mood="开心", energy="0"
+            mood="开心", energy="0", memory="稍作休息再继续聊天"
         )
         event = self._create_mock_event()
         event.get_group_id.return_value = ""
@@ -509,6 +511,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         data = self.plugin.reports.render_image.call_args.args[1]
         self.assertEqual(data["session_id"], "12345678")
         self.assertEqual(data["energy"], "0%")
+        self.assertEqual(data["memory"], "稍作休息再继续聊天")
 
     async def test_status_render_error_falls_back_to_text(self):
         self.plugin.conf = {"report_config": {"render_mode": "图片响应"}}
@@ -516,7 +519,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
             side_effect=RuntimeError("t2i unavailable")
         )
         self.plugin.data_cache.get_bot_status.return_value = Status(
-            mood="开心", custom_status={"服装": "水手服"}
+            mood="开心", memory="想听听大家的近况", custom_status={"服装": "水手服"}
         )
         chunks = [
             chunk
@@ -526,6 +529,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(chunks), 1)
         self.assertIn("心情：开心", chunks[0].chain[0].text)
+        self.assertIn("思考：想听听大家的近况", chunks[0].chain[0].text)
         self.assertIn("服装：水手服", chunks[0].chain[0].text)
 
     async def test_status_default_text_does_not_call_renderer(self):
@@ -539,6 +543,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
         self.assertIn("暂无常驻状态", chunks[0].chain[0].text)
+        self.assertIn("思考：暂无思考", chunks[0].chain[0].text)
         self.plugin.reports.render_image.assert_not_called()
 
     async def test_delete_message_command_and_logging(self):

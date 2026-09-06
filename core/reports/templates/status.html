@@ -15,6 +15,7 @@ h1 { margin: 18px 0 10px; font-size: 44px; overflow-wrap: anywhere; }
 .state { border: 1px solid #e5ece8; padding: 22px; border-radius: 16px; }
 .label { color: #7b8c82; font-size: 18px; margin-bottom: 12px; }
 .value { font-size: 26px; font-weight: 600; overflow-wrap: anywhere; white-space: pre-wrap; }
+.thought { font-size: 22px; font-weight: 400; }
 h2 { font-size: 22px; margin: 32px 0 12px; }
 .custom { display: grid; grid-template-columns: minmax(100px, 1fr) 3fr; gap: 20px; padding: 16px 0; border-bottom: 1px solid #edf1ee; }
 .custom .label { margin: 0; overflow-wrap: anywhere; }
@@ -36,6 +37,8 @@ footer { margin-top: 30px; display: flex; justify-content: space-between; gap: 1
         <div class="state"><div class="label">{{ label }}</div><div class="value">{{ value }}</div></div>
         {% endfor %}
     </section>
+    <h2>思考</h2>
+    <div class="value thought">{{ memory }}</div>
     <h2>常驻状态</h2>
     {% for label, value in custom_status.items() %}
     <div class="custom"><div class="label">{{ label }}</div><div class="value">{{ value }}</div></div>
