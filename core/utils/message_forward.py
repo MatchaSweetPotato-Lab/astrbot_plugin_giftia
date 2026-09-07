@@ -539,7 +539,7 @@ class MessageForwardParser:
             elif seg_type == "at":
                 qq = seg_data.get("qq") or seg_data.get("user_id") or ""
                 name = seg_data.get("name") or ""
-                parts.append(f"<@{name}({qq})>" if name else f"<@{qq}>")
+                parts.append(f"@{name}({qq})" if name else f"@{qq}")
             elif seg_type == "image":
                 url = seg_data.get("url") or ""
                 file_name = seg_data.get("file") or seg_data.get("path") or ""

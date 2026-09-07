@@ -401,7 +401,8 @@ class ReplyPipeline:
 
         # Anti-drooling optimization for low-intelligence models:
         # Filter out messages that have already been sent in the current XML tool calling loop.
-        filter_duplicate_replies(llm_result, sent_messages)
+        if getattr(self.plugin, "enable_anti_drool", False):
+            filter_duplicate_replies(llm_result, sent_messages)
 
         # 5. 空回复拦截处理
         if (

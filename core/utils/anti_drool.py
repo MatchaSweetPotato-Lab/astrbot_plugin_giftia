@@ -187,10 +187,8 @@ def normalize_text_for_dedup(text: str) -> str:
     """
     if not text:
         return ""
-    # 1. 移除 <@user_id> 形式的 At 提及 (msg_logs 中的 At 格式)
-    normalized = re.sub(r'<@\w+>', '', text)
-    # 2. 移除 @昵称 形式的 At 提及 (如 @流萤)
-    normalized = re.sub(r'@\S+', '', normalized)
+    # 1. 移除 @xxx 形式的 At 提及
+    normalized = re.sub(r'@\S+', '', text)
     # 3. 移除可能存在的 [图片:hash] 或 [语音:hash] 占位符
     normalized = re.sub(r'\[(图片|语音)[:：]\s*[a-zA-Z0-9_-]{8,64}\]', '', normalized)
     # 4. 移除首尾空白和常用标点符号
@@ -239,7 +237,7 @@ def filter_duplicate_replies(llm_result, sent_messages: list[str]) -> None:
     if getattr(llm_result, "output_order", None):
         new_order = []
         for kind, old_index in llm_result.output_order:
-            if kind == "message":
+            if kind in ("message", "sticker", "image"):
                 if old_index in message_index_map:
                     new_order.append((kind, message_index_map[old_index]))
             else:

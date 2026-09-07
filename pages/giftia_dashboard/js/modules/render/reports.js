@@ -146,22 +146,51 @@ async function loadAssets() {
     el('assets').replaceChildren();
     if (!assets.length) el('assets').textContent = '暂无素材，上传背景图或装饰图片后即可插入模板。';
     for (const asset of assets) {
-        const button = document.createElement('button');
-        button.className = 'report-asset';
-        button.title = `插入图片 ${asset.name}`;
+        const item = document.createElement('div');
+        item.className = 'report-asset';
+
+        const insertBtn = document.createElement('button');
+        insertBtn.type = 'button';
+        insertBtn.className = 'report-asset-insert';
+        insertBtn.title = `插入图片 ${asset.name}`;
         const image = document.createElement('img');
         image.src = asset.url;
         image.alt = `素材 ${asset.name.slice(0, 8)}`;
         const label = document.createElement('span');
         label.textContent = `${asset.name.slice(0, 8)} · ${Math.ceil(asset.size / 1024)} KB`;
-        button.append(image, label);
-        button.addEventListener('click', () => {
+        insertBtn.append(image, label);
+        insertBtn.addEventListener('click', () => {
             const editor = el('html');
             editor.setRangeText(`<img src="{{ asset('${asset.name}') }}" alt="" style="max-width:100%">`, editor.selectionStart, editor.selectionEnd, 'end');
             editor.focus();
             markDirty();
         });
-        el('assets').append(button);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'report-asset-delete';
+        deleteBtn.title = `删除素材 ${asset.name.slice(0, 8)}`;
+        deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+        deleteBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const doDelete = async () => {
+                try {
+                    requireSuccess(await window.apiPost('/reports/assets/delete', { name: asset.name }));
+                    if (typeof window.showToast === 'function') window.showToast('素材已删除');
+                    await loadAssets();
+                } catch (error) {
+                    message(error.message, true);
+                }
+            };
+            if (typeof window.showConfirm === 'function') {
+                window.showConfirm('确认删除图片素材', `确定要删除素材 ${asset.name.slice(0, 8)} 吗？此操作不可逆。`, doDelete);
+            } else if (confirm(`确定要删除素材 ${asset.name.slice(0, 8)} 吗？`)) {
+                doDelete();
+            }
+        });
+
+        item.append(insertBtn, deleteBtn);
+        el('assets').append(item);
     }
 }
 

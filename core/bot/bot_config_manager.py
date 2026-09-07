@@ -19,7 +19,7 @@ INTERACTIVE_FEATURES_METADATA = [
     {
         "key": FeatureKey.SLANG,
         "label": "黑话管理",
-        "note": "新增/覆盖、删除当前会话黑话",
+        "note": "",
     },
     {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
     {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},

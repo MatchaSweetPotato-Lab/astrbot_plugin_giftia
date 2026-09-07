@@ -143,9 +143,6 @@ def build_decision_prompt(
     group_rules_text = (group_profile or "").strip()
     if group_rules_text:
         user_prompt.append(f"<group_rules>\n{group_rules_text}\n</group_rules>")
-    persistent_status_block = build_persistent_status_block(bot_status)
-    if persistent_status_block:
-        user_prompt.append(persistent_status_block)
 
     # 2. 半静态上下文区：任务看板、活跃成员摘要、合并转发索引与历史消息
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
@@ -171,7 +168,7 @@ def build_decision_prompt(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
         )
 
-    # 3. 动态触发区：当前发言人画像、机器人当前状态、当前消息与当前时间戳
+    # 3. 动态触发区：当前发言人画像、机器人状态（常驻状态与即时心境）、当前消息与当前时间戳
     user_profile_block = build_user_profile_block(
         user_id=user_id,
         user_profile=user_profile,
@@ -180,6 +177,9 @@ def build_decision_prompt(
     )
     if user_profile_block:
         user_prompt.append(user_profile_block)
+    persistent_status_block = build_persistent_status_block(bot_status)
+    if persistent_status_block:
+        user_prompt.append(persistent_status_block)
     if bot_status:
         user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     slang_block = build_slang_block(
@@ -358,9 +358,6 @@ def build_reply_prompt(
     group_rules_text = (group_profile or "").strip()
     if group_rules_text:
         user_prompt.append(f"<group_rules>\n{group_rules_text}\n</group_rules>")
-    persistent_status_block = build_persistent_status_block(bot_status)
-    if persistent_status_block:
-        user_prompt.append(persistent_status_block)
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
     if task_board_block:
         user_prompt.append(task_board_block)
@@ -409,6 +406,9 @@ def build_reply_prompt(
     )
     if user_profile_block:
         user_prompt.append(user_profile_block)
+    persistent_status_block = build_persistent_status_block(bot_status)
+    if persistent_status_block:
+        user_prompt.append(persistent_status_block)
     if bot_status:
         user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     # 表情包

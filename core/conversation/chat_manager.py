@@ -655,12 +655,17 @@ class ChatManager:
                                 item_type,
                                 item_index,
                             ) in self.action_dispatcher.get_output_order(chunk):
-                                if item_type == "message":
+                                if item_type in ("message", "sticker", "image"):
                                     if item_index < 0 or item_index >= len(
                                         chunk.msg_chains
                                     ):
                                         continue
-                                    msg_chain = chunk.msg_chains[item_index]
+                                    raw_chain = chunk.msg_chains[item_index]
+                                    if not raw_chain:
+                                        continue
+                                    msg_chain = await self.action_dispatcher._build_send_chain(
+                                        raw_chain, bot_conf
+                                    )
                                 elif item_type == "tts":
                                     (
                                         msg_chain,

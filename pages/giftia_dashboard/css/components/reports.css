@@ -38,9 +38,15 @@
 .report-message:not(:empty) { margin-top: 12px; }
 .report-message.error { color: var(--danger); }
 .report-assets { display: flex; flex-wrap: wrap; gap: 12px; }
-.report-asset { width: 112px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; color: var(--font-color); }
-.report-asset img { width: 94px; height: 70px; object-fit: contain; }
-.report-asset span { display: block; font-size: 11px; margin-top: 6px; }
+.report-asset { position: relative; width: 112px; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; color: var(--font-color); display: flex; flex-direction: column; align-items: center; transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+.report-asset:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); }
+.report-asset-insert { background: none; border: none; padding: 0; cursor: pointer; color: inherit; width: 100%; display: flex; flex-direction: column; align-items: center; }
+.report-asset img { width: 94px; height: 70px; object-fit: contain; border-radius: 4px; }
+.report-asset span { display: block; font-size: 11px; margin-top: 6px; text-align: center; word-break: break-all; }
+.report-asset-delete { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 4px; background: rgba(0, 0, 0, 0.5); color: #ffffff; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s ease, background-color 0.2s ease; padding: 0; z-index: 2; }
+.report-asset:hover .report-asset-delete, .report-asset:focus-within .report-asset-delete { opacity: 1; }
+.report-asset-delete:hover { background: var(--danger, #ef4444); color: #ffffff; }
+.report-asset-delete svg { width: 12px; height: 12px; }
 .report-upload-label { position: relative; overflow: hidden; cursor: pointer; }
 .report-upload-label input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 @media (max-width: 1050px) { .report-workspace { grid-template-columns: minmax(0, 1fr); } .report-code { height: 420px; } .report-data { height: 240px; } }

@@ -99,3 +99,19 @@ class ReportApi:
         except Exception:
             logger.exception("[Giftia Reports] Failed to upload image")
             return error_response("上传图片失败", status_code=500)
+
+    async def delete_report_asset(self):
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return error_response("请求必须是 JSON 对象")
+            name = body.get("name")
+            if not isinstance(name, str) or not name:
+                return error_response("缺少图片名称")
+            await asyncio.to_thread(self.giftia.reports.delete_asset, name)
+            return json_response({"status": "success", "message": "图片素材已删除"})
+        except ValueError as exc:
+            return error_response(str(exc))
+        except Exception:
+            logger.exception("[Giftia Reports] Failed to delete image")
+            return error_response("删除图片素材失败", status_code=500)

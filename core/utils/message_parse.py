@@ -320,7 +320,7 @@ class MessageParser:
             elif isinstance(comp, At):
                 comp_name = getattr(comp, "name", None)
                 msg_parts.append(
-                    f"<@{comp_name}({comp.qq})>" if comp_name else f"<@{comp.qq}>"
+                    f"@{comp_name}({comp.qq})" if comp_name else f"@{comp.qq}"
                 )
             elif isinstance(comp, Image):
                 custom_desc = getattr(comp, "meme_desc", None)
