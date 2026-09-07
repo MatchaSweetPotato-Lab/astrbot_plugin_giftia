@@ -534,6 +534,12 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.set_group_rules(event, rules):
             yield chunk
 
+    @filter.command("黑话")
+    async def slang(self, event: AstrMessageEvent, text: GreedyStr):
+        """查询或设置当前会话的黑话：/黑话 <词> [描述]"""
+        async for chunk in self.cmd_handler.slang(event, text):
+            yield chunk
+
     @filter.command("查看状态", alias={"状态"})
     async def get_bot_status(self, event: AstrMessageEvent):
         """查看当前会话Bot的临时与常驻状态：/查看状态 或 /状态"""

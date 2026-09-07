@@ -10,12 +10,17 @@ import * as media from './modules/render/media.js';
 import * as stickers from './modules/render/stickers.js';
 import * as forwards from './modules/render/forwards.js';
 import * as profiles from './modules/render/profiles.js';
+import * as slang from './modules/render/slang.js';
 import * as token from './modules/render/token.js';
 import * as bots from './modules/bots.js';
 import { initGlobalTooltip } from './components/tooltip.js';
 
 // Assemble window.GiftiaApp keeping identical structure for backward compatibility
 window.GiftiaApp = {
+    initializeSlangTab: slang.initializeSlangTab,
+    loadSlang: slang.loadSlang,
+    resetSlangPagination: slang.resetSlangPagination,
+    openSlangModal: slang.openSlangModal,
     loadBotsData: bots.loadBotsData,
     // Current state variables (mapped to modules/state)
     get activeTab() { return state.activeTab; },
@@ -242,7 +247,8 @@ document.addEventListener("DOMContentLoaded", () => {
         "sticker-bot-name", "sticker-category", "sticker-tag", "sticker-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",
         "profile-type", "profile-bot-name", "profile-group-id-select", "profile-group-id-input", "profile-user-id",
-        "token-bot-name", "token-group-id", "token-time-range"
+        "token-bot-name", "token-group-id", "token-time-range",
+        "slang-bot", "slang-session", "slang-search"
     ];
 
     filterInputIds.forEach(id => {
@@ -259,7 +265,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         "forward-bot-name",
                         "profile-bot-name",
                         "profile-type",
-                        "token-bot-name"
+                        "token-bot-name",
+                        "slang-bot"
                     ].includes(id);
                     if (app.activeTab === "chat-history") {
                         app.resetPagination("history");
@@ -294,9 +301,30 @@ document.addEventListener("DOMContentLoaded", () => {
                     } else if (app.activeTab === "token-stats") {
                         await app.refreshScopedFilters("tokenLogs", preserveSession);
                         await app.loadScopedViewData("tokenLogs");
+                    } else if (app.activeTab === "slang") {
+                        if (id === "slang-bot") {
+                            const sessionEl = document.getElementById("slang-session");
+                            if (sessionEl) sessionEl.value = "";
+                            await app.initializeSlangTab(false);
+                        } else {
+                            if (typeof app.resetSlangPagination === "function") {
+                                app.resetSlangPagination();
+                            }
+                            await app.loadSlang();
+                        }
                     }
                 }, 300);
             });
+        }
+    });
+
+    document.getElementById("slang-search")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            clearTimeout(filterTimeout);
+            if (typeof window.GiftiaApp.resetSlangPagination === "function") {
+                window.GiftiaApp.resetSlangPagination();
+            }
+            window.GiftiaApp.loadSlang();
         }
     });
 });

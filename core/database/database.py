@@ -19,6 +19,7 @@ from .repositories.chat_history import ChatHistoryRepository
 from .repositories.forwarded_messages import ForwardedMessagesRepository
 from .repositories.media_captions import MediaCaptionsRepository
 from .repositories.short_tasks import ShortTasksRepository
+from .repositories.slang import SlangRepository
 from .repositories.bot_status import BotStatusRepository
 from .repositories.memories import MemoriesRepository
 from .repositories.kv_store import KVStoreRepository
@@ -38,6 +39,7 @@ class Database(ProfileStoreMixin):
         self.forwarded_messages_repo = ForwardedMessagesRepository(conn, self.chat_history_repo)
         self.media_captions_repo = MediaCaptionsRepository(conn)
         self.short_tasks_repo = ShortTasksRepository(conn)
+        self.slang_repo = SlangRepository(conn)
         self.bot_status_repo = BotStatusRepository(conn)
         self.memories_repo = MemoriesRepository(conn)
         self.kv_store_repo = KVStoreRepository(conn)

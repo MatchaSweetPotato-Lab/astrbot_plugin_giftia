@@ -927,3 +927,120 @@ html[data-theme="dark"] .btn-icon-action:hover {
     width: 100%;
     box-sizing: border-box;
 }
+
+/* ==========================================================================
+   Slang Card Grid Styles
+   ========================================================================== */
+.slang-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+@media (max-width: 480px) {
+    .slang-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.slang-card {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 18px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    box-sizing: border-box;
+}
+
+.slang-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.slang-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 10px;
+}
+
+.slang-term-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background-color: var(--primary-light);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: var(--radius-sm);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 14.5px;
+    letter-spacing: -0.01em;
+    min-width: 0;
+}
+
+.slang-term-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.slang-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.slang-card-body {
+    flex: 1;
+    margin-bottom: 14px;
+}
+
+.slang-desc-text {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--font-color);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.slang-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+    font-size: 11.5px;
+    color: var(--font-secondary);
+    opacity: 0.85;
+}
+
+.slang-grid .loading-row,
+.slang-grid .no-data-row {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--font-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-size: 14px;
+    background-color: var(--card-bg);
+    border-radius: var(--radius);
+    border: 1px dashed var(--border-color);
+    width: 100%;
+    box-sizing: border-box;
+}

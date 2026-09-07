@@ -11,6 +11,18 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
     async with conn.cursor() as cursor:
         # 开启 WAL 模式，提高并发性能
         await cursor.execute("PRAGMA journal_mode=WAL;")
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS slang (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_name TEXT NOT NULL,
+                group_or_user_id TEXT NOT NULL,
+                term TEXT NOT NULL COLLATE BINARY,
+                description TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(bot_name, group_or_user_id, term)
+            )
+        """)
         # 创建聊天记录表
         await cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_history (

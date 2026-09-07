@@ -562,6 +562,35 @@ class ActionDispatcher:
         )
         common_logs = task_board_logs + set_call_name_logs + set_status_logs
 
+        for item in llm_result.slang_actions:
+            action = item.get("action", "")
+            term = item.get("term", "")
+            try:
+                if not self._interactive_feature_enabled(FeatureKey.SLANG, bot_name):
+                    raise ValueError("黑话管理工具未启用")
+                if action == "set":
+                    await self.plugin.db.slang_repo.set_entry(
+                        bot_name, group_or_user_id, term, item.get("description", "")
+                    )
+                    result = "success"
+                elif action == "delete":
+                    deleted = await self.plugin.db.slang_repo.delete_entry(
+                        bot_name, group_or_user_id, term
+                    )
+                    result = "deleted" if deleted else "not_found"
+                else:
+                    raise ValueError("黑话工具仅支持 set 和 delete")
+                common_logs.append(
+                    f"<slang action={quoteattr(action)} term={quoteattr(term)} "
+                    f"result={quoteattr(result)}/>"
+                )
+            except Exception as e:
+                logger.warning(f"[Giftia] Slang action failed: {e}")
+                common_logs.append(
+                    f"<slang action={quoteattr(action)} term={quoteattr(term)} "
+                    f"result='failed' reason={quoteattr(str(e))}/>"
+                )
+
         # 区分 aiocqhttp / qq_official 平台与其它通用平台
         is_aiocqhttp = event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent

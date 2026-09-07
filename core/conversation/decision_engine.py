@@ -435,8 +435,13 @@ class DecisionEngine:
                     active_user_briefs=active_user_briefs,
                     short_tasks=short_tasks,
                     short_task_limit=short_task_limit,
-                    message_truncate_limit=getattr(self.plugin, "reply_message_truncate_limit", 1500),
+                    message_truncate_limit=getattr(
+                        self.plugin, "reply_message_truncate_limit", 1500
+                    ),
                     media_captions=media_captions,
+                    slang_entries=await self.plugin.db.slang_repo.get_entries(
+                        bot_name, group_or_user_id
+                    ),
                 )
 
                 provider_ids = decision_conf.get("provider_ids")

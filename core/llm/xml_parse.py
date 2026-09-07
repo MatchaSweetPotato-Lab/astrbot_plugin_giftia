@@ -383,6 +383,15 @@ class XmlParse:
                                 if k_clean:
                                     result.set_custom_status[k_clean] = v_clean
 
+                elif tag_name == "slang":
+                    result.slang_actions.append(
+                        {
+                            "action": self._attr_str(child, "action", ""),
+                            "term": self._attr_str(child, "term", ""),
+                            "description": child.get_text().strip(),
+                        }
+                    )
+
                 elif tag_name == "search_memory":
                     text = child.get_text(strip=True)
                     if text:

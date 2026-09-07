@@ -66,6 +66,10 @@
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                     画像管理
                 </button>
+                <button class="nav-tab" data-tab="slang">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M12 3v18M3 4h5a4 4 0 0 1 4 2 4 4 0 0 1 4-2h5v15h-5a4 4 0 0 0-4 2 4 4 0 0 0-4-2H3z"></path></svg>
+                    黑话管理
+                </button>
                 <button class="nav-tab" data-tab="token-stats">
                     <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     Token统计
@@ -79,6 +83,32 @@
 
         <!-- Main Body -->
         <main class="main-content">
+            <section id="tab-slang" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="slang-bot">机器人</label>
+                            <select id="slang-bot"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="slang-session">会话 / 群号</label>
+                            <select id="slang-session"></select>
+                            <datalist id="slang-sessions"></datalist>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label for="slang-search">搜索词或描述</label>
+                            <input id="slang-search" placeholder="搜索词或描述...">
+                        </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button id="slang-add" class="btn btn-primary">新增黑话</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="slang-grid-container">
+                    <div class="slang-grid" id="slang-list"></div>
+                    <div id="slang-pagination" class="pagination-container"></div>
+                </div>
+            </section>
             <section id="tab-report-templates" class="tab-panel">
                 <div class="card report-toolbar">
                     <div class="report-toolbar-info">
@@ -911,6 +941,38 @@
                 <button class="btn btn-primary" onclick="window.refreshTaskBoardModal()">刷新</button>
             </div>
         </div>
+    </div>
+
+    <div id="slang-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="slang-modal-title">
+        <form id="slang-form" class="modal-card card">
+            <div class="modal-header">
+                <h2 id="slang-modal-title" class="text-h3 pa-4 pb-0 pl-6">新增黑话</h2>
+                <button type="button" class="modal-close-btn" aria-label="关闭" onclick="closeModal('slang-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="slang-edit-bot">机器人</label>
+                    <input id="slang-edit-bot" required readonly>
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-session">会话 / 群号</label>
+                    <input id="slang-edit-session" list="slang-sessions" required placeholder="群聊填群号，私聊填用户ID">
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-term">词</label>
+                    <input id="slang-edit-term" required maxlength="100" pattern="\S+" placeholder="例如：蹬（不能包含空白）">
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-description">描述</label>
+                    <textarea id="slang-edit-description" required maxlength="2000" rows="5" placeholder="例如：不心疼地使用。"></textarea>
+                </div>
+                <p id="slang-form-error" role="alert" class="muted-text"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" variant="text" onclick="closeModal('slang-modal')">取消</button>
+                <button id="slang-save" type="submit" class="btn btn-primary" variant="tonal">保存</button>
+            </div>
+        </form>
     </div>
 
     <!-- MODAL: Edit User Profile -->

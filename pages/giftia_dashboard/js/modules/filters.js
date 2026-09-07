@@ -232,6 +232,8 @@ export function loadActiveTabData() {
         initializeScopedView("forwards");
     } else if (state.activeTab === "profiles") {
         app.loadProfilesData();
+    } else if (state.activeTab === "slang") {
+        app.initializeSlangTab();
     } else if (state.activeTab === "token-stats") {
         app.initializeTokenStatsTab();
     } else if (state.activeTab === "bots") {
