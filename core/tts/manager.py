@@ -775,7 +775,7 @@ class TTSManager:
                     text_parts.append(comp.text)
                     log_parts.append(comp.text)
                 elif hasattr(comp, "qq"):
-                    log_parts.append(f" <@{comp.qq}>")
+                    log_parts.append(f" @{comp.qq}")
                 elif hasattr(comp, "path") or hasattr(comp, "url"):
                     log_parts.append(" [图片]")
             new_msg_texts.append("".join(text_parts))

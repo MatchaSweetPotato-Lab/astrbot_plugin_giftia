@@ -143,7 +143,7 @@ class XmlParse:
                                 )
                                 if user_id:
                                     sub_chain.append(At(qq=user_id))
-                                    sub_log += f" <@{user_id}>"
+                                    sub_log += f" @{user_id}"
                                 else:
                                     logger.error(
                                         f"At组件缺少user_id/id/qq属性: {content.attrs}, xml_str: {xml_str[:1000]}"
@@ -213,7 +213,7 @@ class XmlParse:
                     if user_id:
                         result.msg_chains.append([At(qq=user_id)])
                         result.msg_texts.append("")
-                        result.msg_logs.append(f"<@{user_id}>")
+                        result.msg_logs.append(f"@{user_id}")
                         result.output_order.append(
                             ("message", len(result.msg_chains) - 1)
                         )
