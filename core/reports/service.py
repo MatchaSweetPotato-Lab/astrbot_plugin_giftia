@@ -270,6 +270,15 @@ class ReportService:
                 path.write_bytes(content)
         return {"name": name, "size": len(content), "url": self.asset_url(name)}
 
+    def delete_asset(self, name: str) -> None:
+        if not isinstance(name, str) or not re.fullmatch(r"[a-f0-9]{64}\.webp", name):
+            raise ValueError("图片名称无效")
+        path = self.assets_dir / name
+        if not path.is_file() or path.is_symlink():
+            raise ValueError("图片不存在")
+        with self._asset_lock:
+            path.unlink(missing_ok=True)
+
     def list_assets(self) -> list[dict]:
         from PIL import Image
 

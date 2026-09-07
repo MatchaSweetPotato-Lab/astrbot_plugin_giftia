@@ -31,6 +31,7 @@ def api_app(tmp_path, monkeypatch):
             "preview": api.preview_report,
             "assets": api.get_report_assets,
             "upload": api.upload_report_asset,
+            "assets/delete": api.delete_report_asset,
         }
         with bind_request_context(PluginRequest(request)):
             return await handlers[endpoint]()
@@ -97,6 +98,21 @@ async def test_api_image_upload_and_embedding(api_app, report_type):
         assert "data:image/webp;base64," in result.json()["data"]["html"]
         invalid = await client.post("/upload", json={"base64": "invalid"})
         assert invalid.status_code == 400
+
+        # Test deleting the asset
+        delete_res = await client.post("/assets/delete", json={"name": name})
+        assert delete_res.status_code == 200
+        assert delete_res.json()["status"] == "success"
+        listing_after = await client.get("/assets")
+        assert len(listing_after.json()["data"]) == 0
+
+        # Deleting already deleted asset returns error
+        del_again = await client.post("/assets/delete", json={"name": name})
+        assert del_again.status_code == 400
+
+        # Deleting invalid format returns error
+        del_invalid = await client.post("/assets/delete", json={"name": "../bad.webp"})
+        assert del_invalid.status_code == 400
 
 
 @pytest.mark.asyncio

@@ -222,3 +222,22 @@ def test_status_data_and_energy(energy, display, percent):
     assert data["custom_status"] == {"服装": "水手服"}
     assert data["mood"] == "平稳"
     assert data["memory"] == "想和大家聊聊天"
+
+
+def test_delete_asset(service, tmp_path):
+    raw = BytesIO()
+    Image.new("RGB", (30, 20), "blue").save(raw, format="PNG")
+    asset = service.upload_asset(base64.b64encode(raw.getvalue()).decode())
+    name = asset["name"]
+    assert len(service.list_assets()) == 1
+
+    service.delete_asset(name)
+    assert len(service.list_assets()) == 0
+    assert not (service.assets_dir / name).exists()
+
+    with pytest.raises(ValueError, match="图片不存在"):
+        service.delete_asset(name)
+
+    with pytest.raises(ValueError, match="图片名称无效"):
+        service.delete_asset("../test.webp")
+

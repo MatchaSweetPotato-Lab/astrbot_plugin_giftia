@@ -30,6 +30,7 @@ class WebUIManager:
             ("/reports/preview", self.web_api.preview_report, "POST"),
             ("/reports/assets", self.web_api.get_report_assets, "GET"),
             ("/reports/assets/upload", self.web_api.upload_report_asset, "POST"),
+            ("/reports/assets/delete", self.web_api.delete_report_asset, "POST"),
         ):
             ctx.register_web_api(
                 route=f"/astrbot_plugin_giftia{route}",
