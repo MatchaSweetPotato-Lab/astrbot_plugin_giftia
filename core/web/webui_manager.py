@@ -10,6 +10,21 @@ class WebUIManager:
         ctx = self.plugin.context
 
         for route, handler, method in (
+            ("/settings/nav_config", self.web_api.get_nav_config, "GET"),
+            ("/settings/nav_config", self.web_api.save_nav_config, "POST"),
+            ("/slang", self.web_api.get_slang, "GET"),
+            ("/slang/filter_options", self.web_api.get_slang_filter_options, "GET"),
+            ("/slang/save", self.web_api.save_slang, "POST"),
+            ("/slang/delete", self.web_api.delete_slang, "POST"),
+        ):
+            ctx.register_web_api(
+                route=f"/astrbot_plugin_giftia{route}",
+                view_handler=handler,
+                methods=[method],
+                desc="Manage session vocabulary",
+            )
+
+        for route, handler, method in (
             ("/reports/templates", self.web_api.get_report_templates, "GET"),
             ("/reports/templates/save", self.web_api.update_report_template, "POST"),
             ("/reports/preview", self.web_api.preview_report, "POST"),

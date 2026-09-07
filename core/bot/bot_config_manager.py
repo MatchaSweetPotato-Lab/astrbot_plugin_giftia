@@ -16,6 +16,11 @@ INTERACTIVE_FEATURES_METADATA = [
     {"key": FeatureKey.GROUP_ADMIN, "label": "群管禁言/踢人", "note": "踢人仅OneBot"},
     {"key": FeatureKey.SCHEDULE_TASK, "label": "设置/查看/删除定时任务", "note": ""},
     {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
+    {
+        "key": FeatureKey.SLANG,
+        "label": "黑话管理",
+        "note": "新增/覆盖、删除当前会话黑话",
+    },
     {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
     {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},
     {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},

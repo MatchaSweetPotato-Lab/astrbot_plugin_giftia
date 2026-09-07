@@ -45,6 +45,7 @@ class ReplyPipeline:
             "search_histories",
             "get_message_contexts",
             "task_board_actions",
+            "slang_actions",
             "tts_segments",
             "set_call_names",
             "set_custom_status",
@@ -327,7 +328,12 @@ class ReplyPipeline:
             other_data=other_data,
             user_relation=user_relation,
             bot_sticker=bot_sticker_cache,
-            message_truncate_limit=getattr(self.plugin, "reply_message_truncate_limit", 1500),
+            message_truncate_limit=getattr(
+                self.plugin, "reply_message_truncate_limit", 1500
+            ),
+            slang_entries=await self.plugin.db.slang_repo.get_entries(
+                bot_name, group_or_user_id
+            ),
         )
         logger.debug(f"[Giftia] 触发大模型回复,构造回复提示词：{user_prompt}")
 

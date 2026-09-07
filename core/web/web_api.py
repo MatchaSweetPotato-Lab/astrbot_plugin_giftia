@@ -1,17 +1,20 @@
 from .bot_api import BotApi
 from .bot_status_api import BotStatusApi
 from .chat_history_api import ChatHistoryApi
+from .dashboard_api import DashboardApi
 from .forward_api import ForwardApi
 from .media_api import MediaApi
 from .memory_api import MemoryApi
 from .profile_api import ProfileApi
 from .report_api import ReportApi
+from .slang_api import SlangApi
 from .sticker_api import StickerApi
 from .task_api import TaskApi
 from .token_api import TokenApi
 
 
 class GiftiaWebApi(
+    DashboardApi,
     BotApi,
     MediaApi,
     ForwardApi,
@@ -20,6 +23,7 @@ class GiftiaWebApi(
     MemoryApi,
     BotStatusApi,
     TaskApi,
+    SlangApi,
     ProfileApi,
     StickerApi,
     ReportApi,

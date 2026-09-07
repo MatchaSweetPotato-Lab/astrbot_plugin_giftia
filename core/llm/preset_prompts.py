@@ -185,6 +185,13 @@ def build_xml_instructions(
             '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
         )
 
+    if is_enabled(FeatureKey.SLANG):
+        interactive_lines.append(
+            "- **黑话管理**:\n"
+            '  * **新增/覆盖**: `<slang action="set" term="词">完整描述</slang>`。同词已有描述时完全覆盖。\n'
+            '  * **删除**: `<slang action="delete" term="词"/>`。删除错误或不再适用的解释。'
+        )
+
     if is_enabled(FeatureKey.TASK_BOARD):
         interactive_lines.append(
             "- **短期任务看板**:\n"
@@ -550,4 +557,3 @@ DEFAULT_IMAGE_CAPTION_PROMPT = get_image_caption_prompt()
 DEFAULT_AUDIO_CAPTION_PROMPT = get_audio_caption_prompt()
 DEFAULT_VIDEO_CAPTION_PROMPT = get_video_caption_prompt()
 DEFAULT_STICKER_ANALYSIS_PROMPT = get_sticker_analysis_prompt()
-

@@ -33,52 +33,54 @@
     <div class="app-container">
         <!-- Top Header Navigation -->
         <header class="app-header">
-            <nav class="tab-navigation">
-                <button class="nav-tab active" data-tab="chat-history">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                    决策审计
-                </button>
-                <button class="nav-tab" data-tab="memories">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path><path d="M12 6v6l4 2"></path></svg>
-                    长期记忆
-                </button>
-                <button class="nav-tab" data-tab="bot-status">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-                    会话状态
-                </button>
-                <button class="nav-tab" data-tab="report-templates">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M7 8h10M7 12h6M7 16h10"></path></svg>
-                    报告模板
-                </button>
-                <button class="nav-tab" data-tab="media-captions">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-                    媒体转述
-                </button>
-                <button class="nav-tab" data-tab="stickers">
-                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
-                    表情包管理
-                </button>
-                <button class="nav-tab" data-tab="forward-messages">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M7 8h10"></path><path d="M7 12h6"></path><path d="M8 22l4-4 4 4"></path></svg>
-                    合并转发
-                </button>
-                <button class="nav-tab" data-tab="profiles">
-                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                    画像管理
-                </button>
-                <button class="nav-tab" data-tab="token-stats">
-                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                    Token统计
-                </button>
-                <button class="nav-tab" data-tab="bots">
-                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M9 13v2"></path><path d="M15 13v2"></path></svg>
-                    机器人管理
-                </button>
+            <nav class="tab-navigation" id="tab-navigation">
+                <div class="nav-pinned-container" id="nav-pinned-container"></div>
+                <div class="nav-more-wrapper" id="nav-more-wrapper">
+                    <button class="nav-tab nav-more-btn" id="nav-more-btn" type="button" aria-haspopup="true" aria-expanded="false">
+                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+                        <span id="nav-more-label">更多</span>
+                        <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                    <div class="nav-more-dropdown" id="nav-more-dropdown">
+                        <div class="nav-more-items" id="nav-more-items"></div>
+                        <div class="nav-more-divider"></div>
+                        <button class="nav-more-action-btn" id="btn-open-nav-custom" type="button">
+                            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                            <span>自定义导航...</span>
+                        </button>
+                    </div>
+                </div>
             </nav>
         </header>
 
         <!-- Main Body -->
         <main class="main-content">
+            <section id="tab-slang" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="slang-bot">机器人</label>
+                            <select id="slang-bot"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="slang-session">会话 / 群号</label>
+                            <select id="slang-session"></select>
+                            <datalist id="slang-sessions"></datalist>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label for="slang-search">搜索词或描述</label>
+                            <input id="slang-search" placeholder="搜索词或描述...">
+                        </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button id="slang-add" class="btn btn-primary">新增黑话</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="slang-grid-container">
+                    <div class="slang-grid" id="slang-list"></div>
+                    <div id="slang-pagination" class="pagination-container"></div>
+                </div>
+            </section>
             <section id="tab-report-templates" class="tab-panel">
                 <div class="card report-toolbar">
                     <div class="report-toolbar-info">
@@ -913,6 +915,38 @@
         </div>
     </div>
 
+    <div id="slang-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="slang-modal-title">
+        <form id="slang-form" class="modal-card card">
+            <div class="modal-header">
+                <h2 id="slang-modal-title" class="text-h3 pa-4 pb-0 pl-6">新增黑话</h2>
+                <button type="button" class="modal-close-btn" aria-label="关闭" onclick="closeModal('slang-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="slang-edit-bot">机器人</label>
+                    <input id="slang-edit-bot" required readonly>
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-session">会话 / 群号</label>
+                    <input id="slang-edit-session" list="slang-sessions" required placeholder="群聊填群号，私聊填用户ID">
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-term">词</label>
+                    <input id="slang-edit-term" required maxlength="100" pattern="\S+" placeholder="例如：蹬（不能包含空白）">
+                </div>
+                <div class="form-group">
+                    <label for="slang-edit-description">描述</label>
+                    <textarea id="slang-edit-description" required maxlength="2000" rows="5" placeholder="例如：不心疼地使用。"></textarea>
+                </div>
+                <p id="slang-form-error" role="alert" class="muted-text"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" variant="text" onclick="closeModal('slang-modal')">取消</button>
+                <button id="slang-save" type="submit" class="btn btn-primary" variant="tonal">保存</button>
+            </div>
+        </form>
+    </div>
+
     <!-- MODAL: Edit User Profile -->
     <div id="edit-user-profile-modal" class="modal-overlay">
         <div class="modal-card card edit-user-profile-modal-card">
@@ -1606,6 +1640,26 @@
             <div class="modal-footer flex-between">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('bot-edit-modal')">取消</button>
                 <button type="button" class="btn btn-primary" onclick="saveBotFromModal()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Navigation Modal -->
+    <div id="nav-custom-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="nav-custom-modal-title">
+        <div class="modal-card card nav-custom-modal-card">
+            <div class="flex-between align-center mb-2">
+                <div>
+                    <h2 id="nav-custom-modal-title" class="text-h3" style="margin: 0; font-size: 1.15rem; font-weight: 700;">自定义导航页签</h2>
+                </div>
+                <button type="button" class="modal-close-btn" aria-label="关闭" onclick="closeModal('nav-custom-modal')">&times;</button>
+            </div>
+            <div class="nav-custom-list-container" id="nav-custom-list"></div>
+            <div class="modal-footer flex-between" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn btn-secondary" id="nav-custom-reset">恢复推荐默认</button>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('nav-custom-modal')">取消</button>
+                    <button type="button" class="btn btn-primary" id="nav-custom-save">保存设置</button>
+                </div>
             </div>
         </div>
     </div>

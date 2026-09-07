@@ -459,6 +459,49 @@ caption: {media_caption.caption}"""
                 )
             )
 
+    async def slang(self, event: AstrMessageEvent, text: str = ""):
+        """Look up a term or let an administrator replace its definition.
+
+        Args:
+            event: Command event identifying the bot, session, and permissions.
+            text: Term followed by an optional complete definition.
+
+        Yields:
+            The result of sending the definition, confirmation, or error.
+        """
+        command_parts = event.get_message_str().lstrip().split(maxsplit=1)
+        if command_parts and command_parts[0].endswith("黑话"):
+            text = command_parts[1] if len(command_parts) > 1 else ""
+        parts = text.strip().split(maxsplit=1)
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            message = "未找到对应的 Bot 实例。"
+        elif not parts:
+            message = (
+                "用法：/黑话 <词> [描述]\n仅输入词时查询；管理员输入描述时新增或覆盖。"
+            )
+        else:
+            session_id = event.get_group_id() or event.get_sender_id()
+            term = parts[0]
+            repo = self.plugin.db.slang_repo
+            if len(parts) == 1:
+                entries = await repo.get_entries(bot_name, session_id)
+                entry = next((item for item in entries if item["term"] == term), None)
+                message = (
+                    f"{term}：{entry['description']}"
+                    if entry
+                    else f"当前会话尚未收录黑话「{term}」。"
+                )
+            elif not event.is_admin():
+                message = "仅 AstrBot 管理员可以通过指令新增或覆盖黑话。"
+            else:
+                try:
+                    await repo.set_entry(bot_name, session_id, term, parts[1])
+                    message = f"已保存当前会话的黑话「{term}」：\n{parts[1]}"
+                except ValueError as e:
+                    message = str(e)
+        yield await event.send(MessageChain([Plain(message)]))
+
     async def set_group_rules(self, event: AstrMessageEvent, rules: str = ""):
         """Replace or display the rules for the current bot and session.
 

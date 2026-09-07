@@ -25,6 +25,7 @@ class FeatureKey:
     GROUP_ADMIN = "group_admin"
     SCHEDULE_TASK = "schedule_task"
     TASK_BOARD = "task_board"
+    SLANG = "slang"
     STICKER = "sticker"
     MEMORY_QUERY_DELETE = "memory_query_delete"
     SET_CALL_NAME = "set_call_name"
@@ -226,6 +227,7 @@ FLAT_CLOSABLE_TAGS = [
     "caption",
     "set_call_name",
     "set_status",
+    "slang",
 ]
 
 # 内嵌或容器类非平铺自动闭合标签
@@ -298,6 +300,7 @@ class XmlLlmResult:
     get_message_contexts: list[dict] = field(default_factory=list)
     # 短期任务看板操作
     task_board_actions: list[dict] = field(default_factory=list)
+    slang_actions: list[dict] = field(default_factory=list)
     # TTS 语音输出
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 修改用户称呼请求
