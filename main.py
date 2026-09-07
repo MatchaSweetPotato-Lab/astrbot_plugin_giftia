@@ -136,6 +136,7 @@ class Giftia(Star):
         self.safety_intercept_keywords = self.normal_config.get(
             "safety_intercept_keywords", []
         )
+        self.enable_anti_drool = self.normal_config.get("enable_anti_drool", False)
         # 记忆配置
         memory_config = self.conf.get("memory_config", {})
         self.embedding_conf = memory_config.get("embedding_conf", {})

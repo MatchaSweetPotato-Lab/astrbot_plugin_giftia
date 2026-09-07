@@ -212,6 +212,7 @@ class XmlParse:
                     )
                     if user_id:
                         result.msg_chains.append([At(qq=user_id)])
+                        result.msg_texts.append("")
                         result.msg_logs.append(f"<@{user_id}>")
                         result.output_order.append(
                             ("message", len(result.msg_chains) - 1)
@@ -226,6 +227,7 @@ class XmlParse:
                             result.msg_chains.append([img])
                         if len(result.msg_chains) > before_msg_count:
                             result.send_stickers.append(sticker_id)
+                            result.msg_texts.append("")
                             result.msg_logs.append(f"[图片:{sticker_id}]")
                             result.output_order.append(
                                 ("sticker", len(result.msg_chains) - 1)
@@ -241,6 +243,7 @@ class XmlParse:
                         img = self._create_image_component(img_url)
                         if img:
                             result.msg_chains.append([img])
+                            result.msg_texts.append("")
                             result.msg_logs.append(f"[图片:{img_url}]")
                             result.output_order.append(
                                 ("image", len(result.msg_chains) - 1)
@@ -281,6 +284,9 @@ class XmlParse:
                     )
                     if msg_id:
                         result.repeat_message_ids.append(msg_id)
+                        result.output_order.append(
+                            ("repeat", len(result.repeat_message_ids) - 1)
+                        )
                     else:
                         logger.error(
                             f"复读标签缺少message_id属性: {child.attrs}, xml_str: {xml_str[:1000]}"

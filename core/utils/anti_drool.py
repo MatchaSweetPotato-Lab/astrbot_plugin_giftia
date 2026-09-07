@@ -239,7 +239,7 @@ def filter_duplicate_replies(llm_result, sent_messages: list[str]) -> None:
     if getattr(llm_result, "output_order", None):
         new_order = []
         for kind, old_index in llm_result.output_order:
-            if kind == "message":
+            if kind in ("message", "sticker", "image"):
                 if old_index in message_index_map:
                     new_order.append((kind, message_index_map[old_index]))
             else:

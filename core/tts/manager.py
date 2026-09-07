@@ -753,9 +753,15 @@ class TTSManager:
             )
 
         for item_type, index in output_order:
-            if item_type == "message":
+            if item_type in ("message", "sticker", "image"):
                 if index in msg_index_mapping:
-                    new_output_order.extend(msg_index_mapping[index])
+                    mapped_items = []
+                    for mapped_type, mapped_idx in msg_index_mapping[index]:
+                        if mapped_type == "message" and item_type in ("sticker", "image"):
+                            mapped_items.append((item_type, mapped_idx))
+                        else:
+                            mapped_items.append((mapped_type, mapped_idx))
+                    new_output_order.extend(mapped_items)
             else:
                 new_output_order.append((item_type, index))
 

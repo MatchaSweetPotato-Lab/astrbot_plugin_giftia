@@ -284,6 +284,110 @@ class ActionDispatcher:
             logger.warning(f"[Giftia] 表情包转 GIF 失败，按原格式发送: {e}")
             return msg_chain
 
+    async def _dispatch_single_repeat(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        message_id: str,
+        bot_conf: dict,
+        is_qq_official: bool,
+        success_logs: list[str],
+    ) -> bool:
+        """派发单条消息复读，并在成功时写入历史缓存与日志"""
+        repeat_enabled = self._interactive_feature_enabled("repeat", bot_conf)
+        self_id = str(event.get_self_id() or "")
+        message_id = str(message_id or "").strip()
+        if not message_id:
+            return False
+        if not repeat_enabled:
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='disabled'/>"
+            )
+            return False
+
+        target_msg = self._find_recent_message(
+            bot_name, group_or_user_id, message_id
+        )
+        if not target_msg:
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='not_in_context_window'/>"
+            )
+            return False
+        if getattr(target_msg, "role", "message") == "operation_log":
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='operation_log'/>"
+            )
+            return False
+        if self_id and str(target_msg.user_id or "") == self_id:
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='self_message'/>"
+            )
+            return False
+        if target_msg.is_recalled:
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='recalled'/>"
+            )
+            return False
+
+        if is_qq_official:
+            m_id = message_id
+        else:
+            try:
+                m_id = int(message_id)
+            except ValueError:
+                logger.error(f"{bot_name} 复读消息ID格式错误: {message_id}")
+                success_logs.append(
+                    f"<repeat message_id={quoteattr(message_id)} result='failed' reason='invalid_message_id'/>"
+                )
+                return False
+
+        res = await self._invoke_platform_action(
+            event, "repeat_message", is_qq_official, message_id=m_id
+        )
+        if res in ("handler_not_found", "action_not_supported"):
+            logger.debug(f"[Giftia] repeat_message 动作暂不支持 [{res}]")
+            return False
+
+        if isinstance(res, tuple) and len(res) == 3:
+            success, new_message_id, err_msg = res
+        else:
+            success, new_message_id, err_msg = False, None, str(res)
+
+        if success:
+            if new_message_id:
+                success_logs.append(
+                    f"<repeat message_id={quoteattr(message_id)} new_message_id={quoteattr(str(new_message_id))} result='success'/>"
+                )
+                msg_data = MessageData(
+                    nickname=nickname,
+                    user_id=event.get_self_id(),
+                    group_or_user_id=group_or_user_id,
+                    time=datetime.now().isoformat(),
+                    message_id=str(new_message_id),
+                    content=target_msg.content,
+                    is_recalled=False,
+                    media_id_list=list(target_msg.media_id_list or []),
+                    forward_messages=list(
+                        target_msg.forward_messages or []
+                    ),
+                )
+                await self.plugin.data_cache.add_message(
+                    bot_name, group_or_user_id, msg_data
+                )
+                return True
+            else:
+                success_logs.append(
+                    f"<repeat message_id={quoteattr(message_id)} result='partial' reason={quoteattr(err_msg or 'missing_message_id')}/>"
+                )
+                return True
+        else:
+            success_logs.append(
+                f"<repeat message_id={quoteattr(message_id)} result='failed' reason={quoteattr(err_msg or 'unknown')}/>"
+            )
+            return False
+
     async def _dispatch_aiocqhttp_outputs(
         self,
         event: AstrMessageEvent,
@@ -291,9 +395,15 @@ class ActionDispatcher:
         nickname: str,
         group_or_user_id: str,
         llm_result: XmlLlmResult,
+        success_logs: list[str] | None = None,
     ) -> None:
         bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
+        dispatched_repeat_indices = set()
+        if success_logs is None:
+            success_logs = []
+        is_qq_official = is_qq_official_platform(event)
+
         for item_type, item_index in self.get_output_order(llm_result):
             if item_type in ("message", "sticker", "image"):
                 if item_index < 0 or item_index >= len(llm_result.msg_chains):
@@ -318,6 +428,28 @@ class ActionDispatcher:
                 if not msg_chain:
                     continue
                 send_image_type = ImageSendType.NORMAL
+            elif item_type == "repeat":
+                if item_index < 0 or item_index >= len(llm_result.repeat_message_ids):
+                    continue
+                if sent_index > 0:
+                    interval = random.randint(
+                        self.plugin.min_reply_interval, self.plugin.max_reply_interval
+                    )
+                    await asyncio.sleep(interval)
+                target_msg_id = llm_result.repeat_message_ids[item_index]
+                dispatched_repeat_indices.add(item_index)
+                await self._dispatch_single_repeat(
+                    event=event,
+                    bot_name=bot_name,
+                    nickname=nickname,
+                    group_or_user_id=group_or_user_id,
+                    message_id=target_msg_id,
+                    bot_conf=bot_conf,
+                    is_qq_official=is_qq_official,
+                    success_logs=success_logs,
+                )
+                sent_index += 1
+                continue
             else:
                 continue
 
@@ -406,6 +538,28 @@ class ActionDispatcher:
                 await self.plugin.data_cache.add_message(
                     bot_name, group_or_user_id, msg_data
                 )
+
+        # 兜底处理未在 output_order 中出现的复读项（如有）
+        if llm_result.repeat_message_ids:
+            for idx, message_id in enumerate(llm_result.repeat_message_ids):
+                if idx not in dispatched_repeat_indices:
+                    if sent_index > 0:
+                        interval = random.randint(
+                            self.plugin.min_reply_interval,
+                            self.plugin.max_reply_interval,
+                        )
+                        await asyncio.sleep(interval)
+                    await self._dispatch_single_repeat(
+                        event=event,
+                        bot_name=bot_name,
+                        nickname=nickname,
+                        group_or_user_id=group_or_user_id,
+                        message_id=message_id,
+                        bot_conf=bot_conf,
+                        is_qq_official=is_qq_official,
+                        success_logs=success_logs,
+                    )
+                    sent_index += 1
 
     async def _dispatch_generic_outputs(
         self,
@@ -678,97 +832,7 @@ class ActionDispatcher:
                                 f"[Giftia] msg_emoji_like 动作暂不支持 [{err_msg}]"
                             )
 
-            # 4. 消息复读
-            if llm_result.repeat_message_ids:
-                repeat_enabled = self._interactive_feature_enabled("repeat", bot_conf)
-                self_id = str(event.get_self_id() or "")
-                for message_id in llm_result.repeat_message_ids:
-                    message_id = str(message_id or "").strip()
-                    if not message_id:
-                        continue
-                    if not repeat_enabled:
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='disabled'/>"
-                        )
-                        continue
-
-                    target_msg = self._find_recent_message(
-                        bot_name, group_or_user_id, message_id
-                    )
-                    if not target_msg:
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='not_in_context_window'/>"
-                        )
-                        continue
-                    if getattr(target_msg, "role", "message") == "operation_log":
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='operation_log'/>"
-                        )
-                        continue
-                    if self_id and str(target_msg.user_id or "") == self_id:
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='self_message'/>"
-                        )
-                        continue
-                    if target_msg.is_recalled:
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='recalled'/>"
-                        )
-                        continue
-
-                    if is_qq_official:
-                        m_id = message_id
-                    else:
-                        try:
-                            m_id = int(message_id)
-                        except ValueError:
-                            logger.error(f"{bot_name} 复读消息ID格式错误: {message_id}")
-                            success_logs.append(
-                                f"<repeat message_id={quoteattr(message_id)} result='failed' reason='invalid_message_id'/>"
-                            )
-                            continue
-
-                    res = await self._invoke_platform_action(
-                        event, "repeat_message", is_qq_official, message_id=m_id
-                    )
-                    if res in ("handler_not_found", "action_not_supported"):
-                        logger.debug(f"[Giftia] repeat_message 动作暂不支持 [{res}]")
-                        continue
-
-                    if isinstance(res, tuple) and len(res) == 3:
-                        success, new_message_id, err_msg = res
-                    else:
-                        success, new_message_id, err_msg = False, None, str(res)
-
-                    if success:
-                        if new_message_id:
-                            success_logs.append(
-                                f"<repeat message_id={quoteattr(message_id)} new_message_id={quoteattr(str(new_message_id))} result='success'/>"
-                            )
-                            msg_data = MessageData(
-                                nickname=nickname,
-                                user_id=event.get_self_id(),
-                                group_or_user_id=group_or_user_id,
-                                time=datetime.now().isoformat(),
-                                message_id=str(new_message_id),
-                                content=target_msg.content,
-                                is_recalled=False,
-                                media_id_list=list(target_msg.media_id_list or []),
-                                forward_messages=list(
-                                    target_msg.forward_messages or []
-                                ),
-                            )
-                            await self.plugin.data_cache.add_message(
-                                bot_name, group_or_user_id, msg_data
-                            )
-                        else:
-                            success_logs.append(
-                                f"<repeat message_id={quoteattr(message_id)} result='partial' reason={quoteattr(err_msg or 'missing_message_id')}/>"
-                            )
-                    else:
-                        success_logs.append(
-                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason={quoteattr(err_msg or 'unknown')}/>"
-                        )
+            # 4. 消息复读（已合入 output_order 在 _dispatch_aiocqhttp_outputs 中按时序发送）
 
             # 5. 点赞
             if llm_result.likes:
@@ -902,6 +966,7 @@ class ActionDispatcher:
                 nickname=nickname,
                 group_or_user_id=group_or_user_id,
                 llm_result=llm_result,
+                success_logs=success_logs,
             )
 
             # 12. 踢人
