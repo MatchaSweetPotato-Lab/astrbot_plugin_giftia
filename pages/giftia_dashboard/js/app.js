@@ -13,10 +13,14 @@ import * as profiles from './modules/render/profiles.js';
 import * as slang from './modules/render/slang.js';
 import * as token from './modules/render/token.js';
 import * as bots from './modules/bots.js';
+import * as navManager from './modules/nav_manager.js';
 import { initGlobalTooltip } from './components/tooltip.js';
 
 // Assemble window.GiftiaApp keeping identical structure for backward compatibility
 window.GiftiaApp = {
+    openNavCustomModal: navManager.openNavCustomModal,
+    switchToTab: navManager.switchToTab,
+    renderNavbar: navManager.renderNavbar,
     initializeSlangTab: slang.initializeSlangTab,
     loadSlang: slang.loadSlang,
     resetSlangPagination: slang.resetSlangPagination,
@@ -168,27 +172,8 @@ document.addEventListener("DOMContentLoaded", () => {
         window.GiftiaApp.loadActiveTabData();
     }
 
-    // Tab Navigation setup
-    const tabButtons = document.querySelectorAll(".nav-tab");
-    const tabPanels = document.querySelectorAll(".tab-panel");
-
-    tabButtons.forEach(button => {
-        button.addEventListener("click", () => {
-            const targetTab = button.getAttribute("data-tab");
-
-            tabButtons.forEach(btn => btn.classList.remove("active"));
-            tabPanels.forEach(panel => panel.classList.remove("active"));
-
-            button.classList.add("active");
-            const targetPanel = document.getElementById(`tab-${targetTab}`);
-            if (targetPanel) {
-                targetPanel.classList.add("active");
-            }
-
-            window.GiftiaApp.activeTab = targetTab;
-            window.GiftiaApp.loadActiveTabData();
-        });
-    });
+    // Tab Navigation setup via Navigation Manager
+    navManager.initNavigation();
 
     // Tab switching for Edit Media Modal and Clean Cache Modal
     document.addEventListener("click", (e) => {

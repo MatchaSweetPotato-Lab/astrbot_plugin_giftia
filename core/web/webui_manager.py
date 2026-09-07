@@ -10,6 +10,8 @@ class WebUIManager:
         ctx = self.plugin.context
 
         for route, handler, method in (
+            ("/settings/nav_config", self.web_api.get_nav_config, "GET"),
+            ("/settings/nav_config", self.web_api.save_nav_config, "POST"),
             ("/slang", self.web_api.get_slang, "GET"),
             ("/slang/filter_options", self.web_api.get_slang_filter_options, "GET"),
             ("/slang/save", self.web_api.save_slang, "POST"),
