@@ -1,6 +1,5 @@
-import asyncio
-from collections import defaultdict
 from datetime import datetime
+from xml.sax.saxutils import quoteattr
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -20,26 +19,35 @@ from astrbot.api.message_components import (
     Video,
 )
 from astrbot.core.message.components import BaseMessageComponent
-from xml.sax.saxutils import quoteattr
 
 from ..database.data_cache import DataCache
 from ..llm.call_llm import CallLLM
+from .emoji_constants import EMOJI_MAP
 from .http_manager import HttpManager
+from .message_card import json_card_to_components
 from .message_forward import (
     MAX_FORWARD_FETCH as MAX_FORWARD_FETCH,
+)
+from .message_forward import (
     MAX_FORWARD_NODE_COUNT as MAX_FORWARD_NODE_COUNT,
+)
+from .message_forward import (
     MAX_FORWARD_NODE_DEPTH as MAX_FORWARD_NODE_DEPTH,
+)
+from .message_forward import (
     MessageForwardParser,
 )
 from .message_media import (
-    MessageMediaFormatter,
-    LockManager,
     SUPPORTED_FILE_FORMATS_WITH_DOT as SUPPORTED_FILE_FORMATS_WITH_DOT,
 )
+from .message_media import (
+    LockManager,
+    MessageMediaFormatter,
+)
 from .message_parse_types import ChainParseResult
+from .notice_parse import REACTION_NOTICE_TYPES as REACTION_NOTICE_TYPES
+from .notice_parse import NoticeParser, NoticeParseResult
 from .schemas import MediaCaption, MessageData
-from .emoji_constants import EMOJI_MAP
-from .notice_parse import NoticeParser, NoticeParseResult, REACTION_NOTICE_TYPES
 
 
 class MessageParser:
@@ -74,6 +82,7 @@ class MessageParser:
             format_audio_ref=self._format_audio_ref,
             format_video_ref=self._format_video_ref,
         )
+
         def _get_bot_config(bot_name: str) -> dict:
             plugin = getattr(self.data_cache, "plugin", None)
             if plugin and hasattr(plugin, "get_bot_config"):
@@ -120,9 +129,7 @@ class MessageParser:
                         **routing_params,
                     )
                     nickname = (
-                        info.get("card")
-                        or info.get("nickname")
-                        or info.get("nick")
+                        info.get("card") or info.get("nickname") or info.get("nick")
                     )
                     if nickname:
                         return str(nickname)
@@ -236,7 +243,8 @@ class MessageParser:
                 event=event,
                 user_id=sender_id,
                 current_name=event.get_sender_name(),
-                force_lookup=has_poke or bool(notice_result and notice_result.is_notice),
+                force_lookup=has_poke
+                or bool(notice_result and notice_result.is_notice),
             )
 
         if has_poke:
@@ -286,6 +294,9 @@ class MessageParser:
                 "fetching": set(),
             }
 
+        # Expand cards in a local queue to share normal image caching and the
+        # per-message caption budget without changing the caller's chain.
+        chain = list(chain)
         msg_parts = []
         result = ChainParseResult()
         index = 0
@@ -365,7 +376,7 @@ class MessageParser:
                     result.merge(forward_result)
                     msg_parts.append(forward_result.content)
                 else:
-                    msg_parts.append("[合并转发消息]")
+                    chain[index:index] = json_card_to_components(comp.data)
             elif isinstance(comp, File):
                 # 暂不支持文件转述
                 msg_parts.append(f"[文件:{comp.name}]")
@@ -375,9 +386,7 @@ class MessageParser:
                 msg_parts.append(f"[表情:{emoji_desc}]")
             elif isinstance(comp, Poke):
                 target_id = self._get_poke_target_id(comp)
-                msg_parts.append(
-                    f"[戳一戳:{target_id}]" if target_id else "[戳一戳]"
-                )
+                msg_parts.append(f"[戳一戳:{target_id}]" if target_id else "[戳一戳]")
             elif isinstance(comp, Node):
                 nodes = [comp]
                 while index < len(chain) and isinstance(chain[index], Node):
@@ -452,7 +461,11 @@ class MessageParser:
         )
 
     async def _format_audio_ref(
-        self, url: str, file_name: str | None, defer_caption: bool, event: AstrMessageEvent | None = None
+        self,
+        url: str,
+        file_name: str | None,
+        defer_caption: bool,
+        event: AstrMessageEvent | None = None,
     ) -> tuple[str, ChainParseResult]:
         return await self.media_formatter.format_audio_ref(
             url,
