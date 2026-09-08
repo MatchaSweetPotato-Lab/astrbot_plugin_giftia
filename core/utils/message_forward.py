@@ -7,6 +7,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Node
 from astrbot.core.message.components import BaseMessageComponent
 
+from .message_card import json_card_to_components
 from .message_parse_types import ChainParseResult
 
 MAX_FORWARD_FETCH = 5
@@ -36,6 +37,7 @@ class MessageForwardParser:
         "video",
         "file",
         "json",
+        "miniapp",
         "xml",
         "face",
         "reply",
@@ -44,7 +46,9 @@ class MessageForwardParser:
         "nodes",
     }
 
-    def __init__(self, chain_to_result, format_image_ref, format_audio_ref, format_video_ref=None):
+    def __init__(
+        self, chain_to_result, format_image_ref, format_audio_ref, format_video_ref=None
+    ):
         self.chain_to_result = chain_to_result
         self.format_image_ref = format_image_ref
         self.format_audio_ref = format_audio_ref
@@ -120,9 +124,13 @@ class MessageForwardParser:
             if item_type in MessageForwardParser._plain_segment_types:
                 return False
             node_data = item.get("data") if isinstance(item.get("data"), dict) else {}
-            if item_type and item_type != "node" and not any(
-                key in item or key in node_data
-                for key in ("message", "content", "messages", "nodes")
+            if (
+                item_type
+                and item_type != "node"
+                and not any(
+                    key in item or key in node_data
+                    for key in ("message", "content", "messages", "nodes")
+                )
             ):
                 return False
             if not any(
@@ -174,9 +182,7 @@ class MessageForwardParser:
         result.content = f"[合并转发:{block['id']}]"
         return result
 
-    async def call_forward_msg(
-        self, event: AstrMessageEvent | None, forward_id: str
-    ):
+    async def call_forward_msg(self, event: AstrMessageEvent | None, forward_id: str):
         if not event or not forward_id:
             return None
         bot = getattr(event, "bot", None)
@@ -681,7 +687,7 @@ class MessageForwardParser:
                     )
                     result.merge(forward_result)
                     parts.append(forward_result.content)
-            elif seg_type == "json":
+            elif seg_type in ("json", "miniapp"):
                 raw_json = seg_data.get("data") or seg_data
                 forward_result = await self.json_to_forward_result(
                     raw_json,
@@ -694,7 +700,15 @@ class MessageForwardParser:
                     result.merge(forward_result)
                     parts.append(forward_result.content)
                 else:
-                    parts.append("[合并转发消息]")
+                    card_result = await self.chain_to_result(
+                        json_card_to_components(raw_json),
+                        defer_caption=defer_caption,
+                        event=event,
+                        _forward_ctx=forward_ctx,
+                        _depth=depth,
+                    )
+                    result.merge(card_result)
+                    parts.append(card_result.content)
         result.content = " ".join(part for part in parts if part).strip()
         return result
 
@@ -803,7 +817,9 @@ class MessageForwardParser:
                 forward_ctx=forward_ctx,
                 depth=depth,
             )
-            first_block = fetched.forward_messages[0] if fetched.forward_messages else {}
+            first_block = (
+                fetched.forward_messages[0] if fetched.forward_messages else {}
+            )
             if fetched.forward_messages and not first_block.get("unresolved"):
                 return fetched
             if embedded_nodes:
@@ -816,9 +832,9 @@ class MessageForwardParser:
                     depth=depth,
                 )
                 if embedded_result.forward_messages:
-                    forward_ctx["remote_refs"][source_id] = embedded_result.forward_messages[
-                        0
-                    ]["id"]
+                    forward_ctx["remote_refs"][source_id] = (
+                        embedded_result.forward_messages[0]["id"]
+                    )
                 return embedded_result
             if preview_nodes:
                 preview_result = await self.onebot_nodes_to_forward_result(
@@ -830,9 +846,9 @@ class MessageForwardParser:
                     depth=depth,
                 )
                 if preview_result.forward_messages:
-                    forward_ctx["remote_refs"][source_id] = preview_result.forward_messages[
-                        0
-                    ]["id"]
+                    forward_ctx["remote_refs"][source_id] = (
+                        preview_result.forward_messages[0]["id"]
+                    )
                 return preview_result
             return fetched
         if embedded_nodes:

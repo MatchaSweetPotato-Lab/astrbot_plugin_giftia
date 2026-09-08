@@ -68,66 +68,6 @@ export const DEFAULT_PINNED_IDS = [
     'bots'
 ];
 
-const STORAGE_KEY = 'giftia_dashboard_nav_tabs_v1';
-
-// In-memory fallback store when window.localStorage is blocked by iframe sandbox
-const memoryStore = new Map();
-let isLocalStorageSupported = null;
-
-function checkLocalStorage() {
-    if (isLocalStorageSupported !== null) {
-        return isLocalStorageSupported;
-    }
-    try {
-        if (typeof window === 'undefined') {
-            isLocalStorageSupported = false;
-            return false;
-        }
-        const testKey = '__giftia_nav_storage_test__';
-        window.localStorage.setItem(testKey, '1');
-        window.localStorage.removeItem(testKey);
-        isLocalStorageSupported = true;
-    } catch (e) {
-        // Sandboxed iframe without allow-same-origin throws SecurityError
-        isLocalStorageSupported = false;
-    }
-    return isLocalStorageSupported;
-}
-
-export const safeStorage = {
-    getItem(key) {
-        if (!checkLocalStorage()) {
-            return memoryStore.has(key) ? memoryStore.get(key) : null;
-        }
-        try {
-            return window.localStorage.getItem(key);
-        } catch (e) {
-            return memoryStore.has(key) ? memoryStore.get(key) : null;
-        }
-    },
-    setItem(key, value) {
-        const strVal = String(value);
-        memoryStore.set(key, strVal);
-        if (checkLocalStorage()) {
-            try {
-                window.localStorage.setItem(key, strVal);
-            } catch (e) {
-                // Ignore write failures in restricted contexts
-            }
-        }
-    },
-    removeItem(key) {
-        memoryStore.delete(key);
-        if (checkLocalStorage()) {
-            try {
-                window.localStorage.removeItem(key);
-            } catch (e) {
-                // Ignore
-            }
-        }
-    }
-};
-
 let draftModalConfig = null;
 let currentNavConfig = null;
 
@@ -169,29 +109,12 @@ export function loadNavConfig() {
     if (currentNavConfig) {
         return currentNavConfig;
     }
-
-    try {
-        const raw = safeStorage.getItem(STORAGE_KEY);
-        if (raw) {
-            const parsed = JSON.parse(raw);
-            currentNavConfig = sanitizeNavConfig(parsed);
-            return currentNavConfig;
-        }
-    } catch (e) {
-        // Fall back to default
-    }
-
     currentNavConfig = getDefaultNavConfig();
     return currentNavConfig;
 }
 
 export function saveNavConfig(config) {
     currentNavConfig = sanitizeNavConfig(config);
-    try {
-        safeStorage.setItem(STORAGE_KEY, JSON.stringify(currentNavConfig));
-    } catch (e) {
-        // Safe storage handles memory fallback
-    }
 }
 
 export async function syncNavConfigFromBackend() {
@@ -201,7 +124,6 @@ export async function syncNavConfigFromBackend() {
         if (res && res.status === 'success' && Array.isArray(res.data) && res.data.length > 0) {
             const syncedConfig = sanitizeNavConfig(res.data);
             currentNavConfig = syncedConfig;
-            safeStorage.setItem(STORAGE_KEY, JSON.stringify(syncedConfig));
             // Only update active navbar if user is not currently editing in modal
             if (!draftModalConfig) {
                 const activeTabId = (window.GiftiaApp ? window.GiftiaApp.activeTab : null) || 'chat-history';
@@ -685,7 +607,7 @@ export function saveNavCustomModal() {
 // =========================================================================
 
 export function initNavigation() {
-    // 1. Initial render of navbar immediately using safe cache or default
+    // 1. Initial render of navbar immediately using in-memory config or default
     const initialActiveTab = (window.GiftiaApp ? window.GiftiaApp.activeTab : null) || 'chat-history';
     renderNavbar(initialActiveTab);
 
