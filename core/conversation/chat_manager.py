@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from aiocqhttp import CQHttp
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import At, Node, Nodes, Plain
@@ -24,14 +25,13 @@ from astrbot.core.utils.session_lock import session_lock_manager
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event
 from ..utils.message_media import format_node_components
 from ..utils.notice_parse import NoticeParseResult
-from ..utils.qq_official_action import is_qq_official
 from ..utils.schemas import XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
 from .reply_pipeline import ReplyPipeline
 
-_bot_msg_id_capture_ctx: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
-    "_bot_msg_id_capture_ctx", default=None
+_bot_msg_id_capture_ctx: contextvars.ContextVar[list[str] | None] = (
+    contextvars.ContextVar("_bot_msg_id_capture_ctx", default=None)
 )
 
 
@@ -51,32 +51,42 @@ def _patch_bot_for_message_id_capture(bot: Any) -> None:
 
     orig_call_action = getattr(bot, "call_action", None)
     if callable(orig_call_action):
+
         async def wrapped_call_action(action, **params):
             res = await orig_call_action(action, **params)
             ctx = _bot_msg_id_capture_ctx.get()
-            if ctx is not None and action in ("send_group_msg", "send_private_msg", "send_msg"):
+            if ctx is not None and action in (
+                "send_group_msg",
+                "send_private_msg",
+                "send_msg",
+            ):
                 _extract_captured_message_id(res, ctx)
             return res
+
         bot.call_action = wrapped_call_action
 
     orig_send_group = getattr(bot, "send_group_msg", None)
     if callable(orig_send_group):
+
         async def wrapped_send_group(*args, **kwargs):
             res = await orig_send_group(*args, **kwargs)
             ctx = _bot_msg_id_capture_ctx.get()
             if ctx is not None:
                 _extract_captured_message_id(res, ctx)
             return res
+
         bot.send_group_msg = wrapped_send_group
 
     orig_send_private = getattr(bot, "send_private_msg", None)
     if callable(orig_send_private):
+
         async def wrapped_send_private(*args, **kwargs):
             res = await orig_send_private(*args, **kwargs)
             ctx = _bot_msg_id_capture_ctx.get()
             if ctx is not None:
                 _extract_captured_message_id(res, ctx)
             return res
+
         bot.send_private_msg = wrapped_send_private
 
     try:
@@ -608,6 +618,25 @@ class ChatManager:
                     platform_name=platform_name,
                 )
                 has_sent_reply = False
+
+                async def send_reminder(message: MessageChain):
+                    """通过定时任务所在的平台路由发送工具输出或通用回复。
+
+                    Args:
+                        message: 要发送的工具输出或通用回复消息链。
+
+                    Raises:
+                        RuntimeError: 平台发送消息失败时抛出。
+                    """
+                    nonlocal has_sent_reply
+                    success = await self.plugin.context.send_message(
+                        unified_msg_origin, message
+                    )
+                    if not success:
+                        raise RuntimeError("Failed to send scheduled reply")
+                    has_sent_reply = True
+
+                mock_event.send = send_reminder
                 pending_recall_memories = []
                 async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
                     event=mock_event,
@@ -619,67 +648,23 @@ class ChatManager:
                 ):
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):
-                            if hasattr(
-                                self.plugin, "tts_manager"
-                            ) and self.plugin.tts_manager.enabled(bot_conf):
-                                self.plugin.tts_manager.preprocess_signatures(
-                                    chunk, bot_conf
-                                )
-                            if platform_name == "aiocqhttp" or is_qq_official(
-                                platform_name
+                            await self.action_dispatcher.dispatch_actions(
+                                event=mock_event,
+                                bot_name=bot_name,
+                                nickname=nickname,
+                                group_or_user_id=group_or_user_id,
+                                llm_result=chunk,
+                            )
+                            has_tts_reply = (
+                                bool(chunk.tts_segments)
+                                and hasattr(self.plugin, "tts_manager")
+                                and self.plugin.tts_manager.enabled(bot_conf)
+                            )
+                            if (
+                                chunk.msg_chains
+                                or has_tts_reply
+                                or chunk.repeat_message_ids
                             ):
-                                if mock_event:
-                                    await self.action_dispatcher.dispatch_actions(
-                                        event=mock_event,
-                                        bot_name=bot_name,
-                                        nickname=nickname,
-                                        group_or_user_id=group_or_user_id,
-                                        llm_result=chunk,
-                                    )
-                                    has_tts_reply = (
-                                        bool(chunk.tts_segments)
-                                        and hasattr(self.plugin, "tts_manager")
-                                        and self.plugin.tts_manager.enabled(bot_conf)
-                                    )
-                                    if (
-                                        chunk.msg_chains
-                                        or has_tts_reply
-                                        or chunk.repeat_message_ids
-                                    ):
-                                        has_sent_reply = True
-                                    continue
-                            # 降级到普通消息发送
-                            if not chunk.msg_chains and not chunk.tts_segments:
-                                continue
-                            for (
-                                item_type,
-                                item_index,
-                            ) in self.action_dispatcher.get_output_order(chunk):
-                                if item_type in ("message", "sticker", "image"):
-                                    if item_index < 0 or item_index >= len(
-                                        chunk.msg_chains
-                                    ):
-                                        continue
-                                    raw_chain = chunk.msg_chains[item_index]
-                                    if not raw_chain:
-                                        continue
-                                    msg_chain = await self.action_dispatcher._build_send_chain(
-                                        raw_chain, bot_conf
-                                    )
-                                elif item_type == "tts":
-                                    (
-                                        msg_chain,
-                                        _,
-                                    ) = await self.action_dispatcher.build_tts_message_chain(
-                                        mock_event, chunk, item_index, bot_conf
-                                    )
-                                else:
-                                    continue
-                                if not msg_chain:
-                                    continue
-                                await self.plugin.context.send_message(
-                                    unified_msg_origin, MessageChain(msg_chain)
-                                )
                                 has_sent_reply = True
                     else:
                         logger.error(f"{bot_name} 定时任务调度失败，未获取到回复内容")

@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from astrbot.api import logger
-from astrbot.api.message_components import Plain, Record
+from astrbot.api.message_components import Plain, Record, Reply
 from astrbot.api.star import StarTools
 from astrbot.core.provider.provider import TTSProvider
 
@@ -648,28 +648,28 @@ class TTSManager:
         resolved_voices: list[dict],
         bot_conf: dict | str = None,
     ) -> None:
+        """预处理 TTS 语音片段，根据特征语音拆分并在段落间继承引用等元数据。"""
         new_tts_segments: list[TTSRequest] = []
         index_mapping: dict[int, list[int]] = {}
 
         for i, segment in enumerate(llm_result.tts_segments):
+            if segment.pre_recorded_path:
+                index_mapping[i] = [len(new_tts_segments)]
+                new_tts_segments.append(segment)
+                continue
             split_parts = self.split_text_by_signatures(
                 segment.text, resolved_voices, bot_conf
             )
             new_indices = []
             for part in split_parts:
-                if part["type"] == "signature":
-                    new_seg = TTSRequest(
-                        text=part["text"],
-                        lang=segment.lang,
-                        emotion=segment.emotion,
-                        pre_recorded_path=part["path"],
-                    )
-                else:
-                    new_seg = TTSRequest(
-                        text=part["text"],
-                        lang=segment.lang,
-                        emotion=segment.emotion,
-                    )
+                new_seg = replace(
+                    segment,
+                    text=part["text"],
+                    pre_recorded_path=part.get("path", ""),
+                    quote_message_id=segment.quote_message_id
+                    if not new_indices
+                    else "",
+                )
                 new_indices.append(len(new_tts_segments))
                 new_tts_segments.append(new_seg)
             index_mapping[i] = new_indices
@@ -701,6 +701,7 @@ class TTSManager:
         resolved_voices: list[dict],
         bot_conf: dict | str = None,
     ) -> None:
+        """预处理消息链，将匹配特征语音的文本拆分为 TTS 语音段并保持引用与顺序映射。"""
         new_msg_chains = []
         new_tts_segments = list(llm_result.tts_segments)
         msg_index_mapping: dict[int, list[tuple[str, int]]] = {}
@@ -708,27 +709,36 @@ class TTSManager:
         for msg_idx, chain in enumerate(llm_result.msg_chains):
             new_chain_items = []
             order_mapping = []
+            pending_reply = next((c for c in chain if isinstance(c, Reply)), None)
 
             for component in chain:
+                if isinstance(component, Reply):
+                    continue
                 if isinstance(component, Plain):
                     split_parts = self.split_text_by_signatures(
                         component.text, resolved_voices, bot_conf
                     )
                     for part in split_parts:
                         if part["type"] == "signature":
-                            new_seg = TTSRequest(
-                                text=part["text"],
-                                pre_recorded_path=part["path"],
-                            )
-                            tts_idx = len(new_tts_segments)
-                            new_tts_segments.append(new_seg)
-
                             if new_chain_items:
+                                if pending_reply is not None:
+                                    new_chain_items.insert(0, pending_reply)
+                                    pending_reply = None
                                 msg_chain_idx = len(new_msg_chains)
                                 new_msg_chains.append(new_chain_items)
                                 order_mapping.append(("message", msg_chain_idx))
                                 new_chain_items = []
 
+                            new_seg = TTSRequest(
+                                text=part["text"],
+                                pre_recorded_path=part["path"],
+                                quote_message_id=str(pending_reply.id)
+                                if pending_reply is not None
+                                else "",
+                            )
+                            pending_reply = None
+                            tts_idx = len(new_tts_segments)
+                            new_tts_segments.append(new_seg)
                             order_mapping.append(("tts", tts_idx))
                         else:
                             new_chain_items.append(Plain(text=part["text"]))
@@ -736,6 +746,8 @@ class TTSManager:
                     new_chain_items.append(component)
 
             if new_chain_items:
+                if pending_reply is not None:
+                    new_chain_items.insert(0, pending_reply)
                 msg_chain_idx = len(new_msg_chains)
                 new_msg_chains.append(new_chain_items)
                 order_mapping.append(("message", msg_chain_idx))
@@ -757,7 +769,10 @@ class TTSManager:
                 if index in msg_index_mapping:
                     mapped_items = []
                     for mapped_type, mapped_idx in msg_index_mapping[index]:
-                        if mapped_type == "message" and item_type in ("sticker", "image"):
+                        if mapped_type == "message" and item_type in (
+                            "sticker",
+                            "image",
+                        ):
                             mapped_items.append((item_type, mapped_idx))
                         else:
                             mapped_items.append((mapped_type, mapped_idx))

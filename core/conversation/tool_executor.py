@@ -3,40 +3,38 @@ from datetime import datetime
 import mcp
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import AstrMessageEvent, MessageChain
+from astrbot.api.message_components import Image
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 from ..utils.schemas import MessageData, XmlLlmResult
 from .memory_recall import search_memories_with_rerank
-from .media_captioner import MediaCaptioner
 
 
 class ToolExecutor:
     def __init__(self, plugin):
         self.plugin = plugin
-        self.media_captioner = MediaCaptioner(plugin)
 
-    async def execute_tools_and_queries(
+    async def execute_queries(
         self,
-        event: AstrMessageEvent,
         bot_name: str,
-        nickname: str,
         group_or_user_id: str,
         llm_result: XmlLlmResult,
         recent_messages: list,
         relevant_memories: list[str],
         other_data: list[str],
-        tool_results: list[dict],
-        times: int,
-    ) -> list[str]:
+    ) -> None:
+        """在有序输出派发完成后填充查询上下文。
+
+        Args:
+            bot_name: 机器人配置名称。
+            group_or_user_id: 当前会话 ID。
+            llm_result: 解析后的查询请求结果。
+            recent_messages: 用于记忆召回的近期消息列表。
+            relevant_memories: 就地追加的相关记忆结果。
+            other_data: 就地追加的查询数据结果。
         """
-        执行大模型请求的所有工具调用与数据库/定时任务查询。
-        更新传入的 relevant_memories, other_data, tool_results 列表。
-        返回工具执行产生的 image_base64 列表。
-        """
-        success_logs = []
-        iso_string = datetime.now().isoformat()
 
         # 1. 查询定时任务
         if llm_result.all_tasks:
@@ -129,82 +127,75 @@ class ToolExecutor:
                         f"# 消息上下文(ID:{item['message_id']})\n" + "\n".join(lines)
                     )
 
-        # 5. 执行函数/MCP工具调用
-        image_base64 = []
-        if len(llm_result.tools_to_call) > 0:
-            for tool_name, tool_args in llm_result.tools_to_call:
-                clean_tool_name = (
-                    tool_name.split(":")[-1] if ":" in tool_name else tool_name
-                )
-                tool = self.plugin.context.get_llm_tool_manager().get_func(
-                    clean_tool_name
-                )
-                if tool is None:
-                    tool = self.plugin.context.get_llm_tool_manager().get_func(
-                        tool_name
-                    )
+    async def execute_tool(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        tool_name: str,
+        tool_args: dict,
+    ) -> dict:
+        """执行单个 XML 工具，并在派发下一个输出前直接发送工具生成的图片。
 
-                if tool is None:
-                    logger.error(f"{bot_name} 工具 {tool_name} 不存在")
-                    result = {
-                        "name": tool_name,
-                        "result": "工具不存在",
-                    }
-                    tool_results.append(result)
-                    continue
+        Args:
+            event: 传递给工具并用于发送图片的事件对象。
+            bot_name: 机器人配置名称。
+            nickname: 写入历史记录的机器人显示名称。
+            group_or_user_id: 当前会话 ID。
+            tool_name: 请求调用的工具名称（可带命名空间）。
+            tool_args: 解析后的工具调用参数。
 
-                # 手动调用工具
+        Returns:
+            包含执行状态和文本输出的工具执行结果字典，供下一轮 LLM 循环消费。
+        """
+        result = []
+        try:
+            clean_tool_name = tool_name.split(":")[-1]
+            tool_manager = self.plugin.context.get_llm_tool_manager()
+            tool = tool_manager.get_func(clean_tool_name)
+            if tool is None:
+                tool = tool_manager.get_func(tool_name)
+            if tool is None:
+                logger.error(f"[Giftia] {bot_name} Tool not found: {tool_name}")
+                result.append("工具不存在")
+            else:
                 run_context = AgentContextWrapper(
                     context=AstrAgentContext(context=self.plugin.context, event=event),
                     tool_call_timeout=self.plugin.tools_config.get("timeout", 120),
                 )
+                async for tool_result in FunctionToolExecutor.execute(
+                    tool, run_context, **tool_args
+                ):
+                    if isinstance(tool_result, str):
+                        result.append(tool_result)
+                    elif isinstance(tool_result, mcp.types.CallToolResult):
+                        for content in tool_result.content:
+                            if isinstance(content, mcp.types.TextContent):
+                                result.append(content.text)
+                            elif isinstance(content, mcp.types.ImageContent):
+                                await event.send(
+                                    MessageChain([Image.fromBase64(content.data)])
+                                )
+                                result.append("图片已直接发送给用户")
+        except Exception as e:
+            logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
+            result.append(f"工具执行失败: {e}")
 
-                result = []
-                try:
-                    async for tool_result in FunctionToolExecutor.execute(
-                        tool, run_context, **tool_args
-                    ):
-                        if isinstance(tool_result, str):
-                            result.append(tool_result)
-                        elif isinstance(tool_result, mcp.types.CallToolResult):
-                            for content in tool_result.content:
-                                if isinstance(content, mcp.types.TextContent):
-                                    result.append(content.text)
-                                elif isinstance(content, mcp.types.ImageContent):
-                                    result.append("图片已直接发送给用户")
-                                    image_base64.append("base64://" + content.data)
-                except Exception as e:
-                    logger.error(
-                        f"Error executing tool {tool_name}: {e}", exc_info=True
-                    )
-                    result.append(f"工具执行失败: {e}")
-
-                result_dict = {
-                    "name": tool_name,
-                    "results": "\n".join(result),
-                }
-                tool_results.append(result_dict)
-                tool_output = result_dict["results"]
-                success_logs.append(
-                    f"<tool_call name={tool_name} args={tool_args} status='finished'>\n{tool_output}\n</tool_call>"
-                )
-
-        # 6. 写入操作日志
-        if len(success_logs) > 0:
-            await self.plugin.data_cache.add_message(
-                bot_name,
-                group_or_user_id,
-                MessageData(
-                    nickname=nickname,
-                    user_id=event.get_self_id(),
-                    group_or_user_id=group_or_user_id,
-                    time=iso_string,
-                    message_id="",
-                    content="\n".join(success_logs),
-                    is_recalled=False,
-                    media_id_list=[],
-                    role="operation_log",
-                ),
-            )
-
-        return image_base64
+        tool_output = "\n".join(result)
+        await self.plugin.data_cache.add_message(
+            bot_name,
+            group_or_user_id,
+            MessageData(
+                nickname=nickname,
+                user_id=event.get_self_id(),
+                group_or_user_id=group_or_user_id,
+                time=datetime.now().isoformat(),
+                message_id="",
+                content=f"<tool_call name={tool_name} args={tool_args} status='finished'>\n{tool_output}\n</tool_call>",
+                is_recalled=False,
+                media_id_list=[],
+                role="operation_log",
+            ),
+        )
+        return {"name": tool_name, "results": tool_output}

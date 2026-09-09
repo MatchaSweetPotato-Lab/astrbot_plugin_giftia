@@ -7,6 +7,7 @@ from xml.sax.saxutils import quoteattr
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
+from astrbot.api.message_components import Reply
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -14,11 +15,44 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from ..utils.event_utils import get_adapter_id
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
 from ..utils.schemas import FeatureKey, ImageSendType, MessageData, XmlLlmResult
+from .tool_executor import ToolExecutor
 
 
 class ActionDispatcher:
     def __init__(self, plugin):
         self.plugin = plugin
+        self.tool_executor = ToolExecutor(plugin)
+
+    async def _record_action_logs(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        logs: list[str],
+    ) -> None:
+        """在派发下一个可见输出前，记录已执行完成的动作日志。
+
+        Args:
+            event: 标识机器人的事件对象。
+            bot_name: 机器人配置名称。
+            nickname: 机器人昵称。
+            group_or_user_id: 当前会话 ID。
+            logs: 已完成的动作描述列表，为空时忽略。
+        """
+        if logs:
+            await self.plugin.data_cache.add_message(
+                bot_name,
+                group_or_user_id,
+                MessageData(
+                    nickname=nickname,
+                    user_id=event.get_self_id(),
+                    group_or_user_id=group_or_user_id,
+                    time=datetime.now().isoformat(),
+                    content="\n".join(logs),
+                    role="operation_log",
+                ),
+            )
 
     async def _invoke_platform_action(
         self,
@@ -191,6 +225,7 @@ class ActionDispatcher:
         group_or_user_id: str,
         llm_result: XmlLlmResult,
     ) -> list[str]:
+        """派发更新常驻/低频自定义状态的动作。"""
         if not llm_result.set_custom_status:
             return []
 
@@ -214,7 +249,9 @@ class ActionDispatcher:
                     logs.append(
                         f"<set_status key={quoteattr(k)} value={quoteattr(v)} result='success'/>"
                     )
-                    logger.info(f"[Giftia] 会话 {group_or_user_id} 更新常驻状态: {k} = {v}")
+                    logger.info(
+                        f"[Giftia] 会话 {group_or_user_id} 更新常驻状态: {k} = {v}"
+                    )
                 else:
                     logs.append(f"<set_status key={quoteattr(k)} result='deleted'/>")
                     logger.info(f"[Giftia] 会话 {group_or_user_id} 删除常驻状态: {k}")
@@ -226,15 +263,37 @@ class ActionDispatcher:
 
     @staticmethod
     def get_output_order(llm_result: XmlLlmResult) -> list[tuple[str, int]]:
-        """
-        [Internal Helper] 获取 LLM 输出的顺序列表。
+        """按 XML 中的出现顺序返回可见输出，并追加未追踪的动作。
 
-        此方法属于内部辅助函数，主要供 ActionDispatcher 及 ChatManager（用于派发定时任务输出）调用。
+        Args:
+            llm_result: 解析后的回复结果，或未包含顺序元数据的结果。
+
+        Returns:
+            按派发顺序排列的 (输出类型, 索引) 元组列表。
         """
         if llm_result.output_order:
-            return list(llm_result.output_order)
-        order = [("message", index) for index in range(len(llm_result.msg_chains))]
-        order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
+            order = list(llm_result.output_order)
+        else:
+            order = [("message", index) for index in range(len(llm_result.msg_chains))]
+            order.extend(
+                ("tts", index) for index in range(len(llm_result.tts_segments))
+            )
+        tracked = set(order)
+        for item_type, items in (
+            ("repeat", llm_result.repeat_message_ids),
+            ("emoji_like", llm_result.emoji_ids),
+            ("poke", llm_result.poke),
+            ("delete", llm_result.delete_message_ids),
+            ("like", llm_result.likes),
+            ("ban", llm_result.ban),
+            ("kick", llm_result.kick),
+            ("tool_call", llm_result.tools_to_call),
+        ):
+            order.extend(
+                (item_type, index)
+                for index in range(len(items))
+                if (item_type, index) not in tracked
+            )
         return order
 
     async def build_tts_message_chain(
@@ -260,7 +319,10 @@ class ActionDispatcher:
         segment = llm_result.tts_segments[index]
         record = await self.plugin.tts_manager.build_record(event, segment, bot_dict)
         if record:
-            return [record], segment.text
+            chain = [record]
+            if segment.quote_message_id:
+                chain.insert(0, Reply(id=segment.quote_message_id))
+            return chain, segment.text
 
         logger.warning("[Giftia TTS] 语音合成重试后依然失败，放弃发送该段语音消息。")
         return None, ""
@@ -307,9 +369,7 @@ class ActionDispatcher:
             )
             return False
 
-        target_msg = self._find_recent_message(
-            bot_name, group_or_user_id, message_id
-        )
+        target_msg = self._find_recent_message(bot_name, group_or_user_id, message_id)
         if not target_msg:
             success_logs.append(
                 f"<repeat message_id={quoteattr(message_id)} result='failed' reason='not_in_context_window'/>"
@@ -369,9 +429,7 @@ class ActionDispatcher:
                     content=target_msg.content,
                     is_recalled=False,
                     media_id_list=list(target_msg.media_id_list or []),
-                    forward_messages=list(
-                        target_msg.forward_messages or []
-                    ),
+                    forward_messages=list(target_msg.forward_messages or []),
                 )
                 await self.plugin.data_cache.add_message(
                     bot_name, group_or_user_id, msg_data
@@ -395,13 +453,18 @@ class ActionDispatcher:
         nickname: str,
         group_or_user_id: str,
         llm_result: XmlLlmResult,
-        success_logs: list[str] | None = None,
     ) -> None:
+        """按顺序派发 aiocqhttp 平台的可见输出、TTS 语音以及相关动作。
+
+        Args:
+            event: 消息事件对象。
+            bot_name: 机器人配置名称。
+            nickname: 机器人昵称。
+            group_or_user_id: 当前会话 ID。
+            llm_result: LLM 返回的解析结果。
+        """
         bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
-        dispatched_repeat_indices = set()
-        if success_logs is None:
-            success_logs = []
         is_qq_official = is_qq_official_platform(event)
 
         for item_type, item_index in self.get_output_order(llm_result):
@@ -437,7 +500,7 @@ class ActionDispatcher:
                     )
                     await asyncio.sleep(interval)
                 target_msg_id = llm_result.repeat_message_ids[item_index]
-                dispatched_repeat_indices.add(item_index)
+                action_logs = []
                 await self._dispatch_single_repeat(
                     event=event,
                     bot_name=bot_name,
@@ -446,7 +509,126 @@ class ActionDispatcher:
                     message_id=target_msg_id,
                     bot_conf=bot_conf,
                     is_qq_official=is_qq_official,
-                    success_logs=success_logs,
+                    success_logs=action_logs,
+                )
+                await self._record_action_logs(
+                    event, bot_name, nickname, group_or_user_id, action_logs
+                )
+                sent_index += 1
+                continue
+            elif item_type in ("poke", "emoji_like", "delete", "like", "ban", "kick"):
+                items = {
+                    "poke": llm_result.poke,
+                    "emoji_like": llm_result.emoji_ids,
+                    "delete": llm_result.delete_message_ids,
+                    "like": llm_result.likes,
+                    "ban": llm_result.ban,
+                    "kick": llm_result.kick,
+                }[item_type]
+                if item_index < 0 or item_index >= len(items):
+                    continue
+                log_type = item_type
+                try:
+                    if item_type == "poke":
+                        group_id, user_id = items[item_index]
+                        action_name = "group_poke"
+                        action_args = {
+                            "group_id": group_id if is_qq_official else int(group_id),
+                            "user_id": user_id if is_qq_official else int(user_id),
+                        }
+                        log_attrs = f"user_id={user_id}"
+                    elif item_type == "emoji_like":
+                        message_id, emoji_id = items[item_index]
+                        action_name = "msg_emoji_like"
+                        action_args = {
+                            "message_id": message_id
+                            if is_qq_official
+                            else int(message_id),
+                            "emoji_id": int(emoji_id),
+                        }
+                        log_attrs = f"message_id={message_id} emoji_id={emoji_id}"
+                    elif item_type == "delete":
+                        message_id = items[item_index]
+                        action_name = "delete_messages"
+                        action_args = {
+                            "message_ids": [
+                                message_id if is_qq_official else int(message_id)
+                            ]
+                        }
+                        log_type = "recall"
+                        log_attrs = f"message_ids={[message_id]}"
+                    elif item_type == "like":
+                        user_id, count = items[item_index]
+                        action_name = "like"
+                        action_args = {
+                            "user_id": user_id if is_qq_official else int(user_id),
+                            "count": int(count),
+                        }
+                        log_attrs = f"user_id={user_id}"
+                    else:
+                        group_id, user_id = items[item_index][:2]
+                        action_name = (
+                            "group_ban" if item_type == "ban" else "group_kick"
+                        )
+                        action_args = {
+                            "group_id": group_id if is_qq_official else int(group_id),
+                            "user_id": user_id if is_qq_official else int(user_id),
+                        }
+                        log_attrs = f"user_id={user_id}"
+                        if item_type == "ban":
+                            duration = items[item_index][2]
+                            action_args["duration"] = int(duration)
+                            log_attrs += f" duration={duration}"
+                except (TypeError, ValueError):
+                    logger.error(
+                        f"[Giftia] {bot_name} Invalid {item_type} arguments: {items[item_index]}"
+                    )
+                    continue
+
+                if sent_index > 0:
+                    interval = random.randint(
+                        self.plugin.min_reply_interval, self.plugin.max_reply_interval
+                    )
+                    await asyncio.sleep(interval)
+                err_msg = await self._invoke_platform_action(
+                    event, action_name, is_qq_official, **action_args
+                )
+                if err_msg not in ("handler_not_found", "action_not_supported"):
+                    if item_type == "delete" and not err_msg:
+                        await self.plugin.data_cache.set_message_recalled(
+                            bot_name, group_or_user_id, [message_id]
+                        )
+                    await self._record_action_logs(
+                        event,
+                        bot_name,
+                        nickname,
+                        group_or_user_id,
+                        [f"<{log_type} {log_attrs} result={err_msg or 'success'}/>"],
+                    )
+                else:
+                    logger.debug(f"[Giftia] {action_name} is unavailable [{err_msg}]")
+                sent_index += 1
+                continue
+            elif item_type == "tool_call":
+                if item_index < 0 or item_index >= len(llm_result.tools_to_call):
+                    continue
+                if sent_index > 0:
+                    await asyncio.sleep(
+                        random.randint(
+                            self.plugin.min_reply_interval,
+                            self.plugin.max_reply_interval,
+                        )
+                    )
+                tool_name, tool_args = llm_result.tools_to_call[item_index]
+                llm_result.xml_tool_results.append(
+                    await self.tool_executor.execute_tool(
+                        event,
+                        bot_name,
+                        nickname,
+                        group_or_user_id,
+                        tool_name,
+                        tool_args,
+                    )
                 )
                 sent_index += 1
                 continue
@@ -479,6 +661,8 @@ class ActionDispatcher:
                         logger.error(
                             f"[Giftia] 官方 QQ 富媒体消息降级发送失败: {err_fallback}"
                         )
+                    finally:
+                        event._giftia_bypass_logging = False
             else:
                 success, message_id = await self.plugin.aiocqhttp.send_message(
                     event,
@@ -495,6 +679,8 @@ class ActionDispatcher:
                         attrs.append(f'lang="{segment.lang}"')
                     if segment.emotion:
                         attrs.append(f'emotion="{segment.emotion}"')
+                    if segment.quote_message_id:
+                        attrs.append(f"quote={quoteattr(segment.quote_message_id)}")
                     attrs_str = " " + " ".join(attrs) if attrs else ""
                     db_content = f"<tts{attrs_str}>{segment.text}</tts>"
                     msg_data = MessageData(
@@ -539,28 +725,6 @@ class ActionDispatcher:
                     bot_name, group_or_user_id, msg_data
                 )
 
-        # 兜底处理未在 output_order 中出现的复读项（如有）
-        if llm_result.repeat_message_ids:
-            for idx, message_id in enumerate(llm_result.repeat_message_ids):
-                if idx not in dispatched_repeat_indices:
-                    if sent_index > 0:
-                        interval = random.randint(
-                            self.plugin.min_reply_interval,
-                            self.plugin.max_reply_interval,
-                        )
-                        await asyncio.sleep(interval)
-                    await self._dispatch_single_repeat(
-                        event=event,
-                        bot_name=bot_name,
-                        nickname=nickname,
-                        group_or_user_id=group_or_user_id,
-                        message_id=message_id,
-                        bot_conf=bot_conf,
-                        is_qq_official=is_qq_official,
-                        success_logs=success_logs,
-                    )
-                    sent_index += 1
-
     async def _dispatch_generic_outputs(
         self,
         event: AstrMessageEvent,
@@ -569,6 +733,15 @@ class ActionDispatcher:
         group_or_user_id: str,
         llm_result: XmlLlmResult,
     ) -> None:
+        """按顺序派发通用平台的可见消息与 TTS 语音。
+
+        Args:
+            event: 消息事件对象。
+            bot_name: 机器人配置名称。
+            nickname: 机器人昵称。
+            group_or_user_id: 当前会话 ID。
+            llm_result: LLM 返回的解析结果。
+        """
         bot_conf = self.plugin.get_bot_config(bot_name)
         sent_index = 0
         for item_type, item_index in self.get_output_order(llm_result):
@@ -585,6 +758,29 @@ class ActionDispatcher:
                 )
                 if not msg_chain:
                     continue
+            elif item_type == "tool_call":
+                if item_index < 0 or item_index >= len(llm_result.tools_to_call):
+                    continue
+                if sent_index > 0:
+                    await asyncio.sleep(
+                        random.randint(
+                            self.plugin.min_reply_interval,
+                            self.plugin.max_reply_interval,
+                        )
+                    )
+                tool_name, tool_args = llm_result.tools_to_call[item_index]
+                llm_result.xml_tool_results.append(
+                    await self.tool_executor.execute_tool(
+                        event,
+                        bot_name,
+                        nickname,
+                        group_or_user_id,
+                        tool_name,
+                        tool_args,
+                    )
+                )
+                sent_index += 1
+                continue
             else:
                 continue
 
@@ -610,6 +806,8 @@ class ActionDispatcher:
                         attrs.append(f'lang="{segment.lang}"')
                     if segment.emotion:
                         attrs.append(f'emotion="{segment.emotion}"')
+                    if segment.quote_message_id:
+                        attrs.append(f"quote={quoteattr(segment.quote_message_id)}")
                     attrs_str = " " + " ".join(attrs) if attrs else ""
                     db_content = f"<tts{attrs_str}>{segment.text}</tts>"
                     msg_data = MessageData(
@@ -753,8 +951,6 @@ class ActionDispatcher:
 
         if is_aiocqhttp or is_qq_official:
             success_logs = list(common_logs)
-            iso_string = datetime.now().isoformat()
-
             # 1. 删除长期记忆
             if llm_result.delete_memories and self.plugin.embedding_conf.get(
                 "enabled", False
@@ -771,151 +967,6 @@ class ActionDispatcher:
                         success_logs.append(
                             f"<delete_memory memory_id={memory_id} result='failed'/>"
                         )
-
-            # 2. 撤回消息
-            if llm_result.delete_message_ids:
-                if is_qq_official:
-                    target_ids = llm_result.delete_message_ids
-                else:
-                    try:
-                        target_ids = [
-                            int(msg_id) for msg_id in llm_result.delete_message_ids
-                        ]
-                    except ValueError:
-                        target_ids = None
-                        logger.error(
-                            f"{bot_name} 撤回消息数据格式错误: {llm_result.delete_message_ids}"
-                        )
-                if target_ids is not None:
-                    err_msg = await self._invoke_platform_action(
-                        event, "delete_messages", is_qq_official, message_ids=target_ids
-                    )
-                    if err_msg not in ("handler_not_found", "action_not_supported"):
-                        await self.plugin.data_cache.set_message_recalled(
-                            bot_name, group_or_user_id, llm_result.delete_message_ids
-                        )
-                        success_logs.append(
-                            f"<recall message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
-                        )
-                    else:
-                        logger.debug(
-                            f"[Giftia] delete_messages 动作暂不支持 [{err_msg}]"
-                        )
-
-            # 3. 消息贴表情点赞
-            if llm_result.emoji_ids:
-                for message_id, emoji_id in llm_result.emoji_ids:
-                    if is_qq_official:
-                        m_id, e_id = message_id, int(emoji_id or 0)
-                    else:
-                        try:
-                            m_id, e_id = int(message_id), int(emoji_id)
-                        except ValueError:
-                            m_id = None
-                            logger.error(
-                                f"{bot_name} 贴表情数据格式错误: {message_id}, {emoji_id}"
-                            )
-                    if m_id is not None:
-                        err_msg = await self._invoke_platform_action(
-                            event,
-                            "msg_emoji_like",
-                            is_qq_official,
-                            message_id=m_id,
-                            emoji_id=e_id,
-                        )
-                        if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<emoji_like message_id={message_id} emoji_id={emoji_id} result={err_msg or 'success'}/>"
-                            )
-                        else:
-                            logger.debug(
-                                f"[Giftia] msg_emoji_like 动作暂不支持 [{err_msg}]"
-                            )
-
-            # 4. 消息复读（已合入 output_order 在 _dispatch_aiocqhttp_outputs 中按时序发送）
-
-            # 5. 点赞
-            if llm_result.likes:
-                for user_id, count in llm_result.likes:
-                    if is_qq_official:
-                        u_id, c_count = user_id, int(count or 1)
-                    else:
-                        try:
-                            u_id, c_count = int(user_id), int(count)
-                        except ValueError:
-                            u_id = None
-                            logger.error(
-                                f"{bot_name} 点赞数据格式错误: {user_id}, {count}"
-                            )
-                    if u_id is not None:
-                        err_msg = await self._invoke_platform_action(
-                            event, "like", is_qq_official, user_id=u_id, count=c_count
-                        )
-                        if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<like user_id={user_id} result={err_msg or 'success'}/>"
-                            )
-                        else:
-                            logger.debug(f"[Giftia] like 动作暂不支持 [{err_msg}]")
-
-            # 6. 戳一戳
-            if llm_result.poke:
-                for group_id, user_id in llm_result.poke:
-                    if is_qq_official:
-                        g_id, u_id = group_id, user_id
-                    else:
-                        try:
-                            g_id, u_id = int(group_id), int(user_id)
-                        except ValueError:
-                            g_id = None
-                            logger.error(
-                                f"{bot_name} 戳一戳数据格式错误: {group_id}, {user_id}"
-                            )
-                    if g_id is not None:
-                        err_msg = await self._invoke_platform_action(
-                            event,
-                            "group_poke",
-                            is_qq_official,
-                            group_id=g_id,
-                            user_id=u_id,
-                        )
-                        if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<poke user_id={user_id} result={err_msg or 'success'}/>"
-                            )
-                        else:
-                            logger.debug(
-                                f"[Giftia] group_poke 动作暂不支持 [{err_msg}]"
-                            )
-
-            # 7. 禁言
-            if llm_result.ban:
-                for group_id, user_id, duration in llm_result.ban:
-                    if is_qq_official:
-                        g_id, u_id, dur = group_id, user_id, int(duration or 1800)
-                    else:
-                        try:
-                            g_id, u_id, dur = int(group_id), int(user_id), int(duration)
-                        except ValueError:
-                            g_id = None
-                            logger.error(
-                                f"{bot_name} 禁言数据格式错误: {group_id}, {user_id}, {duration}"
-                            )
-                    if g_id is not None:
-                        err_msg = await self._invoke_platform_action(
-                            event,
-                            "group_ban",
-                            is_qq_official,
-                            group_id=g_id,
-                            user_id=u_id,
-                            duration=dur,
-                        )
-                        if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<ban user_id={user_id} duration={duration} result={err_msg or 'success'}/>"
-                            )
-                        else:
-                            logger.debug(f"[Giftia] group_ban 动作暂不支持 [{err_msg}]")
 
             # 8. 添加定时任务
             if llm_result.schedule_tasks:
@@ -959,47 +1010,18 @@ class ActionDispatcher:
                         f"<add_sticker media_id={sticker_id} result='success'/>"
                     )
 
-            # 11. 发送消息链 / TTS 语音
+            await self._record_action_logs(
+                event, bot_name, nickname, group_or_user_id, success_logs
+            )
             await self._dispatch_aiocqhttp_outputs(
                 event=event,
                 bot_name=bot_name,
                 nickname=nickname,
                 group_or_user_id=group_or_user_id,
                 llm_result=llm_result,
-                success_logs=success_logs,
             )
 
-            # 12. 踢人
-            if llm_result.kick:
-                for group_id, user_id in llm_result.kick:
-                    if is_qq_official:
-                        g_id, u_id = group_id, user_id
-                    else:
-                        try:
-                            g_id, u_id = int(group_id), int(user_id)
-                        except ValueError:
-                            g_id = None
-                            logger.error(
-                                f"{bot_name} 踢人数据格式错误: {group_id}, {user_id}"
-                            )
-                    if g_id is not None:
-                        err_msg = await self._invoke_platform_action(
-                            event,
-                            "group_kick",
-                            is_qq_official,
-                            group_id=g_id,
-                            user_id=u_id,
-                        )
-                        if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<kick user_id={user_id} result={err_msg or 'success'}/>"
-                            )
-                        else:
-                            logger.debug(
-                                f"[Giftia] group_kick 动作暂不支持 [{err_msg}]"
-                            )
-
-            # 13. 退群
+            # 在所有有序输出和工具执行完成后再退群。
             if llm_result.leave:
                 for group_id in llm_result.leave:
                     if is_qq_official:
@@ -1015,56 +1037,29 @@ class ActionDispatcher:
                             event, "group_leave", is_qq_official, group_id=g_id
                         )
                         if err_msg not in ("handler_not_found", "action_not_supported"):
-                            success_logs.append(
-                                f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
+                            await self._record_action_logs(
+                                event,
+                                bot_name,
+                                nickname,
+                                group_or_user_id,
+                                [
+                                    f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
+                                ],
                             )
                         else:
                             logger.debug(
                                 f"[Giftia] group_leave 动作暂不支持 [{err_msg}]"
                             )
 
-            # 14. 记录总体操作日志
-            if len(success_logs) > 0:
-                await self.plugin.data_cache.add_message(
-                    bot_name,
-                    group_or_user_id,
-                    MessageData(
-                        nickname=nickname,
-                        user_id=event.get_self_id(),
-                        group_or_user_id=group_or_user_id,
-                        time=iso_string,
-                        message_id="",
-                        content="\n".join(success_logs),
-                        is_recalled=False,
-                        media_id_list=[],
-                        role="operation_log",
-                    ),
-                )
             return
 
-        # 其它平台普通消息 / TTS 语音发送
-        if llm_result.msg_chains or llm_result.tts_segments:
-            await self._dispatch_generic_outputs(
-                event=event,
-                bot_name=bot_name,
-                nickname=nickname,
-                group_or_user_id=group_or_user_id,
-                llm_result=llm_result,
-            )
-
-        if common_logs:
-            await self.plugin.data_cache.add_message(
-                bot_name,
-                group_or_user_id,
-                MessageData(
-                    nickname=nickname,
-                    user_id=event.get_self_id(),
-                    group_or_user_id=group_or_user_id,
-                    time=datetime.now().isoformat(),
-                    message_id="",
-                    content="\n".join(common_logs),
-                    is_recalled=False,
-                    media_id_list=[],
-                    role="operation_log",
-                ),
-            )
+        await self._record_action_logs(
+            event, bot_name, nickname, group_or_user_id, common_logs
+        )
+        await self._dispatch_generic_outputs(
+            event=event,
+            bot_name=bot_name,
+            nickname=nickname,
+            group_or_user_id=group_or_user_id,
+            llm_result=llm_result,
+        )

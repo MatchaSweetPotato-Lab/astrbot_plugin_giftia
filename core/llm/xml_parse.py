@@ -266,6 +266,9 @@ class XmlParse:
                                 self._attr_str(child, "emoji_id", ""),
                             )
                         )
+                        result.output_order.append(
+                            ("emoji_like", len(result.emoji_ids) - 1)
+                        )
                     else:
                         logger.error(
                             f"贴表情数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -277,6 +280,9 @@ class XmlParse:
                     )
                     if msg_id:
                         result.delete_message_ids.append(msg_id)
+                        result.output_order.append(
+                            ("delete", len(result.delete_message_ids) - 1)
+                        )
 
                 elif tag_name == "repeat":
                     msg_id = self._attr_str(child, "message_id", "") or child.get_text(
@@ -302,6 +308,7 @@ class XmlParse:
                                 self._attr_str(child, "count", ""),
                             )
                         )
+                        result.output_order.append(("like", len(result.likes) - 1))
                     else:
                         logger.error(
                             f"点赞标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -316,6 +323,7 @@ class XmlParse:
                                 self._attr_str(child, "user_id", ""),
                             )
                         )
+                        result.output_order.append(("poke", len(result.poke) - 1))
                     else:
                         logger.error(
                             f"戳一戳标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -331,6 +339,7 @@ class XmlParse:
                                 self._attr_str(child, "duration", ""),
                             )
                         )
+                        result.output_order.append(("ban", len(result.ban) - 1))
                     else:
                         logger.error(
                             f"禁言标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -345,6 +354,7 @@ class XmlParse:
                                 self._attr_str(child, "user_id", ""),
                             )
                         )
+                        result.output_order.append(("kick", len(result.kick) - 1))
                     else:
                         logger.error(
                             f"踢人标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -382,7 +392,9 @@ class XmlParse:
                         # 也支持纯文本形式，如 "服装: 女仆装\n场景: 客厅"
                         text_body = child.get_text(strip=True)
                         if text_body:
-                            pairs = re.findall(r"([^\n:：]+)[:：]\s*([^\n]+)", text_body)
+                            pairs = re.findall(
+                                r"([^\n:：]+)[:：]\s*([^\n]+)", text_body
+                            )
                             for k, v in pairs:
                                 k_clean = k.strip()
                                 v_clean = v.strip().strip("\"'")
@@ -462,6 +474,9 @@ class XmlParse:
 
                     if tool_name and arg_dict is not None:
                         result.tools_to_call.append((tool_name, arg_dict))
+                        result.output_order.append(
+                            ("tool_call", len(result.tools_to_call) - 1)
+                        )
                     else:
                         logger.error(
                             f"Tool call数据不完整或解析失败: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -734,7 +749,9 @@ class XmlParse:
                 if comp:
                     return comp
             except Exception as e:
-                logger.error(f"[Giftia] 加载 meme_manager 表情包 {sticker_id} 失败: {e}")
+                logger.error(
+                    f"[Giftia] 加载 meme_manager 表情包 {sticker_id} 失败: {e}"
+                )
 
         # 2. 原生 Giftia 表情包加载
         local_path = self.emoji_manager.get_sticker_path(sticker_id)
