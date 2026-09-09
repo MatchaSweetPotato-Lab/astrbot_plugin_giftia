@@ -914,6 +914,37 @@ class ActionDispatcher:
         )
         common_logs = task_board_logs + set_call_name_logs + set_status_logs
 
+        for user_id, avatar_description in llm_result.set_avatars:
+            user_id = user_id.strip()
+            avatar_description = avatar_description.strip()
+            try:
+                if not self._interactive_feature_enabled(
+                    FeatureKey.SET_AVATAR, bot_name
+                ):
+                    raise ValueError("设置头像描述未启用")
+                if not user_id:
+                    raise ValueError("未提供目标用户的 user_id")
+                if not avatar_description:
+                    raise ValueError("未提供头像描述 avatar_description")
+                await self.plugin.data_cache.set_user_profile(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                    profile_fields={"avatar_description": avatar_description},
+                    alias_increment_count=False,
+                )
+                common_logs.append(
+                    f"<set_avatar user_id={quoteattr(user_id)} "
+                    f"avatar_description={quoteattr(avatar_description)} result='success'/>"
+                )
+                logger.info(f"[Giftia] Updated avatar description for user {user_id}")
+            except Exception as e:
+                logger.warning(f"[Giftia] Avatar description action failed: {e}")
+                common_logs.append(
+                    f"<set_avatar user_id={quoteattr(user_id)} "
+                    f"result='failed' reason={quoteattr(str(e))}/>"
+                )
+
         for item in llm_result.slang_actions:
             action = item.get("action", "")
             term = item.get("term", "")

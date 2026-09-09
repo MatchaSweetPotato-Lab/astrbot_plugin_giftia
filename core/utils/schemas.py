@@ -29,6 +29,7 @@ class FeatureKey:
     STICKER = "sticker"
     MEMORY_QUERY_DELETE = "memory_query_delete"
     SET_CALL_NAME = "set_call_name"
+    SET_AVATAR = "set_avatar"
     PERSISTENT_STATUS = "persistent_status"
     LEAVE = "leave"
 
@@ -227,6 +228,7 @@ FLAT_CLOSABLE_TAGS = [
     "decision",
     "caption",
     "set_call_name",
+    "set_avatar",
     "set_status",
     "slang",
 ]
@@ -308,6 +310,7 @@ class XmlLlmResult:
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 修改用户称呼请求
     set_call_names: list[SetCallNameRequest] = field(default_factory=list)
+    set_avatars: list[tuple[str, str]] = field(default_factory=list)
     # 更新常驻/低频状态请求 (键值对字典)
     set_custom_status: dict[str, str] = field(default_factory=dict)
     # 保留可见输出与工具在 XML 中的出现顺序；退群操作始终在最后

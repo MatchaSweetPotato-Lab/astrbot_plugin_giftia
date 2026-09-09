@@ -372,6 +372,14 @@ class XmlParse:
                         SetCallNameRequest(user_id=user_id, name=name)
                     )
 
+                elif tag_name == "set_avatar":
+                    result.set_avatars.append(
+                        (
+                            self._attr_str(child, "user_id", "").strip(),
+                            child.get_text().strip(),
+                        )
+                    )
+
                 elif tag_name == "set_status":
                     key = (
                         self._attr_str(child, "key", "")

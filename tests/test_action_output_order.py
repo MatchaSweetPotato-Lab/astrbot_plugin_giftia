@@ -453,6 +453,14 @@ def tool_runtime(runtime, monkeypatch):
             '<tool_call name="image_tool">{}</tool_call><tool_call name="text_tool">{}</tool_call>',
             ["image", "image tool tail", "tool text"],
         ),
+        (
+            '<set_avatar user_id="200">头像描述</set_avatar><message>after</message>',
+            ["after"],
+        ),
+        (
+            '<set_avatar user_id="200">头像描述</set_avatar>',
+            [],
+        ),
     ],
 )
 async def test_xml_tool_outputs_and_results_follow_order(
@@ -478,6 +486,7 @@ async def test_xml_tool_outputs_and_results_follow_order(
     plugin.call_llm = SimpleNamespace(
         call_llm_reply=AsyncMock(side_effect=[result, XmlLlmResult()])
     )
+    plugin.data_cache.set_user_profile = AsyncMock()
     for name in (
         "get_recent_message",
         "get_bot_status",
@@ -504,11 +513,21 @@ async def test_xml_tool_outputs_and_results_follow_order(
                 runtime.event, "bot", "Bot", "100", chunk
             )
     assert runtime.observed == expected
-    assert plugin.call_llm.call_llm_reply.await_count == 2
+    assert plugin.call_llm.call_llm_reply.await_count == (
+        2 if result.tools_to_call else 1
+    )
+    if result.set_avatars:
+        plugin.data_cache.set_user_profile.assert_awaited_once_with(
+            bot_name="bot",
+            group_or_user_id="100",
+            user_id="200",
+            profile_fields={"avatar_description": "头像描述"},
+            alias_increment_count=False,
+        )
     assert [item["name"] for item in result.xml_tool_results] == [
         name for name, _ in result.tools_to_call
     ]
-    assert prompt.call_args.kwargs["tool_results"] == result.xml_tool_results
+    assert (prompt.call_args.kwargs["tool_results"] or []) == result.xml_tool_results
     assert all(item["results"] for item in result.xml_tool_results)
     assert runtime.event._giftia_bypass_logging is False
     rows = [entry.args[2] for entry in plugin.data_cache.add_message.await_args_list]
