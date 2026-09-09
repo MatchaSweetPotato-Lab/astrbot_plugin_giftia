@@ -153,10 +153,6 @@ class LTM:
 
                     self.embed_provider = resolved_provider
                     self.vector_dim = resolved_provider.get_dim()
-                    logger.info(
-                        f"LTM当前使用 AstrBot 的外部 Embedding 提供商: {resolved_provider.provider_config.get('id', 'unknown')}，"
-                        f"模型名称: {resolved_provider.get_model()}，维度: {self.vector_dim}"
-                    )
                 else:
                     from fastembed import TextEmbedding
 
@@ -250,10 +246,6 @@ class LTM:
                         )
 
                     self.rerank_provider = resolved_provider
-                    logger.info(
-                        f"LTM当前使用 AstrBot 的外部 Rerank 提供商: {resolved_provider_id or 'unknown'}，"
-                        f"模型名称: {self._get_provider_model(resolved_provider)}"
-                    )
                 else:
                     from fastembed.rerank.cross_encoder import TextCrossEncoder
 

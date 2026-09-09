@@ -3,8 +3,7 @@ import random
 from datetime import datetime
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Image
+from astrbot.api.event import AstrMessageEvent
 
 from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt
@@ -48,6 +47,7 @@ class ReplyPipeline:
             "slang_actions",
             "tts_segments",
             "set_call_names",
+            "set_avatars",
             "set_custom_status",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
@@ -287,8 +287,16 @@ class ReplyPipeline:
         persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
 
         # 获取表情包池并抽取样本
-        if getattr(self.plugin, "use_meme_manager", False) and hasattr(self.plugin, "meme_manager_client") and self.plugin.meme_manager_client:
-            query = meme_tags if (meme_tags and meme_tags.strip()) else getattr(self.plugin, "default_meme_query", "日常, 开心, 互动")
+        if (
+            getattr(self.plugin, "use_meme_manager", False)
+            and hasattr(self.plugin, "meme_manager_client")
+            and self.plugin.meme_manager_client
+        ):
+            query = (
+                meme_tags
+                if (meme_tags and meme_tags.strip())
+                else getattr(self.plugin, "default_meme_query", "日常, 开心, 互动")
+            )
             count = getattr(self.plugin, "meme_candidate_count", 5)
             candidates = await self.plugin.meme_manager_client.get_candidate_memes(
                 persona_id=persona_id,
@@ -296,7 +304,9 @@ class ReplyPipeline:
                 count=count,
                 event=event,
             )
-            bot_sticker_cache = self.plugin.meme_manager_client.format_candidates_for_prompt(candidates)
+            bot_sticker_cache = (
+                self.plugin.meme_manager_client.format_candidates_for_prompt(candidates)
+            )
         else:
             bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(
                 bot_name
@@ -339,8 +349,13 @@ class ReplyPipeline:
 
         persona = None
         persona_tools = None
-        if hasattr(self.plugin.context, "persona_manager") and self.plugin.context.persona_manager:
-            persona = self.plugin.context.persona_manager.get_persona_v3_by_id(persona_id)
+        if (
+            hasattr(self.plugin.context, "persona_manager")
+            and self.plugin.context.persona_manager
+        ):
+            persona = self.plugin.context.persona_manager.get_persona_v3_by_id(
+                persona_id
+            )
 
         if not persona:
             err_msg = f"[Giftia] {bot_name} 绑定的 AstrBot 人格 '{persona_id}' 在 AstrBot 中不存在或已被删除，请重新在控制台配置机器人人格。"
@@ -427,7 +442,9 @@ class ReplyPipeline:
             )
 
         # 7. 后台分析与添加表情包（仅原生模式生效，接入 meme_manager 时由其自行管理收集）
-        if llm_result.add_stickers and not getattr(self.plugin, "use_meme_manager", False):
+        if llm_result.add_stickers and not getattr(
+            self.plugin, "use_meme_manager", False
+        ):
             asyncio.create_task(
                 self.media_captioner.analyze_and_add_stickers(
                     event=event,
@@ -447,27 +464,16 @@ class ReplyPipeline:
         if tool_results is None:
             tool_results = []
 
-        # 9. 调用 ToolExecutor 执行工具和搜索查询
-        image_base64 = await self.tool_executor.execute_tools_and_queries(
-            event=event,
+        # Dispatcher 已经在对应输出顺序位置执行了 XML 工具。
+        tool_results.extend(llm_result.xml_tool_results)
+        await self.tool_executor.execute_queries(
             bot_name=bot_name,
-            nickname=nickname,
             group_or_user_id=group_or_user_id,
             llm_result=llm_result,
             recent_messages=recent_messages,
             relevant_memories=relevant_memories,
             other_data=other_data,
-            tool_results=tool_results,
-            times=times,
         )
-
-        # 如果工具调用产生了图片，立即发送
-        if image_base64:
-            comps = [Image.fromBase64(b64) for b64 in image_base64]
-            yield await event.send(MessageChain(comps))
-            logger.info(
-                f"{bot_name} 从MCP工具收到 {len(image_base64)} 张图片，直接发出去了"
-            )
 
         # 10. 判断是否需要继续循环迭代
         if (

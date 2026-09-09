@@ -151,6 +151,11 @@ def build_xml_instructions(
             '- **设置/修改用户称呼**: `<set_call_name user_id="目标用户ID" name="新称呼"/>`。为指定用户设置特定称呼；必须显式填入 `user_id`（目标用户的数字 ID），`name` 留空表示清空称呼。'
         )
 
+    if is_enabled(FeatureKey.SET_AVATAR):
+        interactive_lines.append(
+            '- **记录头像描述**: `<set_avatar user_id="用户ID">头像描述</set_avatar>`。保存查看头像工具返回的描述。'
+        )
+
     if is_enabled(FeatureKey.STICKER):
         if use_meme_manager:
             interactive_lines.append(
@@ -242,8 +247,6 @@ def build_xml_instructions(
         "</status>",
         "<message>哼哼，今天也要元气满满哦！</message>",
     ]
-    if is_enabled(FeatureKey.EMOJI_LIKE):
-        example_lines.append('<emoji_like message_id="msg-12345" emoji_id="424"/>')
 
     prompt_lines.extend(
         [

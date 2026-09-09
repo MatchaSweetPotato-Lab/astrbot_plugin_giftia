@@ -29,6 +29,7 @@ class FeatureKey:
     STICKER = "sticker"
     MEMORY_QUERY_DELETE = "memory_query_delete"
     SET_CALL_NAME = "set_call_name"
+    SET_AVATAR = "set_avatar"
     PERSISTENT_STATUS = "persistent_status"
     LEAVE = "leave"
 
@@ -187,6 +188,7 @@ class TTSRequest:
     lang: str = ""
     emotion: str = ""
     pre_recorded_path: str = ""
+    quote_message_id: str = ""  # 引用回复的消息 ID
 
 
 @dataclass(repr=False, slots=True)
@@ -226,6 +228,7 @@ FLAT_CLOSABLE_TAGS = [
     "decision",
     "caption",
     "set_call_name",
+    "set_avatar",
     "set_status",
     "slang",
 ]
@@ -282,6 +285,8 @@ class XmlLlmResult:
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
     )  # (工具名, 工具参数)
+    # 由 dispatcher 执行填充，供下一轮 XML 工具调用消费的结果
+    xml_tool_results: list[dict] = field(default_factory=list)
     # 原生 function calling / tool loop 已调用的工具名
     native_tools_called: list[str] = field(default_factory=list)
     # 定时任务，群号/用户ID，时间，内容
@@ -305,7 +310,8 @@ class XmlLlmResult:
     tts_segments: list[TTSRequest] = field(default_factory=list)
     # 修改用户称呼请求
     set_call_names: list[SetCallNameRequest] = field(default_factory=list)
+    set_avatars: list[tuple[str, str]] = field(default_factory=list)
     # 更新常驻/低频状态请求 (键值对字典)
     set_custom_status: dict[str, str] = field(default_factory=dict)
-    # 保留 message / tts 在 LLM XML 中的出现顺序
+    # 保留可见输出与工具在 XML 中的出现顺序；退群操作始终在最后
     output_order: list[tuple[str, int]] = field(default_factory=list)

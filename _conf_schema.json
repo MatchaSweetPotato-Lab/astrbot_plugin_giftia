@@ -333,12 +333,6 @@
                 "default": true,
                 "hint": "允许AI在需要时按 media_id 查看未转述的历史媒体（图片/语音/视频）或对已有媒体定向提问。"
             },
-            "set_user_avatar_description_enabled": {
-                "description": "启用设置头像描述工具",
-                "type": "bool",
-                "default": true,
-                "hint": "允许AI在获取到用户头像视觉特征后，将头像描述持久化保存至用户画像库。"
-            },
             "inject_avatar_to_active_briefs": {
                 "description": "活跃成员摘要包含头像描述",
                 "type": "bool",
