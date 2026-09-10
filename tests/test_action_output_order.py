@@ -614,8 +614,7 @@ async def test_reminders_dispatch_tools_and_images_in_order(tool_runtime, platfo
     async def reply(**kwargs):
         yield result
 
-    manager = ChatManager.__new__(ChatManager)
-    manager.plugin = plugin
+    manager = ChatManager(plugin)
     manager.fake_event = Mock(return_value=runtime.event)
     manager.action_dispatcher = runtime.dispatcher
     manager.reply_pipeline = SimpleNamespace(

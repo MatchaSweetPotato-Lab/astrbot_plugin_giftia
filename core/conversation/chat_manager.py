@@ -101,6 +101,9 @@ class ChatManager:
         self.decision_engine = DecisionEngine(plugin)
         self.reply_pipeline = ReplyPipeline(plugin)
         self.action_dispatcher = ActionDispatcher(plugin)
+        self._pending_reminders: dict[
+            tuple[str, str], tuple[list[str], asyncio.Task[None]]
+        ] = {}
 
     def _check_command_info(self, event: AstrMessageEvent) -> tuple[bool, bool]:
         """检查当前事件是否激活了指令 Handler。
@@ -589,7 +592,103 @@ class ChatManager:
         group_or_user_id: str,
         remind_message: str,
     ):
-        """处理定时任务调度提醒"""
+        """Collect reminders for one bot and session into a single reply.
+
+        Args:
+            unified_msg_origin: Platform routing key for the destination session.
+            adapter_id: Platform adapter identifier.
+            bot_name: Bot configuration name.
+            nickname: Bot display name.
+            self_id: Bot account identifier.
+            platform_name: Platform type name.
+            user_id: Identifier of the user who created this reminder.
+            user_name: Display name of the user who created this reminder.
+            group_id: Group identifier, or an empty string for private chats.
+            group_or_user_id: Conversation identifier used by the message cache.
+            remind_message: Content of this individual reminder.
+        """
+        batch_key = (bot_name, unified_msg_origin)
+        reminder = f"{user_name}({user_id}): {remind_message}"
+        batch = self._pending_reminders.get(batch_key)
+        if batch is None:
+            reminders = [reminder]
+            task = asyncio.create_task(
+                self._dispatch_reminder_batch(
+                    unified_msg_origin=unified_msg_origin,
+                    adapter_id=adapter_id,
+                    bot_name=bot_name,
+                    nickname=nickname,
+                    self_id=self_id,
+                    platform_name=platform_name,
+                    user_id=user_id,
+                    user_name=user_name,
+                    group_id=group_id,
+                    group_or_user_id=group_or_user_id,
+                    reminders=reminders,
+                )
+            )
+            batch = (reminders, task)
+            self._pending_reminders[batch_key] = batch
+        else:
+            reminders, task = batch
+            reminders.append(reminder)
+
+        try:
+            # Keep every scheduler job active until the shared reply finishes.
+            # Cancellation (including scheduler shutdown) also stops the batch.
+            await task
+        finally:
+            # A newer batch may already be collecting while this one replies.
+            if self._pending_reminders.get(batch_key) is batch:
+                self._pending_reminders.pop(batch_key)
+
+    async def _dispatch_reminder_batch(
+        self,
+        unified_msg_origin: str,
+        adapter_id: str,
+        bot_name: str,
+        nickname: str,
+        self_id: str,
+        platform_name: str,
+        user_id: str,
+        user_name: str,
+        group_id: str,
+        group_or_user_id: str,
+        reminders: list[str],
+    ):
+        """Seal a one-second collection window and dispatch its reminders.
+
+        Args:
+            unified_msg_origin: Platform routing key for the destination session.
+            adapter_id: Platform adapter identifier.
+            bot_name: Bot configuration name.
+            nickname: Bot display name.
+            self_id: Bot account identifier.
+            platform_name: Platform type name.
+            user_id: Creator identifier from the first reminder, for event routing.
+            user_name: Creator display name from the first reminder.
+            group_id: Group identifier, or an empty string for private chats.
+            group_or_user_id: Conversation identifier used by the message cache.
+            reminders: Reminder contents, each prefixed with its own creator.
+        """
+        await asyncio.sleep(1)
+        # Close collection before waiting for the session lock or the LLM.
+        self._pending_reminders.pop((bot_name, unified_msg_origin))
+        if len(reminders) == 1:
+            remind_message = f"[定时任务唤醒] {reminders[0]}"
+        else:
+            remind_message = (
+                f"[定时任务批量唤醒] 请完成以下 {len(reminders)} 个任务:\n"
+                + "\n".join(
+                    f"{index}. {reminder}"
+                    for index, reminder in enumerate(reminders, start=1)
+                )
+            )
+            logger.info(
+                f"[Giftia] Batched {len(reminders)} scheduled reminders "
+                f"for bot {bot_name} in session {unified_msg_origin}"
+            )
+
         # 检查是否处于禁言静默状态
         if (
             group_id
@@ -643,7 +742,7 @@ class ChatManager:
                     bot_name=bot_name,
                     nickname=nickname,
                     group_or_user_id=group_or_user_id,
-                    remind_message=f"[定时任务唤醒] {user_name}({user_id}): {remind_message}",
+                    remind_message=remind_message,
                     pending_recall_memories=pending_recall_memories,
                 ):
                     if chunk:
