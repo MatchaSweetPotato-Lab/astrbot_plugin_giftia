@@ -62,8 +62,6 @@ function renderBotsGrid() {
         const nickname = escapeHtml(bot.nickname || name);
         const safeDomId = sanitizeId(bot.name);
         const adapters = bot.adapter_ids || [];
-        const decEnabled = bot.decision_conf?.enabled !== false;
-        const replyEnabled = bot.llm_reply_conf?.enabled !== false;
         const ttsEnabled = bot.tts_config?.enabled === true;
         const activeFeaturesCount = (bot.enabled_interactive_features || []).length;
 
@@ -91,12 +89,6 @@ function renderBotsGrid() {
                 </div>
 
                 <div class="bot-features-summary" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.78rem; margin: 4px 0;">
-                    <span class="badge ${decEnabled ? 'badge-success' : 'badge-secondary'}">
-                        小模型判断: ${decEnabled ? '开启' : '关闭'}
-                    </span>
-                    <span class="badge ${replyEnabled ? 'badge-success' : 'badge-secondary'}">
-                        大模型回复: ${replyEnabled ? '开启' : '关闭'}
-                    </span>
                     <span class="badge badge-info">
                         人格: ${escapeHtml(bot.llm_reply_conf?.persona_id || 'default')}
                     </span>
@@ -178,7 +170,6 @@ function openBotEditModal(botName = null) {
         nickname: '',
         adapter_ids: [],
         decision_conf: {
-            enabled: true,
             provider_ids: [],
             group_whitelist_mode: 'blacklist',
             group_whitelist: [],
@@ -193,7 +184,6 @@ function openBotEditModal(botName = null) {
             at_behavior: 'force_reply'
         },
         llm_reply_conf: {
-            enabled: true,
             provider_ids: [],
             provider_selection_mode: 'fallback',
             persona_id: 'default'
@@ -218,6 +208,7 @@ function openBotEditModal(botName = null) {
     // 1. Basic Info
     document.getElementById('bot-form-name').value = bot.name || '';
     document.getElementById('bot-form-nickname').value = bot.nickname || '';
+    renderPersonaSelectOptions(bot.llm_reply_conf?.persona_id || 'default');
 
     // Destroy existing TagSelect instances before re-creating
     if (adaptersTagSelect && typeof adaptersTagSelect.destroy === 'function') adaptersTagSelect.destroy();
@@ -232,7 +223,6 @@ function openBotEditModal(botName = null) {
     });
 
     // 2. Decision Conf
-    document.getElementById('bot-form-dec-enabled').checked = bot.decision_conf?.enabled !== false;
 
     // Initialize Priority Select for Decision Providers
     decProvidersTagSelect = new PrioritySelectComponent('bot-form-dec-providers', {
@@ -256,7 +246,6 @@ function openBotEditModal(botName = null) {
     document.getElementById('bot-form-dec-kw-prob').value = bot.decision_conf?.keyword_default_probability ?? 100;
 
     // 3. Reply Conf
-    document.getElementById('bot-form-reply-enabled').checked = bot.llm_reply_conf?.enabled !== false;
 
     // Initialize Priority Select for Reply Providers
     replyProvidersTagSelect = new PrioritySelectComponent('bot-form-reply-providers', {
@@ -266,7 +255,6 @@ function openBotEditModal(botName = null) {
     });
 
     document.getElementById('bot-form-reply-mode').value = bot.llm_reply_conf?.provider_selection_mode || 'fallback';
-    renderPersonaSelectOptions(bot.llm_reply_conf?.persona_id || 'default');
 
     // 4. TTS Conf
     document.getElementById('bot-form-tts-enabled').checked = bot.tts_config?.enabled === true;
@@ -742,7 +730,6 @@ async function saveBotFromModal() {
         nickname: document.getElementById('bot-form-nickname').value.trim() || name,
         adapter_ids: adapterIds,
         decision_conf: {
-            enabled: document.getElementById('bot-form-dec-enabled').checked,
             provider_ids: decSelectedProviders,
             group_whitelist_mode: document.getElementById('bot-form-dec-list-mode')?.value || 'blacklist',
             group_whitelist: document.getElementById('bot-form-dec-whitelist').value.split(',').map(s => s.trim()).filter(s => s),
@@ -757,7 +744,6 @@ async function saveBotFromModal() {
             at_behavior: document.getElementById('bot-form-dec-at-behavior')?.value || 'force_reply',
         },
         llm_reply_conf: {
-            enabled: document.getElementById('bot-form-reply-enabled').checked,
             provider_ids: replySelectedProviders,
             provider_selection_mode: document.getElementById('bot-form-reply-mode').value,
             persona_id: document.getElementById('bot-form-reply-persona')?.value || 'default',

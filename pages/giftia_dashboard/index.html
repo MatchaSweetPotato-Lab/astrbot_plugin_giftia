@@ -1453,6 +1453,12 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <label>关联 AstrBot 人格 (Persona) <span class="info-tooltip" data-tooltip="绑定 AstrBot 控制台配置的人格，回复时将继承该人格的 System Prompt 与工具限制"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <select id="bot-form-reply-persona" class="form-control">
+                            <!-- Dynamically populated from metadata.personas -->
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label>绑定的适配器 ID 列表 (Adapter IDs) <span class="info-tooltip" data-tooltip="选择该机器人绑定的消息平台适配器账号"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <div id="bot-form-adapters" class="tag-select-container"></div>
                     </div>
@@ -1530,16 +1536,6 @@
 
                 <!-- Sub-tab 3: Decision Conf -->
                 <div id="subtab-decision" class="bot-subtab-content" style="display: none;">
-                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
-                        <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用小模型主动接话审查</strong>
-                            <span class="info-tooltip" data-tooltip="关闭后将不会对群聊普通消息进行意图判断"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
-                        </div>
-                        <div class="switch-container">
-                            <input type="checkbox" id="bot-form-dec-enabled" class="switch-checkbox" checked>
-                            <label for="bot-form-dec-enabled" class="switch-label"></label>
-                        </div>
-                    </div>
                     <div class="form-group">
                         <label>小模型提供商优先级 <span class="info-tooltip" data-tooltip="按标签顺序依次尝试；当前提供商失败则自动降级"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <div id="bot-form-dec-providers" class="tag-select-container"></div>
@@ -1552,15 +1548,6 @@
 
                 <!-- Sub-tab 4: Reply Conf -->
                 <div id="subtab-reply" class="bot-subtab-content" style="display: none;">
-                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
-                        <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用大模型回复功能</strong>
-                        </div>
-                        <div class="switch-container">
-                            <input type="checkbox" id="bot-form-reply-enabled" class="switch-checkbox" checked>
-                            <label for="bot-form-reply-enabled" class="switch-label"></label>
-                        </div>
-                    </div>
                     <div class="form-row">
                         <div class="form-group" style="flex: 2;">
                             <label>大模型回复提供商优先级 <span class="info-tooltip" data-tooltip="点击或检索选择，支持手动输入与降级尝试"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
@@ -1573,12 +1560,6 @@
                                 <option value="random">random (随机抽取)</option>
                             </select>
                         </div>
-                    </div>
-                    <div class="form-group">
-                        <label>关联 AstrBot 人格 (Persona) <span class="info-tooltip" data-tooltip="绑定 AstrBot 控制台配置的人格，回复时将继承该人格的 System Prompt 与工具限制"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <select id="bot-form-reply-persona" class="form-control">
-                            <!-- Dynamically populated from metadata.personas -->
-                        </select>
                     </div>
                 </div>
 

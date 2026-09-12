@@ -144,14 +144,14 @@ class DecisionEngine:
                 should_force_reply = True
             else:
                 at_behavior = decision_conf.get("at_behavior", "force_reply")
-                has_decision_provider = decision_conf.get("enabled", True) and bool(
+                has_decision_provider = bool(
                     decision_conf.get("provider_ids")
                     or decision_conf.get("provider_id")
                 )
                 if not has_decision_provider:
                     if at_behavior != "force_reply":
                         logger.warning(
-                            f"[Giftia] {bot_name}: @ behavior '{at_behavior}' falls back to a forced reply because no decision provider is enabled"
+                            f"[Giftia] {bot_name}: @ behavior '{at_behavior}' falls back to a forced reply because no decision provider is configured"
                         )
                     should_force_reply = True
                 elif at_behavior == "force_reply":
@@ -174,10 +174,12 @@ class DecisionEngine:
                         f"[Giftia] {bot_name} 收到 @ 消息，根据 @ 行为策略刷新接话分析窗口为 {window_size} 并交由小模型进行判断"
                     )
         else:
-            if not decision_conf.get("enabled", True) or not (
+            if not (
                 decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
-                logger.debug("没有at机器人且未开启决策，跳过处理")
+                logger.debug(
+                    "Skipping unmentioned message: no decision provider configured"
+                )
                 return False, None, None, None
             # 活跃窗口与主动接话概率检查
             proactive_prob = decision_conf.get("proactive_probability", 0)

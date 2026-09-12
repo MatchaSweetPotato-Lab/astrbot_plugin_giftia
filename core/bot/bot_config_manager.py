@@ -47,7 +47,6 @@ DEFAULT_BOT_CONFIG = {
     "adapter_ids": [],
     "blocked_users": {},
     "decision_conf": {
-        "enabled": True,
         "provider_ids": [],
         "group_whitelist_mode": "blacklist",
         "group_whitelist": [],
@@ -62,7 +61,6 @@ DEFAULT_BOT_CONFIG = {
         "at_behavior": "force_reply",
     },
     "llm_reply_conf": {
-        "enabled": True,
         "provider_ids": [],
         "provider_selection_mode": "fallback",
         "persona_id": "default",
@@ -211,7 +209,6 @@ class BotConfigManager:
             access_conf["private_whitelist_mode"] = access_conf["group_whitelist_mode"]
             access_conf["private_whitelist"] = access_conf["group_whitelist"].copy()
         bot["decision_conf"] = {
-            "enabled": bool(raw_dec.get("enabled", True)),
             "provider_ids": [
                 str(p).strip() for p in raw_dec.get("provider_ids") or [] if p
             ],
@@ -243,7 +240,6 @@ class BotConfigManager:
         # llm_reply_conf
         raw_reply = bot.get("llm_reply_conf") or {}
         bot["llm_reply_conf"] = {
-            "enabled": bool(raw_reply.get("enabled", True)),
             "provider_ids": [
                 str(p).strip() for p in raw_reply.get("provider_ids") or [] if p
             ],
