@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import uuid
+
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
-
-from ..bot.bot_config_manager import DEFAULT_INTERACTIVE_FEATURES, INTERACTIVE_FEATURES_METADATA
+from ..bot.bot_config_manager import (
+    INTERACTIVE_FEATURES_METADATA,
+)
 from .web_helpers import read_file_to_base64, safe_path_join
 
 
@@ -275,20 +277,25 @@ class BotApi:
             # 维护的字段；normalize_bot_config 又会把缺失键补成默认值。所以请求体
             # 没带这些键时，得先从原记录里取回来，否则在弹窗里保存一次配置就会把
             # 表情包管理页刚打开的开关悄悄关掉。
-            preserved_keys = ("send_sticker_as_gif",)
-            if any(key not in body for key in preserved_keys):
-                previous = next(
-                    (
-                        b
-                        for b in existing_bots
-                        if b.get("name") in (original_name, bot_name)
-                    ),
-                    None,
-                )
-                if previous:
-                    for key in preserved_keys:
-                        if key not in body and key in previous:
-                            body[key] = previous[key]
+            # Preserve command-managed blocks when the editor omits them.
+            preserved_keys = ("send_sticker_as_gif", "blocked_users")
+            previous = next(
+                (
+                    b
+                    for b in existing_bots
+                    if b.get("name") in (original_name, bot_name)
+                ),
+                None,
+            )
+            if previous:
+                for key in preserved_keys:
+                    if key not in body and key in previous:
+                        body[key] = previous[key]
+                # Older dashboard tabs must not overwrite the separate private list.
+                decision_conf = body["decision_conf"] = body.get("decision_conf") or {}
+                for key in ("private_whitelist_mode", "private_whitelist"):
+                    if key not in decision_conf:
+                        decision_conf[key] = previous["decision_conf"][key]
 
             normalized_bot = manager.normalize_bot_config(body)
 

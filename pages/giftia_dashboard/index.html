@@ -1432,6 +1432,7 @@
                 <!-- Sub-tab Navigation Header -->
                 <div class="card-tabs-header" style="margin-bottom: 15px; display: flex; gap: 6px; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); padding-bottom: 8px; flex-wrap: wrap;">
                     <button type="button" class="card-tab-btn active" data-subtab="subtab-identity" onclick="switchBotModalSubTab('subtab-identity')">身份与适配器</button>
+                    <button type="button" class="card-tab-btn" data-subtab="subtab-access" onclick="switchBotModalSubTab('subtab-access')">会话黑白名单</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-trigger" onclick="switchBotModalSubTab('subtab-trigger')">触发与接话策略</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-decision" onclick="switchBotModalSubTab('subtab-decision')">小模型判断</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-reply" onclick="switchBotModalSubTab('subtab-reply')">大模型回复</button>
@@ -1457,6 +1458,33 @@
                     </div>
                 </div>
 
+                <!-- Session access is independent of reply triggers. -->
+                <div id="subtab-access" class="bot-subtab-content" style="display: none;">
+                    <div class="form-group">
+                        <label for="bot-form-dec-list-mode">群聊名单模式</label>
+                        <select id="bot-form-dec-list-mode">
+                            <option value="blacklist">黑名单模式</option>
+                            <option value="whitelist">白名单模式</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="bot-form-dec-whitelist">群聊名单（群号）</label>
+                        <input type="text" id="bot-form-dec-whitelist" placeholder="例如: 123456, 789012（逗号分隔）">
+                    </div>
+                    <div style="border-top: 1px solid var(--border-color); margin: 20px 0;"></div>
+                    <div class="form-group">
+                        <label for="bot-form-private-list-mode">私聊名单模式</label>
+                        <select id="bot-form-private-list-mode">
+                            <option value="whitelist">白名单模式</option>
+                            <option value="blacklist">黑名单模式</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="bot-form-private-whitelist">私聊名单（用户 ID）</label>
+                        <input type="text" id="bot-form-private-whitelist" placeholder="例如: 123456, 789012（逗号分隔）">
+                    </div>
+                </div>
+
                 <!-- Sub-tab 2: Trigger & Mention Rules -->
                 <div id="subtab-trigger" class="bot-subtab-content" style="display: none;">
                     <div class="form-row">
@@ -1468,10 +1496,6 @@
                                 <option value="decide_in_window_force_outside">仅在会话活跃窗口内交由小模型判断，非活跃窗口强制回复</option>
                             </select>
                         </div>
-                    </div>
-                    <div class="form-group">
-                        <label>生效群聊白名单 <span class="info-tooltip" data-tooltip="填写群号，逗号分隔，留空对所有群生效"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                        <input type="text" id="bot-form-dec-whitelist" placeholder="例如: 123456, 789012 (留空全生效)">
                     </div>
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">

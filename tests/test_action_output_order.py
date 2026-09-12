@@ -598,7 +598,14 @@ async def test_reminders_dispatch_tools_and_images_in_order(tool_runtime, platfo
     plugin = runtime.plugin
     plugin.replying_status = {}
     plugin.active_reply_counters = {}
-    plugin.bot_map = {"bot": {}}
+    plugin.bot_map = {
+        "bot": {
+            "decision_conf": {
+                "group_whitelist_mode": "whitelist",
+                "group_whitelist": ["100"],
+            }
+        }
+    }
     plugin.passive_memory_manager = SimpleNamespace(
         mark_silence_summary_armed=AsyncMock()
     )

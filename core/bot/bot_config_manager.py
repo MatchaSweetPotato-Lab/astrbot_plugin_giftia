@@ -5,6 +5,7 @@ import os
 
 from astrbot.api import logger
 from astrbot.api.star import StarTools
+
 from ..utils.schemas import FeatureKey
 
 INTERACTIVE_FEATURES_METADATA = [
@@ -34,7 +35,9 @@ INTERACTIVE_FEATURES_METADATA = [
 ]
 
 DEFAULT_INTERACTIVE_FEATURES = [
-    item["key"] for item in INTERACTIVE_FEATURES_METADATA if item["key"] != FeatureKey.LEAVE
+    item["key"]
+    for item in INTERACTIVE_FEATURES_METADATA
+    if item["key"] != FeatureKey.LEAVE
 ]
 
 DEFAULT_BOT_CONFIG = {
@@ -42,10 +45,14 @@ DEFAULT_BOT_CONFIG = {
     "name": "Giftia",
     "nickname": "Giftia",
     "adapter_ids": [],
+    "blocked_users": {},
     "decision_conf": {
         "enabled": True,
         "provider_ids": [],
+        "group_whitelist_mode": "blacklist",
         "group_whitelist": [],
+        "private_whitelist_mode": "whitelist",
+        "private_whitelist": [],
         "decision_prompt": "",
         "reply_active_window": 10,
         "proactive_probability": 0,
@@ -83,7 +90,9 @@ class BotConfigManager:
         try:
             self.data_dir = str(StarTools.get_data_dir("astrbot_plugin_giftia"))
         except Exception:
-            self.data_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            self.data_dir = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
         self.config_file = os.path.join(self.data_dir, "bots_config.json")
         self.bots: list[dict] = []
 
@@ -91,30 +100,44 @@ class BotConfigManager:
         """加载机器人配置列表，若文件不存在则初始化默认配置。"""
         if os.path.exists(self.config_file):
             try:
-                with open(self.config_file, "r", encoding="utf-8") as f:
+                with open(self.config_file, encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, list):
-                    self.bots = [self.normalize_bot_config(b) for b in data if isinstance(b, dict)]
-                    logger.info(f"[Giftia BotConfigManager] 从 {self.config_file} 加载了 {len(self.bots)} 个机器人配置")
+                    self.bots = [
+                        self.normalize_bot_config(b)
+                        for b in data
+                        if isinstance(b, dict)
+                    ]
+                    logger.info(
+                        f"[Giftia BotConfigManager] 从 {self.config_file} 加载了 {len(self.bots)} 个机器人配置"
+                    )
                     return self.bots
             except Exception as e:
-                logger.error(f"[Giftia BotConfigManager] 读取 {self.config_file} 失败: {e}")
+                logger.error(
+                    f"[Giftia BotConfigManager] 读取 {self.config_file} 失败: {e}"
+                )
 
         # 初始化默认机器人配置
-        logger.info("[Giftia BotConfigManager] 未找到已有机器人配置，自动初始化默认机器人 Giftia")
+        logger.info(
+            "[Giftia BotConfigManager] 未找到已有机器人配置，自动初始化默认机器人 Giftia"
+        )
         self.bots = [dict(DEFAULT_BOT_CONFIG)]
         self.save_bots(self.bots)
         return self.bots
 
     def save_bots(self, bots: list[dict]) -> bool:
         """保存机器人配置列表到 data/bots_config.json。"""
-        normalized_bots = [self.normalize_bot_config(b) for b in bots if isinstance(b, dict)]
+        normalized_bots = [
+            self.normalize_bot_config(b) for b in bots if isinstance(b, dict)
+        ]
         try:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             with open(self.config_file, "w", encoding="utf-8") as f:
                 json.dump(normalized_bots, f, ensure_ascii=False, indent=2)
             self.bots = normalized_bots
-            logger.info(f"[Giftia BotConfigManager] 已保存 {len(normalized_bots)} 个机器人配置到 {self.config_file}")
+            logger.info(
+                f"[Giftia BotConfigManager] 已保存 {len(normalized_bots)} 个机器人配置到 {self.config_file}"
+            )
             return True
         except Exception as e:
             logger.error(f"[Giftia BotConfigManager] 保存 {self.config_file} 失败: {e}")
@@ -132,7 +155,9 @@ class BotConfigManager:
             else:
                 audio_str = str(audios or "").strip()
 
-            texts = ", ".join([str(t).strip() for t in (v.get("matched_texts") or []) if t])
+            texts = ", ".join(
+                [str(t).strip() for t in (v.get("matched_texts") or []) if t]
+            )
             if audio_str:
                 return f"{audio_str}: {texts}" if texts else audio_str
         return ""
@@ -144,23 +169,73 @@ class BotConfigManager:
         bot["name"] = str(bot.get("name") or "Giftia").strip()
         bot["nickname"] = str(bot.get("nickname") or bot["name"]).strip()
         bot["adapter_ids"] = [str(a).strip() for a in bot.get("adapter_ids") or [] if a]
+        bot["blocked_users"] = {
+            str(session).strip(): list(
+                dict.fromkeys(str(user).strip() for user in users if str(user).strip())
+            )
+            for session, users in (bot.get("blocked_users") or {}).items()
+            if str(session).strip() and isinstance(users, list)
+        }
 
         # decision_conf
         raw_dec = bot.get("decision_conf") or {}
+        access_conf = {}
+        for kind, default_mode in (("group", "blacklist"), ("private", "whitelist")):
+            list_key = f"{kind}_whitelist"
+            mode_key = f"{kind}_whitelist_mode"
+            raw_list_mode = raw_dec.get(mode_key, default_mode)
+            if isinstance(raw_list_mode, bool):
+                list_mode = "whitelist" if raw_list_mode else "blacklist"
+            else:
+                list_mode = str(raw_list_mode or default_mode).strip().lower()
+            if list_mode in ("白名单", "白名单模式"):
+                list_mode = "whitelist"
+            elif list_mode in ("黑名单", "黑名单模式"):
+                list_mode = "blacklist"
+            elif list_mode not in ("blacklist", "whitelist"):
+                list_mode = default_mode
+            access_conf[mode_key] = list_mode
+            access_conf[list_key] = list(
+                dict.fromkeys(
+                    str(item).strip()
+                    for item in raw_dec.get(list_key) or []
+                    if item and str(item).strip()
+                )
+            )
+        # Legacy lists covered both chat types; preserve their access on upgrade.
+        if not any(
+            key in raw_dec for key in ("private_whitelist_mode", "private_whitelist")
+        ) and any(
+            key in raw_dec for key in ("group_whitelist_mode", "group_whitelist")
+        ):
+            access_conf["private_whitelist_mode"] = access_conf["group_whitelist_mode"]
+            access_conf["private_whitelist"] = access_conf["group_whitelist"].copy()
         bot["decision_conf"] = {
             "enabled": bool(raw_dec.get("enabled", True)),
-            "provider_ids": [str(p).strip() for p in raw_dec.get("provider_ids") or [] if p],
-            "group_whitelist": [str(g).strip() for g in raw_dec.get("group_whitelist") or [] if g],
+            "provider_ids": [
+                str(p).strip() for p in raw_dec.get("provider_ids") or [] if p
+            ],
+            **access_conf,
             "decision_prompt": str(raw_dec.get("decision_prompt") or ""),
             "reply_active_window": int(raw_dec.get("reply_active_window", 10)),
             "proactive_probability": int(raw_dec.get("proactive_probability", 0)),
-            "keyword_trigger_enabled": bool(raw_dec.get("keyword_trigger_enabled", False)),
-            "keyword_rules": [str(k).strip() for k in raw_dec.get("keyword_rules") or [] if k],
-            "keyword_default_probability": int(raw_dec.get("keyword_default_probability", 100)),
+            "keyword_trigger_enabled": bool(
+                raw_dec.get("keyword_trigger_enabled", False)
+            ),
+            "keyword_rules": [
+                str(k).strip() for k in raw_dec.get("keyword_rules") or [] if k
+            ],
+            "keyword_default_probability": int(
+                raw_dec.get("keyword_default_probability", 100)
+            ),
             "at_behavior": (
                 str(raw_dec.get("at_behavior") or "force_reply").strip().lower()
                 if str(raw_dec.get("at_behavior") or "").strip().lower()
-                in ("force_reply", "activate_and_decide", "decide_in_window_force_outside")
+                in (
+                    "force_reply",
+                    "activate_and_decide",
+                    "decide_in_window_force_outside",
+                )
                 else "force_reply"
             ),
         }
@@ -169,8 +244,12 @@ class BotConfigManager:
         raw_reply = bot.get("llm_reply_conf") or {}
         bot["llm_reply_conf"] = {
             "enabled": bool(raw_reply.get("enabled", True)),
-            "provider_ids": [str(p).strip() for p in raw_reply.get("provider_ids") or [] if p],
-            "provider_selection_mode": str(raw_reply.get("provider_selection_mode") or "fallback"),
+            "provider_ids": [
+                str(p).strip() for p in raw_reply.get("provider_ids") or [] if p
+            ],
+            "provider_selection_mode": str(
+                raw_reply.get("provider_selection_mode") or "fallback"
+            ),
             "persona_id": str(raw_reply.get("persona_id") or "default").strip(),
         }
 
@@ -191,13 +270,19 @@ class BotConfigManager:
             for item in raw_lang_map:
                 if isinstance(item, dict):
                     lang = str(item.get("language") or item.get("lang") or "").strip()
-                    p_id = str(item.get("provider_id") or item.get("provider") or "").strip()
+                    p_id = str(
+                        item.get("provider_id") or item.get("provider") or ""
+                    ).strip()
                     if lang and p_id:
                         lang_map.append({"language": lang, "provider_id": p_id})
 
         # Fallback convert legacy fields if language_provider_map is empty
         if not lang_map:
-            legacy_defaults = [("中文", "zh_provider_id"), ("英文", "en_provider_id"), ("日文", "ja_provider_id")]
+            legacy_defaults = [
+                ("中文", "zh_provider_id"),
+                ("英文", "en_provider_id"),
+                ("日文", "ja_provider_id"),
+            ]
             default_lang = str(raw_tts.get("default_language") or "中文").strip()
             if default_lang:
                 legacy_defaults.sort(key=lambda x: 0 if x[0] == default_lang else 1)
@@ -208,13 +293,13 @@ class BotConfigManager:
 
         bot["tts_config"] = {
             "enabled": bool(raw_tts.get("enabled", False)),
-            "provider_type": str(raw_tts.get("provider_type") or "minimax").strip().lower(),
+            "provider_type": str(raw_tts.get("provider_type") or "minimax")
+            .strip()
+            .lower(),
             "language_provider_map": lang_map,
             "replace_in_message": bool(raw_tts.get("replace_in_message", False)),
             "signature_voices": formatted_voices,
         }
-
-
 
         # enabled_interactive_features
         features = bot.get("enabled_interactive_features")

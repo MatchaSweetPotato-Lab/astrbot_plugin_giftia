@@ -1,7 +1,6 @@
-import asyncio
-from datetime import datetime
 import json
-import time
+from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 
 from astrbot.api import logger
@@ -205,10 +204,8 @@ class CommandHandler:
     async def delete_message(self, event: AstrMessageEvent):
         """根据ID删除消息"""
         message_id = None
-        reply_comp = None
         for comp in event.get_messages():
             if isinstance(comp, Reply):
-                reply_comp = comp
                 message_id = comp.id
                 break
         if not message_id:
@@ -229,7 +226,9 @@ class CommandHandler:
             yield await event.send(
                 MessageChain(
                     [
-                        Plain("删除消息失败：指令响应消息请前往 WebUI 决策审计页面手动删除。")
+                        Plain(
+                            "删除消息失败：指令响应消息请前往 WebUI 决策审计页面手动删除。"
+                        )
                     ]
                 )
             )
@@ -426,7 +425,9 @@ caption: {media_caption.caption}"""
         status_name = str(status_name or "").strip()
         if not status_name:
             yield await event.send(
-                MessageChain([Plain("状态名不能为空。用法：/设置常驻状态 <状态名> [状态值]")])
+                MessageChain(
+                    [Plain("状态名不能为空。用法：/设置常驻状态 <状态名> [状态值]")]
+                )
             )
             return
 
@@ -441,7 +442,9 @@ caption: {media_caption.caption}"""
                 custom_status_updates={status_name: ""},
             )
             yield await event.send(
-                MessageChain([Plain(f"已清除 Bot【{bot_name}】的常驻状态「{status_name}」")])
+                MessageChain(
+                    [Plain(f"已清除 Bot【{bot_name}】的常驻状态「{status_name}」")]
+                )
             )
         else:
             await self.plugin.data_cache.update_bot_custom_status(
@@ -651,12 +654,15 @@ caption: {media_caption.caption}"""
         yield await event.send(MessageChain([Plain(msg)]))
 
     @staticmethod
-    def _profile_target(event: AstrMessageEvent, target: str) -> str:
-        """Resolve a single mention, explicit user ID, or the sender by default.
+    def _profile_target(
+        event: AstrMessageEvent, target: str, default_to_sender: bool = True
+    ) -> str:
+        """Resolve a single mention, explicit user ID, or optionally the sender.
 
         Args:
             event: Event containing structured mentions; bot wake mentions are ignored.
-            target: Raw arguments; empty text uses the sender when no user is mentioned.
+            target: Raw arguments; empty text uses the sender when enabled.
+            default_to_sender: Whether an empty target should use the sender ID.
 
         Returns:
             The platform user ID without numeric conversion.
@@ -678,10 +684,213 @@ caption: {media_caption.caption}"""
             raise ValueError("请只 @ 一位用户，或使用 /画像 用户ID 查询。")
         if mentions:
             return mentions.pop()
-        user_id = target.strip() or str(event.get_sender_id() or "").strip()
+        user_id = target.strip()
+        if not user_id:
+            if default_to_sender:
+                user_id = str(event.get_sender_id() or "").strip()
+            else:
+                return ""
         if len(user_id.split()) != 1 or user_id.startswith("@") or user_id == "all":
             raise ValueError("用法：/画像 @一位用户 或 /画像 用户ID")
         return user_id
+
+    async def set_session_access(
+        self,
+        event: AstrMessageEvent,
+        session_id: str,
+        enabled: bool,
+        *,
+        is_private: bool | None = None,
+    ):
+        """Persist session access in the list configured by the dashboard.
+
+        Args:
+            event: Administrator's command event, including the target bot adapter.
+            session_id: Group or private-chat user ID; empty selects this session.
+            enabled: Whether the session should be allowed to process messages.
+            is_private: Force a chat type, or infer it from a mention or this event.
+        """
+        event._giftia_bypass_logging = True
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        try:
+            mentioned_session_id = self._profile_target(event, "", False)
+        except ValueError:
+            yield await event.send(
+                MessageChain([Plain("请只 @ 一位用户，或填写单个会话 ID。")])
+            )
+            return
+        group_id = event.get_group_id()
+        if is_private is None:
+            is_private = bool(mentioned_session_id) or not bool(group_id)
+        session_id = str(mentioned_session_id or session_id or "").strip()
+        if not session_id:
+            if is_private and group_id:
+                command = "开启私聊" if enabled else "关闭私聊"
+                yield await event.send(
+                    MessageChain(
+                        [Plain(f"用法：/{command} 用户ID 或 /{command} @用户")]
+                    )
+                )
+                return
+            session_id = str(group_id or event.get_sender_id() or "").strip()
+        if (
+            not session_id
+            or len(session_id.split()) != 1
+            or ":" in session_id
+            or session_id.startswith("@")
+        ):
+            yield await event.send(
+                MessageChain(
+                    [
+                        Plain(
+                            "请填写单个会话 ID（群号或私聊用户 ID），留空表示当前会话。"
+                        )
+                    ]
+                )
+            )
+            return
+
+        manager = self.plugin.bot_config_manager
+        bots = deepcopy(manager.load_bots())
+        bot = next((b for b in bots if b["name"] == bot_name), None)
+        if bot is None:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 配置。")]))
+            return
+        decision_conf = bot["decision_conf"]
+        kind = "private" if is_private else "group"
+        session_type = "私聊" if is_private else "群聊"
+        list_key = f"{kind}_whitelist"
+        session_list = decision_conf[list_key]
+        mode = decision_conf[f"{kind}_whitelist_mode"]
+        if isinstance(mode, bool):
+            mode = "whitelist" if mode else "blacklist"
+        else:
+            mode = str(mode or "blacklist").strip().lower()
+        is_whitelist_mode = mode in ("whitelist", "白名单", "白名单模式")
+        should_be_in_list = enabled == is_whitelist_mode
+        if should_be_in_list:
+            if session_id not in session_list:
+                session_list.append(session_id)
+        else:
+            decision_conf[list_key] = [
+                item for item in session_list if item != session_id
+            ]
+            session_list = decision_conf[list_key]
+        list_name = "白名单" if is_whitelist_mode else "黑名单"
+        if not manager.save_bots(bots):
+            yield await event.send(
+                MessageChain(
+                    [Plain(f"保存配置失败，{session_type}{list_name}未更新。")]
+                )
+            )
+            return
+        self.plugin.sync_bot_maps()
+        session_allowed = (
+            session_id in session_list
+            if is_whitelist_mode
+            else session_id not in session_list
+        )
+        if not session_allowed:
+            self.plugin.active_reply_counters.pop(f"{bot_name}:{session_id}", None)
+        action = "加入" if should_be_in_list else "移出"
+        yield await event.send(
+            MessageChain(
+                [
+                    Plain(
+                        f"已将{session_type} {session_id} {action}【{bot['nickname']}】的{session_type}{list_name}。"
+                    )
+                ]
+            )
+        )
+
+    async def block_user(self, event: AstrMessageEvent, user_id: str):
+        """Exclude a user's future messages from this bot and conversation.
+
+        Args:
+            event: Administrator's command event, identifying the bot and session.
+            user_id: ID of the user whose messages must not be stored or processed.
+        """
+        event._giftia_bypass_logging = True
+        try:
+            user_id = self._profile_target(event, str(user_id or ""), False)
+        except ValueError:
+            yield await event.send(MessageChain([Plain("用法：/屏蔽 用户ID")]))
+            return
+        if not user_id:
+            yield await event.send(MessageChain([Plain("用法：/屏蔽 用户ID")]))
+            return
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        manager = self.plugin.bot_config_manager
+        bots = deepcopy(manager.load_bots())
+        bot = next((b for b in bots if b["name"] == bot_name), None)
+        if bot is None:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 配置。")]))
+            return
+        users = bot["blocked_users"].setdefault(event.unified_msg_origin, [])
+        if user_id not in users:
+            users.append(user_id)
+        if not manager.save_bots(bots):
+            yield await event.send(MessageChain([Plain("保存配置失败，屏蔽未生效。")]))
+            return
+        self.plugin.sync_bot_maps()
+        yield await event.send(
+            MessageChain(
+                [Plain(f"已在当前会话屏蔽用户 {user_id}，后续发言不入库、不触发回复。")]
+            )
+        )
+
+    async def unblock_user(self, event: AstrMessageEvent, user_id: str):
+        """Remove a user from the current bot and conversation block list.
+
+        Args:
+            event: Administrator's command event, identifying the bot and conversation.
+            user_id: User ID or structured mention to unblock.
+        """
+        event._giftia_bypass_logging = True
+        try:
+            user_id = self._profile_target(event, str(user_id or ""), False)
+        except ValueError:
+            yield await event.send(
+                MessageChain([Plain("用法：/取消屏蔽 @用户 或 用户ID")])
+            )
+            return
+        if not user_id:
+            yield await event.send(
+                MessageChain([Plain("用法：/取消屏蔽 @用户 或 用户ID")])
+            )
+            return
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        manager = self.plugin.bot_config_manager
+        bots = deepcopy(manager.load_bots())
+        bot = next((b for b in bots if b["name"] == bot_name), None)
+        if bot is None:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 配置。")]))
+            return
+        blocked_users = bot["blocked_users"].get(event.unified_msg_origin, [])
+        if user_id in blocked_users:
+            blocked_users.remove(user_id)
+        if blocked_users:
+            bot["blocked_users"][event.unified_msg_origin] = blocked_users
+        else:
+            bot["blocked_users"].pop(event.unified_msg_origin, None)
+        if not manager.save_bots(bots):
+            yield await event.send(
+                MessageChain([Plain("保存配置失败，取消屏蔽未生效。")])
+            )
+            return
+        self.plugin.sync_bot_maps()
+        yield await event.send(
+            MessageChain([Plain(f"已在当前会话取消屏蔽用户 {user_id}。")])
+        )
 
     async def silence_session(self, event: AstrMessageEvent):
         """将当前会话的状态设置为不活跃"""
@@ -789,23 +998,20 @@ caption: {media_caption.caption}"""
             )
             return
 
-        is_qq_official = (
-            hasattr(self.plugin, "qq_official")
-            and self.plugin.qq_official.is_qq_official(event)
-        )
+        is_qq_official = hasattr(
+            self.plugin, "qq_official"
+        ) and self.plugin.qq_official.is_qq_official(event)
         if is_qq_official:
-            err_msg = await self.plugin.qq_official.group_leave(
-                event, group_id_str
-            )
+            err_msg = await self.plugin.qq_official.group_leave(event, group_id_str)
         else:
             try:
                 g_id_int = int(group_id_str)
-                err_msg = await self.plugin.aiocqhttp.group_leave(
-                    event, g_id_int
-                )
+                err_msg = await self.plugin.aiocqhttp.group_leave(event, g_id_int)
             except ValueError:
                 yield await event.send(
-                    MessageChain([Plain(f"群号格式错误: {group_id_str}，群号必须为纯数字")])
+                    MessageChain(
+                        [Plain(f"群号格式错误: {group_id_str}，群号必须为纯数字")]
+                    )
                 )
                 return
 

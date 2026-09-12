@@ -535,54 +535,5 @@
                 "hint": "R2鉴权Token，需在Worker的环境变量配置X-Auth-Token"
             }
         }
-    },
-    "whitelist_config": {
-        "description": "白名单配置",
-        "type": "object",
-        "hint": "",
-        "items": {
-            "private_chat_bypass_decision_and_whitelist": {
-                "description": "私聊免白名单与强制回复",
-                "type": "bool",
-                "default": true,
-                "hint": "开启后，私聊直接触发回复，无需经过小模型决策，也无需经过白名单限制。"
-            },
-            "group_whitelist_enabled": {
-                "description": "启用群组白名单",
-                "type": "bool",
-                "default": false,
-                "hint": "开启后，只响应白名单内的群组"
-            },
-            "group_whitelist": {
-                "description": "群组UMO白名单",
-                "type": "list",
-                "default": [],
-                "hint": "白名单群组UMO列表，可在对应群内使用/sid获取。要把UMO写完整。"
-            },
-            "user_whitelist_enabled": {
-                "description": "启用用户白名单",
-                "type": "bool",
-                "default": false,
-                "hint": "开启后，只响应白名单内的用户"
-            },
-            "user_whitelist": {
-                "description": "用户ID白名单",
-                "type": "list",
-                "default": [],
-                "hint": "用户ID列表"
-            },
-            "private_user_whitelist_enabled": {
-                "description": "启用私聊用户白名单",
-                "type": "bool",
-                "default": false,
-                "hint": "开启后，私聊只响应白名单内的用户。不影响群聊。"
-            },
-            "private_user_whitelist": {
-                "description": "私聊用户ID白名单",
-                "type": "list",
-                "default": [],
-                "hint": "私聊白名单用户ID列表"
-            }
-        }
     }
 }
