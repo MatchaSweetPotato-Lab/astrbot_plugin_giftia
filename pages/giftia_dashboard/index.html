@@ -1558,18 +1558,16 @@
 
                 <!-- Sub-tab 4: Reply Conf -->
                 <div id="subtab-reply" class="bot-subtab-content" style="display: none;">
-                    <div class="form-row">
-                        <div class="form-group" style="flex: 2;">
-                            <label>正式回复提供商优先级 <span class="info-tooltip" data-tooltip="点击或检索选择，支持手动输入与降级尝试"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
-                            <div id="bot-form-reply-providers" class="tag-select-container"></div>
-                        </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label>多提供商选择模式</label>
-                            <select id="bot-form-reply-mode">
-                                <option value="fallback">fallback (顺序降级)</option>
-                                <option value="random">random (随机抽取)</option>
-                            </select>
-                        </div>
+                    <div class="form-group">
+                        <label>正式回复提供商优先级 <span class="info-tooltip" data-tooltip="点击或检索选择，支持手动输入与降级尝试"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <div id="bot-form-reply-providers" class="tag-select-container"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>多提供商选择模式</label>
+                        <select id="bot-form-reply-mode">
+                            <option value="fallback">fallback (顺序降级)</option>
+                            <option value="random">random (随机抽取)</option>
+                        </select>
                     </div>
                 </div>
 
