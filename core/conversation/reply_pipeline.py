@@ -345,7 +345,7 @@ class ReplyPipeline:
                 bot_name, group_or_user_id
             ),
         )
-        logger.debug(f"[Giftia] 触发大模型回复,构造回复提示词：{user_prompt}")
+        logger.debug(f"[Giftia] 触发正式回复,构造回复提示词：{user_prompt}")
 
         persona = None
         persona_tools = None

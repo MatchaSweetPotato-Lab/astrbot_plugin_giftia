@@ -228,7 +228,7 @@
                     "discard"
                 ],
                 "default": "discard",
-                "hint": "stall：挂起超过限制数量的后续消息。discard：丢弃超过限制数量的后续消息。仅影响小模型判断和大模型回复，不影响图片等媒体转述，也不影响消息记录。"
+                "hint": "stall：挂起超过限制数量的后续消息。discard：丢弃超过限制数量的后续消息。仅影响前置决策和正式回复，不影响图片等媒体转述，也不影响消息记录。"
             },
             "concurrent_limit": {
                 "description": "并发限制",

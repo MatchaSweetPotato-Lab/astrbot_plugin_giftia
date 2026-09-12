@@ -134,7 +134,7 @@ class DecisionEngine:
         active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
         is_active_window = active_counter > 0
 
-        # 是否针对当前消息强制直接回复（不走小模型判断）
+        # 是否针对当前消息强制直接回复（不走前置决策）
         should_force_reply = False
         # 是否需要递减接话分析窗口的标志
         decrement_counter = False
@@ -166,7 +166,7 @@ class DecisionEngine:
                 else:
                     should_force_reply = True
 
-                # 如果 @ 行为交由小模型判断，则立即刷新/激活活跃窗口计数
+                # 如果 @ 行为交由前置决策，则立即刷新/激活活跃窗口计数
                 if not should_force_reply:
                     window_size = decision_conf.get("reply_active_window", 10)
                     self.plugin.active_reply_counters[fmt_key] = window_size

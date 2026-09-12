@@ -197,8 +197,8 @@ function renderChartAndProgressBars() {
                 label = key.split("/").pop();
             } else if (dimension === "type") {
                 const typeNameMap = {
-                    'reply': '大模型回复',
-                    'decision': '小模型判断',
+                    'reply': '正式回复',
+                    'decision': '前置决策',
                     'image_caption': '图片转述',
                     'sticker_analysis': '表情包分析',
                     'audio_caption': '音频转述',
@@ -264,8 +264,8 @@ function renderChartAndProgressBars() {
                                 let originalKey = dataset.originalKey || dataset.label;
                                 if (dimension === "type") {
                                     const typeNameMap = {
-                                        'reply': '大模型回复',
-                                        'decision': '小模型判断',
+                                        'reply': '正式回复',
+                                        'decision': '前置决策',
                                         'image_caption': '图片转述',
                                         'sticker_analysis': '表情包分析',
                                         'audio_caption': '音频转述',
@@ -376,8 +376,8 @@ function renderChartAndProgressBars() {
         }
     } else if (activeTokenTab === "type") {
         const categories = [
-            { key: 'reply_tokens', name: '大模型回复', class: 'reply' },
-            { key: 'decision_tokens', name: '小模型判断', class: 'decision' },
+            { key: 'reply_tokens', name: '正式回复', class: 'reply' },
+            { key: 'decision_tokens', name: '前置决策', class: 'decision' },
             { key: 'image_caption_tokens', name: '图片转述', class: 'image_caption' },
             { key: 'sticker_analysis_tokens', name: '表情包分析', class: 'sticker_analysis' },
             { key: 'audio_caption_tokens', name: '音频转述', class: 'audio_caption' },

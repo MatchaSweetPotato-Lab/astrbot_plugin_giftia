@@ -249,7 +249,7 @@ function openBotEditModal(botName = null) {
 
     // Initialize Priority Select for Reply Providers
     replyProvidersTagSelect = new PrioritySelectComponent('bot-form-reply-providers', {
-        placeholder: '检索或输入大模型回复提供商 (按回车添加)...',
+        placeholder: '检索或输入正式回复提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.provider_ids || []
     });
