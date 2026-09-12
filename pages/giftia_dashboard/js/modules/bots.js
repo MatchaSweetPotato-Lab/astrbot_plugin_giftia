@@ -178,6 +178,7 @@ function openBotEditModal(botName = null) {
             decision_prompt: '',
             reply_active_window: 10,
             proactive_probability: 0,
+            private_chat_decision_enabled: false,
             keyword_trigger_enabled: false,
             keyword_rules: [],
             keyword_default_probability: 100,
@@ -240,6 +241,7 @@ function openBotEditModal(botName = null) {
     document.getElementById('bot-form-private-whitelist').value = (bot.decision_conf?.private_whitelist || []).join(', ');
     document.getElementById('bot-form-dec-window').value = bot.decision_conf?.reply_active_window ?? 10;
     document.getElementById('bot-form-dec-proactive').value = bot.decision_conf?.proactive_probability ?? 0;
+    document.getElementById('bot-form-dec-private-enabled').checked = bot.decision_conf?.private_chat_decision_enabled === true;
     document.getElementById('bot-form-dec-prompt').value = bot.decision_conf?.decision_prompt || '';
     document.getElementById('bot-form-dec-kw-enabled').checked = bot.decision_conf?.keyword_trigger_enabled === true;
     document.getElementById('bot-form-dec-kw-rules').value = (bot.decision_conf?.keyword_rules || []).join(', ');
@@ -738,6 +740,7 @@ async function saveBotFromModal() {
             decision_prompt: document.getElementById('bot-form-dec-prompt').value,
             reply_active_window: parseInt(document.getElementById('bot-form-dec-window').value || 10),
             proactive_probability: parseInt(document.getElementById('bot-form-dec-proactive').value || 0),
+            private_chat_decision_enabled: document.getElementById('bot-form-dec-private-enabled').checked,
             keyword_trigger_enabled: document.getElementById('bot-form-dec-kw-enabled').checked,
             keyword_rules: document.getElementById('bot-form-dec-kw-rules').value.split(',').map(s => s.trim()).filter(s => s),
             keyword_default_probability: parseInt(document.getElementById('bot-form-dec-kw-prob').value || 100),

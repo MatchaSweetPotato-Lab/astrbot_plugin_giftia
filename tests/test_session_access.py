@@ -340,6 +340,10 @@ async def test_blocking_is_persistent_and_scoped_to_bot_adapter_and_session(
 async def test_dashboard_save_preserves_command_blocks_and_updates_runtime(
     runtime, event, monkeypatch
 ):
+    bots = runtime.bot_config_manager.load_bots()
+    bots[0]["decision_conf"]["private_chat_decision_enabled"] = True
+    assert runtime.bot_config_manager.save_bots(bots)
+    runtime.sync_bot_maps()
     _ = [c async for c in runtime.cmd_handler.block_user(event, "200")]
     body = {
         "name": "bot",
@@ -368,6 +372,10 @@ async def test_dashboard_save_preserves_command_blocks_and_updates_runtime(
         "101",
         "200",
     ]
+    assert (
+        runtime.bot_map["bot"]["decision_conf"]["private_chat_decision_enabled"]
+        is True
+    )
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ def test_model_switches_are_removed_on_load_and_save(tmp_path, legacy_enabled):
         assert "enabled" not in loaded[0][section]
         assert "enabled" not in saved[section]
         assert saved[section]["provider_ids"] == bot[section]["provider_ids"]
+    assert loaded[0]["decision_conf"]["private_chat_decision_enabled"] is False
     assert saved["llm_reply_conf"]["persona_id"] == "custom"
     assert saved["enabled"] is False
 
@@ -113,6 +114,7 @@ def runtime():
         ("private", 0, {"at_behavior": "force_reply", "provider_ids": []}, 3),
         ("private", 0, {"at_behavior": "activate_and_decide"}, 3),
         ("private", 1, {"at_behavior": "decide_in_window_force_outside"}, 3),
+        ("private_decision", 0, {"private_chat_decision_enabled": True}, 0),
     ],
 )
 async def test_group_decisions_and_direct_reply_policies(
@@ -122,7 +124,7 @@ async def test_group_decisions_and_direct_reply_policies(
     plugin.bot_map["bot"]["decision_conf"].update(overrides)
     if scenario == "at":
         event.get_messages.return_value = [At(qq="999")]
-    elif scenario == "private":
+    elif scenario in ("private", "private_decision"):
         event.get_group_id.return_value = ""
     session = event.get_group_id() or event.get_sender_id()
     runtime.message.group_or_user_id = session

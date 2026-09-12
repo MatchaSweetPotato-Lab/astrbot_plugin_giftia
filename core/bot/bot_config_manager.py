@@ -55,6 +55,7 @@ DEFAULT_BOT_CONFIG = {
         "decision_prompt": "",
         "reply_active_window": 10,
         "proactive_probability": 0,
+        "private_chat_decision_enabled": False,
         "keyword_trigger_enabled": False,
         "keyword_rules": [],
         "keyword_default_probability": 100,
@@ -216,6 +217,9 @@ class BotConfigManager:
             "decision_prompt": str(raw_dec.get("decision_prompt") or ""),
             "reply_active_window": int(raw_dec.get("reply_active_window", 10)),
             "proactive_probability": int(raw_dec.get("proactive_probability", 0)),
+            "private_chat_decision_enabled": bool(
+                raw_dec.get("private_chat_decision_enabled", False)
+            ),
             "keyword_trigger_enabled": bool(
                 raw_dec.get("keyword_trigger_enabled", False)
             ),

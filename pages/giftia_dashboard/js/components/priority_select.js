@@ -47,9 +47,6 @@ class PrioritySelectComponent {
 
         this.container.innerHTML = `
             <div class="priority-select-wrapper">
-                <div class="priority-header-info">
-                    <span class="priority-header-text">已选择 <strong class="priority-count-badge">0</strong> 个提供商 <span style="opacity: 0.8;">(由上至下顺序降级)</span></span>
-                </div>
 
                 <div class="priority-selected-list"></div>
 

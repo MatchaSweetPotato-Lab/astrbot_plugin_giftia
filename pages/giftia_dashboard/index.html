@@ -1444,22 +1444,22 @@
                 <div id="subtab-identity" class="bot-subtab-content">
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
-                            <label>机器人唯一标识 (Name) <span class="required">*</span> <span class="info-tooltip" data-tooltip="用于内部检索和数据记录的唯一名称"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <label>机器人唯一标识 <span class="required">*</span> <span class="info-tooltip" data-tooltip="用于内部检索和数据记录的唯一名称"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                             <input type="text" id="bot-form-name" placeholder="例如: Giftia">
                         </div>
                         <div class="form-group" style="flex: 1;">
-                            <label>机器人显示昵称 (Nickname) <span class="info-tooltip" data-tooltip="用于聊天记录识别和提示词身份显示的昵称"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <label>机器人显示昵称 <span class="info-tooltip" data-tooltip="用于聊天记录识别和提示词身份显示的昵称"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                             <input type="text" id="bot-form-nickname" placeholder="例如: 艾拉">
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>关联 AstrBot 人格 (Persona) <span class="info-tooltip" data-tooltip="绑定 AstrBot 控制台配置的人格，回复时将继承该人格的 System Prompt 与工具限制"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <label>关联 AstrBot 人格 <span class="info-tooltip" data-tooltip="绑定 AstrBot 控制台配置的人格，回复时将继承该人格的 System Prompt 与工具限制"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <select id="bot-form-reply-persona" class="form-control">
                             <!-- Dynamically populated from metadata.personas -->
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>绑定的适配器 ID 列表 (Adapter IDs) <span class="info-tooltip" data-tooltip="选择该机器人绑定的消息平台适配器账号"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <label>绑定的适配器 ID 列表 <span class="info-tooltip" data-tooltip="选择该机器人绑定的消息平台适配器账号"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <div id="bot-form-adapters" class="tag-select-container"></div>
                     </div>
                 </div>
@@ -1474,7 +1474,7 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="bot-form-dec-whitelist">群聊名单（群号）</label>
+                        <label for="bot-form-dec-whitelist">群聊名单</label>
                         <input type="text" id="bot-form-dec-whitelist" placeholder="例如: 123456, 789012（逗号分隔）">
                     </div>
                     <div style="border-top: 1px solid var(--border-color); margin: 20px 0;"></div>
@@ -1486,19 +1486,29 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="bot-form-private-whitelist">私聊名单（用户 ID）</label>
+                        <label for="bot-form-private-whitelist">私聊名单</label>
                         <input type="text" id="bot-form-private-whitelist" placeholder="例如: 123456, 789012（逗号分隔）">
                     </div>
                 </div>
 
                 <!-- Sub-tab 2: Trigger & Mention Rules -->
                 <div id="subtab-trigger" class="bot-subtab-content" style="display: none;">
+                    <div class="form-row form-row-switch" style="margin-bottom: 12px;">
+                        <div style="flex: 1;">
+                            <strong style="color: var(--font-primary);">私聊启用前置决策</strong>
+                            <span class="info-tooltip" data-tooltip="默认关闭时私聊直接回复；开启后私聊消息会先交由前置决策是否回复"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                        </div>
+                        <div class="switch-container">
+                            <input type="checkbox" id="bot-form-dec-private-enabled" class="switch-checkbox">
+                            <label for="bot-form-dec-private-enabled" class="switch-label"></label>
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
                             <label>@ 提及响应行为 <span class="info-tooltip" data-tooltip="收到针对本机器人的 @ 消息时的处理策略"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                             <select id="bot-form-dec-at-behavior">
-                                <option value="force_reply">强制回复（默认，不走小模型直接回复）</option>
-                                <option value="activate_and_decide">激活并交由前置决策（收到 @ 刷新活跃状态并由小模型裁决）</option>
+                                <option value="force_reply">强制回复</option>
+                                <option value="activate_and_decide">激活并交由前置决策</option>
                                 <option value="decide_in_window_force_outside">仅在会话活跃窗口内交由前置决策，非活跃窗口强制回复</option>
                             </select>
                         </div>
@@ -1515,7 +1525,7 @@
                     </div>
                     <div class="form-row form-row-switch" style="margin-top: 10px; margin-bottom: 10px;">
                         <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用关键词监听触发发表</strong>
+                            <strong style="color: var(--font-primary);">启用关键词监听</strong>
                         </div>
                         <div class="switch-container">
                             <input type="checkbox" id="bot-form-dec-kw-enabled" class="switch-checkbox">
@@ -1541,7 +1551,7 @@
                         <div id="bot-form-dec-providers" class="tag-select-container"></div>
                     </div>
                     <div class="form-group">
-                        <label>判断系统提示词 (Decision System Prompt) <span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <label>判断系统提示词<span class="info-tooltip" data-tooltip="留空使用默认的分析提示词"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <textarea id="bot-form-dec-prompt" rows="5" placeholder="留空使用默认的分析提示词..."></textarea>
                     </div>
                 </div>

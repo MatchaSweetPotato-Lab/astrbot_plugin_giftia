@@ -115,8 +115,15 @@ class DecisionEngine:
             for c in event.get_messages()
         )
         is_private = not event.get_group_id()
-        if is_private:
+        private_decision_enabled = bool(
+            decision_conf.get("private_chat_decision_enabled", False)
+        )
+        if is_private and not private_decision_enabled:
             is_just_at = True
+        elif is_private:
+            # Private messages opt into the same decision model without treating
+            # the message as an @ mention, so every allowed message is evaluated.
+            is_just_at = False
 
         debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
 
@@ -185,8 +192,11 @@ class DecisionEngine:
             proactive_prob = decision_conf.get("proactive_probability", 0)
             is_proactive_hit = False
             is_keyword_hit = False
+            should_decide_private = is_private and private_decision_enabled
 
-            if is_active_window:
+            if should_decide_private:
+                is_proactive_hit = True
+            elif is_active_window:
                 decrement_counter = True
             else:
                 is_proactive_hit = (
