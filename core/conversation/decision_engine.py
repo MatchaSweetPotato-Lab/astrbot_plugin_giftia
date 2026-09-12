@@ -18,46 +18,54 @@ class DecisionEngine:
         self.plugin = plugin
         self.media_captioner = MediaCaptioner(plugin)
 
+    def is_session_allowed(
+        self, bot_name: str, session_id: str, *, is_private: bool
+    ) -> bool:
+        """Check the bot's session list according to its configured mode.
+
+        Args:
+            bot_name: Name of an enabled bot configuration.
+            session_id: Group ID or private-chat user ID.
+            is_private: Whether to use the private-chat list instead of the group list.
+
+        Returns:
+            Whether this bot is enabled for the session. In blacklist mode the
+            list contains denied sessions; in whitelist mode it contains allowed
+            sessions.
+        """
+        bot_conf = self.plugin.bot_map.get(bot_name, {})
+        decision_conf = bot_conf.get("decision_conf", {})
+        kind = "private" if is_private else "group"
+        default_mode = "whitelist" if is_private else "blacklist"
+        sessions = decision_conf.get(f"{kind}_whitelist", [])
+        mode = decision_conf.get(f"{kind}_whitelist_mode", default_mode)
+        if isinstance(mode, bool):
+            mode = "whitelist" if mode else "blacklist"
+        else:
+            mode = str(mode or default_mode).strip().lower()
+        in_list = str(session_id) in sessions
+        return in_list if mode in ("whitelist", "白名单", "白名单模式") else not in_list
+
     def check_whitelists(self, event: AstrMessageEvent) -> bool:
-        """检查白名单配置。返回 True 表示通过，False 表示拦截。"""
-        is_private = not event.get_group_id()
-        bypass_whitelist = is_private and self.plugin.private_chat_bypass
+        """Check session access and user exclusions before processing a message.
 
-        # 群白名单判断
-        if (
-            not bypass_whitelist
-            and self.plugin.group_whitelist_enabled
-            and event.unified_msg_origin not in self.plugin.group_whitelist
+        Args:
+            event: Incoming message event.
+
+        Returns:
+            Whether the message may be parsed, stored, and considered for replies.
+        """
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        group_id = event.get_group_id()
+        session_id = group_id or event.get_sender_id()
+        if not bot_name or not self.is_session_allowed(
+            bot_name, session_id, is_private=not bool(group_id)
         ):
-            logger.debug(f"群 {event.unified_msg_origin} 不在白名单内，跳过处理")
             return False
-
-        # 用户白名单判断
-        if (
-            not bypass_whitelist
-            and self.plugin.user_whitelist_enabled
-            and event.get_sender_id() not in self.plugin.user_whitelist
-        ):
-            logger.debug(f"用户 {event.get_sender_id()} 不在白名单内，跳过处理")
-            return False
-
-        # 私聊用户白名单判断
-        if (
-            is_private
-            and self.plugin.private_user_whitelist_enabled
-            and event.get_sender_id() not in self.plugin.private_user_whitelist
-        ):
-            logger.debug(f"私聊用户 {event.get_sender_id()} 不在私聊白名单内，跳过处理")
-            return False
-
-        # 判断是否为本插件管理的机器人收到的消息
-        if event.platform_meta.id not in self.plugin.adapter_id_map:
-            logger.debug(
-                f"{event.platform_meta.id} 消息不是本插件管理的机器人收到的消息，跳过处理"
-            )
-            return False
-
-        return True
+        blocked_users = self.plugin.bot_map[bot_name].get("blocked_users", {})
+        return str(event.get_sender_id()) not in blocked_users.get(
+            event.unified_msg_origin, []
+        )
 
     def can_execute(self, key: str, throttle_time: float) -> bool:
         """节流检查"""
@@ -107,7 +115,7 @@ class DecisionEngine:
             for c in event.get_messages()
         )
         is_private = not event.get_group_id()
-        if is_private and self.plugin.private_chat_bypass:
+        if is_private:
             is_just_at = True
 
         debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
@@ -132,22 +140,18 @@ class DecisionEngine:
         decrement_counter = False
 
         if is_just_at:
-            if is_private and self.plugin.private_chat_bypass:
+            if is_private:
                 should_force_reply = True
             else:
                 at_behavior = decision_conf.get("at_behavior", "force_reply")
                 has_decision_provider = decision_conf.get("enabled", True) and bool(
-                    decision_conf.get("provider_ids") or decision_conf.get("provider_id")
+                    decision_conf.get("provider_ids")
+                    or decision_conf.get("provider_id")
                 )
-                is_in_whitelist = (
-                    not decision_conf.get("group_whitelist")
-                    or group_or_user_id in decision_conf.get("group_whitelist")
-                )
-
-                if not has_decision_provider or not is_in_whitelist:
+                if not has_decision_provider:
                     if at_behavior != "force_reply":
                         logger.warning(
-                            f"[Giftia] {bot_name} 配置了 @ 行为为 '{at_behavior}'，但小模型决策未启用、无可用提供商或不在白名单内，自动降级为强制回复"
+                            f"[Giftia] {bot_name}: @ behavior '{at_behavior}' falls back to a forced reply because no decision provider is enabled"
                         )
                     should_force_reply = True
                 elif at_behavior == "force_reply":
@@ -175,12 +179,6 @@ class DecisionEngine:
             ):
                 logger.debug("没有at机器人且未开启决策，跳过处理")
                 return False, None, None, None
-            if decision_conf.get(
-                "group_whitelist"
-            ) and group_or_user_id not in decision_conf.get("group_whitelist"):
-                logger.debug("没有at机器人且当前群组不在决策白名单内，跳过处理")
-                return False, None, None, None
-
             # 活跃窗口与主动接话概率检查
             proactive_prob = decision_conf.get("proactive_probability", 0)
             is_proactive_hit = False

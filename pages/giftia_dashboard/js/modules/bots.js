@@ -180,7 +180,10 @@ function openBotEditModal(botName = null) {
         decision_conf: {
             enabled: true,
             provider_ids: [],
+            group_whitelist_mode: 'blacklist',
             group_whitelist: [],
+            private_whitelist_mode: 'whitelist',
+            private_whitelist: [],
             decision_prompt: '',
             reply_active_window: 10,
             proactive_probability: 0,
@@ -240,7 +243,11 @@ function openBotEditModal(botName = null) {
 
     const atBehaviorEl = document.getElementById('bot-form-dec-at-behavior');
     if (atBehaviorEl) atBehaviorEl.value = bot.decision_conf?.at_behavior || 'force_reply';
+    const listModeEl = document.getElementById('bot-form-dec-list-mode');
+    if (listModeEl) listModeEl.value = bot.decision_conf?.group_whitelist_mode || 'blacklist';
     document.getElementById('bot-form-dec-whitelist').value = (bot.decision_conf?.group_whitelist || []).join(', ');
+    document.getElementById('bot-form-private-list-mode').value = bot.decision_conf?.private_whitelist_mode || 'whitelist';
+    document.getElementById('bot-form-private-whitelist').value = (bot.decision_conf?.private_whitelist || []).join(', ');
     document.getElementById('bot-form-dec-window').value = bot.decision_conf?.reply_active_window ?? 10;
     document.getElementById('bot-form-dec-proactive').value = bot.decision_conf?.proactive_probability ?? 0;
     document.getElementById('bot-form-dec-prompt').value = bot.decision_conf?.decision_prompt || '';
@@ -737,7 +744,10 @@ async function saveBotFromModal() {
         decision_conf: {
             enabled: document.getElementById('bot-form-dec-enabled').checked,
             provider_ids: decSelectedProviders,
+            group_whitelist_mode: document.getElementById('bot-form-dec-list-mode')?.value || 'blacklist',
             group_whitelist: document.getElementById('bot-form-dec-whitelist').value.split(',').map(s => s.trim()).filter(s => s),
+            private_whitelist_mode: document.getElementById('bot-form-private-list-mode').value,
+            private_whitelist: document.getElementById('bot-form-private-whitelist').value.split(',').map(s => s.trim()).filter(s => s),
             decision_prompt: document.getElementById('bot-form-dec-prompt').value,
             reply_active_window: parseInt(document.getElementById('bot-form-dec-window').value || 10),
             proactive_probability: parseInt(document.getElementById('bot-form-dec-proactive').value || 0),
@@ -827,4 +837,3 @@ export {
     removeTtsLangRuleRow,
     renderTtsLangRulesList
 };
-

@@ -34,7 +34,24 @@ def runtime(monkeypatch):
         data_cache=SimpleNamespace(is_bot_muted=Mock(return_value=False)),
         replying_status={},
         active_reply_counters={},
-        bot_map={"bot": {}, "other": {}},
+        bot_map={
+            "bot": {
+                "decision_conf": {
+                    "group_whitelist_mode": "whitelist",
+                    "group_whitelist": ["100", "101"],
+                    "private_whitelist_mode": "whitelist",
+                    "private_whitelist": ["100", "101"],
+                }
+            },
+            "other": {
+                "decision_conf": {
+                    "group_whitelist_mode": "whitelist",
+                    "group_whitelist": ["100", "101"],
+                    "private_whitelist_mode": "whitelist",
+                    "private_whitelist": ["100", "101"],
+                }
+            },
+        },
         passive_memory_manager=SimpleNamespace(mark_silence_summary_armed=AsyncMock()),
         context=SimpleNamespace(send_message=AsyncMock(return_value=True)),
     )
@@ -265,6 +282,67 @@ async def test_muted_group_skips_entire_batch(runtime):
     await asyncio.gather(first, second)
     assert runtime.calls == []
     runtime.manager.action_dispatcher.dispatch_actions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_removed_session_skips_pending_reminders(runtime):
+    task = runtime.trigger("Drink water")
+    runtime.plugin.bot_map["bot"]["decision_conf"]["group_whitelist"] = []
+    await runtime.release_window()
+    await task
+    assert runtime.calls == []
+    runtime.manager.action_dispatcher.dispatch_actions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("mode", ["blacklist", "whitelist"])
+async def test_reminders_use_the_destination_chat_type(runtime, private, mode):
+    conf = runtime.plugin.bot_map["bot"]["decision_conf"]
+    conf.update(
+        group_whitelist_mode=mode,
+        group_whitelist=["100"],
+        private_whitelist_mode=mode,
+        private_whitelist=[],
+    )
+    task = runtime.trigger(
+        "Drink water",
+        group_id="" if private else "100",
+        group_or_user_id="100",
+        user_id="100",
+        unified_msg_origin=f"adapter:{'FriendMessage' if private else 'GroupMessage'}:100",
+    )
+    await runtime.release_window()
+    await task
+    allowed = private == (mode == "blacklist")
+    assert len(runtime.calls) == int(allowed)
+    assert runtime.manager.action_dispatcher.dispatch_actions.await_count == int(
+        allowed
+    )
+
+
+@pytest.mark.asyncio
+async def test_private_reminder_rechecks_access_during_generation_and_send(runtime):
+    conf = runtime.plugin.bot_map["bot"]["decision_conf"]
+    conf.update(private_whitelist_mode="whitelist", private_whitelist=["200"])
+
+    async def reply(**kwargs):
+        conf["private_whitelist"] = []
+        await kwargs["event"].send("Late tool output")
+        yield XmlLlmResult(msg_chains=[[Plain("Late reminder")]])
+
+    runtime.manager.reply_pipeline.dispatch_llm_reply_loop = reply
+    task = runtime.trigger(
+        "Drink water",
+        group_id="",
+        group_or_user_id="200",
+        unified_msg_origin="adapter:FriendMessage:200",
+    )
+    await runtime.release_window()
+    await task
+    runtime.plugin.context.send_message.assert_not_awaited()
+    runtime.manager.action_dispatcher.dispatch_actions.assert_not_awaited()
+    assert runtime.plugin.replying_status["bot:200"] == 0
 
 
 @pytest.mark.asyncio

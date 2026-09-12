@@ -12,8 +12,10 @@ from astrbot.core.utils.session_lock import session_lock_manager
 try:
     from astrbot.core.star.filter.command import GreedyStr
 except ImportError:
+
     class GreedyStr(str):
         pass
+
 
 from .core.bot.bot_config_manager import BotConfigManager
 from .core.conversation.chat_manager import ChatManager
@@ -73,26 +75,6 @@ class Giftia(Star):
         msg_history = self.conf.get("msg_history", {})
         self.msg_number = msg_history.get("msg_number", 300)
         self.block_command_messages = msg_history.get("block_command_messages", False)
-
-        # 白名单配置
-        self.whitelist_config = self.conf.get("whitelist_config", {})
-        self.group_whitelist_enabled = self.whitelist_config.get(
-            "group_whitelist_enabled", False
-        )
-        self.group_whitelist = self.whitelist_config.get("group_whitelist", [])
-        self.user_whitelist_enabled = self.whitelist_config.get(
-            "user_whitelist_enabled", False
-        )
-        self.user_whitelist = self.whitelist_config.get("user_whitelist", [])
-        self.private_chat_bypass = self.whitelist_config.get(
-            "private_chat_bypass_decision_and_whitelist", True
-        )
-        self.private_user_whitelist_enabled = self.whitelist_config.get(
-            "private_user_whitelist_enabled", False
-        )
-        self.private_user_whitelist = self.whitelist_config.get(
-            "private_user_whitelist", []
-        )
 
         # 并发策略
         self.concurrent_config = self.conf.get("concurrent_config", {})
@@ -320,6 +302,7 @@ class Giftia(Star):
                 from datetime import datetime
 
                 from astrbot.core.platform.message_session import MessageSesion
+                from astrbot.core.platform.message_type import MessageType
 
                 from .core.utils.schemas import MessageData
 
@@ -330,7 +313,11 @@ class Giftia(Star):
 
                 bot_name = self.adapter_id_map.get(session_obj.platform_name)
 
-                if bot_name:
+                if bot_name and self.chat_manager.decision_engine.is_session_allowed(
+                    bot_name,
+                    session_obj.session_id,
+                    is_private=session_obj.message_type == MessageType.FRIEND_MESSAGE,
+                ):
                     bot_conf = self.bot_map.get(bot_name, {})
                     nickname = bot_conf.get("nickname", bot_name)
                     parsed_msg = await self.message_parser.chain_to_result(
@@ -390,33 +377,33 @@ class Giftia(Star):
 
     # ==================== 命令监听与分发 ====================
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("工具列表")
     async def tool_list(self, event: AstrMessageEvent, index: int = 1):
         """工具列表"""
         async for chunk in self.cmd_handler.tool_list(event, index):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("工具解析")
     async def tool_xml(self, event: AstrMessageEvent, name: str):
         """将函数调用工具解析成xml格式"""
         async for chunk in self.cmd_handler.tool_xml(event, name):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("打印embedding模型")
     async def get_embedding_models(self, event: AstrMessageEvent):
         """打印所有支持的模型信息"""
         await self.cmd_handler.get_embedding_models(event)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("打印rerank模型")
     async def get_rerank_models(self, event: AstrMessageEvent):
         """打印所有支持的模型信息"""
         await self.cmd_handler.get_rerank_models(event)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("读取记忆")
     async def get_memory(
         self,
@@ -431,7 +418,7 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("读取近期记忆")
     async def get_early_memory(
         self,
@@ -446,21 +433,21 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("删除消息")
     async def delete_message(self, event: AstrMessageEvent):
         """根据ID删除消息"""
         async for chunk in self.cmd_handler.delete_message(event):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("删除记忆")
     async def delete_memory(self, event: AstrMessageEvent, memory_id: str):
         """根据ID删除记忆"""
         async for chunk in self.cmd_handler.delete_memory(event, memory_id):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("清空记忆")
     async def delete_all_memories(
         self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
@@ -471,21 +458,21 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("加满能量")
     async def fill_energy(self, event: AstrMessageEvent, bot_name: str):
         """给当前群的指定机器人加满能量"""
         async for chunk in self.cmd_handler.fill_energy(event, bot_name):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("清空媒体缓存")
     async def delete_all_media_cache(self, event: AstrMessageEvent):
         """清空全部媒体缓存"""
         async for chunk in self.cmd_handler.delete_all_media_cache(event):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("定时任务列表")
     async def task_list(self, event: AstrMessageEvent, index: int = 1):
         """获取全部定时任务"""
@@ -498,7 +485,7 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.get_task_by_group(event, prefix):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("删除定时任务")
     async def delete_task(self, event: AstrMessageEvent, task_id: str):
         """删除定时任务"""
@@ -511,10 +498,13 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.get_media_caption(event):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("设置常驻状态")
     async def set_persistent_status(
-        self, event: AstrMessageEvent, status_name: str, status_value: GreedyStr = GreedyStr("")
+        self,
+        event: AstrMessageEvent,
+        status_name: str,
+        status_value: GreedyStr = GreedyStr(""),
     ):
         """设置或删除当前会话Bot的常驻状态：/设置常驻状态 <状态名> [状态值]"""
         async for chunk in self.cmd_handler.set_persistent_status(
@@ -522,7 +512,7 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("群规")
     async def set_group_rules(self, event: AstrMessageEvent, rules: GreedyStr):
         """覆写或查看当前会话的群规：/群规 [具体规则]"""
@@ -548,14 +538,60 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.get_user_profile(event, target):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("静默", alias={"休眠", "闭嘴"})
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("静默", alias={"休眠"})
     async def silence(self, event: AstrMessageEvent):
         """将当前会话的状态设置为不活跃：/静默 或 /休眠"""
         async for chunk in self.cmd_handler.silence_session(event):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("说话")
+    async def enable_session(self, event: AstrMessageEvent, target: GreedyStr):
+        """允许当前或指定会话：/说话 [@用户或会话ID]"""
+        async for chunk in self.cmd_handler.set_session_access(event, target, True):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("闭嘴")
+    async def disable_session(self, event: AstrMessageEvent, target: GreedyStr):
+        """禁止当前或指定会话：/闭嘴 [@用户或会话ID]"""
+        async for chunk in self.cmd_handler.set_session_access(event, target, False):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("开启私聊")
+    async def enable_private_session(self, event: AstrMessageEvent, target: GreedyStr):
+        """开启指定用户的私聊：/开启私聊 [用户ID或@用户]"""
+        async for chunk in self.cmd_handler.set_session_access(
+            event, target, True, is_private=True
+        ):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("关闭私聊")
+    async def disable_private_session(self, event: AstrMessageEvent, target: GreedyStr):
+        """关闭指定用户的私聊：/关闭私聊 [用户ID或@用户]"""
+        async for chunk in self.cmd_handler.set_session_access(
+            event, target, False, is_private=True
+        ):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("屏蔽")
+    async def block_user(self, event: AstrMessageEvent, target: GreedyStr):
+        """屏蔽当前会话用户发言：/屏蔽 @用户 或 用户ID"""
+        async for chunk in self.cmd_handler.block_user(event, target):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("取消屏蔽")
+    async def unblock_user(self, event: AstrMessageEvent, target: GreedyStr):
+        """取消屏蔽当前会话用户：/取消屏蔽 @用户 或 用户ID"""
+        async for chunk in self.cmd_handler.unblock_user(event, target):
+            yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("强制总结")
     async def force_summarize(self, event: AstrMessageEvent):
         """强制总结当前会话的未处理聊天记录"""
@@ -569,14 +605,14 @@ class Giftia(Star):
         ):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("设置据点")
     async def set_stronghold(self, event: AstrMessageEvent):
         """将当前会话设置为通知据点（唯一，新设置会覆盖旧据点）"""
         async for chunk in self.cmd_handler.set_stronghold(event):
             yield chunk
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("退群")
     async def leave_group(self, event: AstrMessageEvent, group_id: str):
         """退出指定群聊：/退群 <群号>"""

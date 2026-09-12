@@ -106,13 +106,16 @@ class ChatManager:
         ] = {}
 
     def _check_command_info(self, event: AstrMessageEvent) -> tuple[bool, bool]:
-        """检查当前事件是否激活了指令 Handler。
+        """Identify commands and those whose requests and replies must not be stored.
+
+        Args:
+            event: Incoming message event with activated command handlers.
 
         Returns:
-            (is_command, is_delete_cmd): 是否为 AstrBot 标准指令，是否为内部「删除消息」指令
+            A pair indicating command activation and unconditional logging exclusion.
         """
         is_command = False
-        is_delete_cmd = False
+        exclude_logging = False
         activated_handlers = event.get_extra("activated_handlers", []) or []
         for handler in activated_handlers:
             h_name = getattr(handler, "handler_name", "")
@@ -133,14 +136,32 @@ class ChatManager:
                     elif hasattr(filter_obj, "command_name"):
                         cmd_names = [getattr(filter_obj, "command_name", "")]
 
-                    if h_name == "delete_message" or any(
-                        "删除消息" in str(name) for name in cmd_names
+                    if h_name in (
+                        "delete_message",
+                        "enable_session",
+                        "disable_session",
+                        "enable_private_session",
+                        "disable_private_session",
+                        "block_user",
+                        "unblock_user",
+                    ) or any(
+                        str(name)
+                        in (
+                            "删除消息",
+                            "说话",
+                            "闭嘴",
+                            "开启私聊",
+                            "关闭私聊",
+                            "屏蔽",
+                            "取消屏蔽",
+                        )
+                        for name in cmd_names
                     ):
-                        is_delete_cmd = True
+                        exclude_logging = True
                     break
-            if is_delete_cmd:
+            if exclude_logging:
                 break
-        return is_command, is_delete_cmd
+        return is_command, exclude_logging
 
     async def handle_message(self, event: AstrMessageEvent):
         """接收并处理消息"""
@@ -149,9 +170,9 @@ class ChatManager:
             return
 
         # 检查指令状态与入库屏蔽规则
-        is_command, is_delete_cmd = self._check_command_info(event)
+        is_command, exclude_logging = self._check_command_info(event)
         block_commands = getattr(self.plugin, "block_command_messages", False)
-        if is_delete_cmd or (is_command and block_commands):
+        if exclude_logging or (is_command and block_commands):
             event._giftia_bypass_logging = True
 
         # 2. 处理撤回消息通知
@@ -210,6 +231,8 @@ class ChatManager:
         original_send = event.send
 
         async def intercepted_send(message: MessageChain):
+            if not is_command and not self.decision_engine.check_whitelists(event):
+                return
             logger.debug(f"[Giftia] intercepted_send triggered for message: {message}")
             bypass = getattr(event, "_giftia_bypass_logging", False)
 
@@ -228,7 +251,7 @@ class ChatManager:
             assigned_message_id = captured_ids[-1] if captured_ids else ""
             if getattr(self.plugin, "_terminated", False):
                 return ret
-            if bypass:
+            if bypass or not self.decision_engine.check_whitelists(event):
                 logger.debug("[Giftia] intercepted_send bypass=True, skipping log")
                 return ret
 
@@ -320,12 +343,12 @@ class ChatManager:
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
-        # 检查指令入库屏蔽（或强制屏蔽删除消息指令）
-        is_command, is_delete_cmd = self._check_command_info(event)
+        # Always exclude deletion and access-control commands from message storage.
+        is_command, exclude_logging = self._check_command_info(event)
         block_commands = getattr(self.plugin, "block_command_messages", False)
-        if is_delete_cmd or (is_command and block_commands):
+        if exclude_logging or (is_command and block_commands):
             logger.debug(
-                f"[Giftia] {bot_name} 指令消息入库已屏蔽 (is_delete={is_delete_cmd}, is_command={is_command})，跳过解析入库与LLM回复"
+                f"[Giftia] {bot_name}: skipping command storage and replies (excluded={exclude_logging}, command={is_command})"
             )
             return
 
@@ -340,7 +363,7 @@ class ChatManager:
                 for c in event.get_messages()
             )
             is_private = not event.get_group_id()
-            if is_private and self.plugin.private_chat_bypass:
+            if is_private:
                 is_just_at = True
 
             fmt_key = f"{bot_name}:{group_or_user_id}"
@@ -352,6 +375,8 @@ class ChatManager:
 
         # 解析用户消息并缓存多媒体
         async with self.plugin.parse_locks[f"{bot_name}:{group_or_user_id}"]:
+            if not self.decision_engine.check_whitelists(event):
+                return
             (
                 current_message,
                 image_urls,
@@ -448,6 +473,8 @@ class ChatManager:
         # 6. 进入 LLM 回复流水线
         reply_key = f"{bot_name}:{group_or_user_id}"
         async with session_lock_manager.acquire_lock(event.unified_msg_origin):
+            if not self.decision_engine.check_whitelists(event):
+                return
             self.plugin.replying_status[reply_key] = (
                 self.plugin.replying_status.get(reply_key, 0) + 1
             )
@@ -466,6 +493,8 @@ class ChatManager:
                     pending_recall_memories=pending_recall_memories,
                     meme_tags=meme_tags,
                 ):
+                    if not self.decision_engine.check_whitelists(event):
+                        break
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):
                             # 派发具体写操作和消息发送
@@ -703,6 +732,10 @@ class ChatManager:
         reply_key = f"{bot_name}:{group_or_user_id}"
         bot_conf = self.plugin.get_bot_config(bot_name)
         async with session_lock_manager.acquire_lock(unified_msg_origin):
+            if not self.decision_engine.is_session_allowed(
+                bot_name, group_or_user_id, is_private=not bool(group_id)
+            ):
+                return
             self.plugin.replying_status[reply_key] = (
                 self.plugin.replying_status.get(reply_key, 0) + 1
             )
@@ -728,6 +761,10 @@ class ChatManager:
                         RuntimeError: 平台发送消息失败时抛出。
                     """
                     nonlocal has_sent_reply
+                    if not self.decision_engine.is_session_allowed(
+                        bot_name, group_or_user_id, is_private=not bool(group_id)
+                    ):
+                        return
                     success = await self.plugin.context.send_message(
                         unified_msg_origin, message
                     )
@@ -745,6 +782,10 @@ class ChatManager:
                     remind_message=remind_message,
                     pending_recall_memories=pending_recall_memories,
                 ):
+                    if not self.decision_engine.is_session_allowed(
+                        bot_name, group_or_user_id, is_private=not bool(group_id)
+                    ):
+                        break
                     if chunk:
                         if isinstance(chunk, XmlLlmResult):
                             await self.action_dispatcher.dispatch_actions(

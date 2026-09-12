@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.3.2-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.3.3-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -58,7 +58,7 @@
    - 切换至 **机器人管理** 页签，点击 **+ 新增机器人** 或编辑已有机器人：
      - 设置机器人唯一名称 (`name`) 与显示昵称 (`nickname`)。
      - 绑定消息平台适配器 ID (插件已识别适配器列表，选择自己配置的 AstrBot 机器人即可)。
-     - 配置小模型主动接话审查（决策 Prompt、接话概率、白名单、关键词规则）。
+     - 配置小模型主动接话审查（决策 Prompt、接话概率、关键词规则）。
      - 配置大模型回复 使用的 AstrBot 人格 与提供商优先级列表。
      - 配置 TTS 语音合成供应商、语言映射及标志性语音。
      - 勾选允许该机器人调用的内置 XML 互动工具（如戳一戳、复读、点赞名片、表情包发送等）。
@@ -98,6 +98,25 @@ AstrBot 管理员可使用 `/群规 具体规则` 覆写当前机器人、当前
 后续扩展其他报告时，使用 `plugin.reports.register(report_type, ReportDefinition(...))` 注册默认模板、示例数据和字段说明，再由对应指令构建数据并调用 `await plugin.reports.render_image(report_type, data)`。新报告类型自动出现在编辑器中，共用模板存储、图片素材、预览和 t2i 渲染流程。返回值为临时图片路径，由调用方在发送或读取完成后清理；数据构造示例见 `core/reports/status.py` 和 `core/reports/user_profile.py`。
 
 ## 更多详情与高级使用
+
+### 会话名单与用户屏蔽
+
+WebUI → **机器人配置 → 会话黑白名单** 分别配置群聊和私聊的模式与名单：新建机器人默认采用**群聊黑名单、私聊白名单**。黑名单禁止名单中的会话，留空允许该类型的全部会话；白名单仅允许名单中的会话，留空禁止该类型的全部会话。群聊名单填写群号，私聊名单填写用户 ID，以逗号分隔；两者互不影响，即使群号和用户 ID 相同也分别判断。不允许的会话不入库、不参与回复，@ 和定时提醒也遵守此限制。
+
+AstrBot 管理员可用以下指令管理接收指令的 Bot：
+
+- `/说话`、`/闭嘴`：控制当前群聊或私聊；带数字 ID 时控制与当前会话相同类型的指定会话，带 `@用户` 时控制该用户的私聊。
+- `/开启私聊 123456`、`/关闭私聊 123456`：单独允许或禁止指定用户的私聊，在群聊和私聊中均可执行，也支持 `@用户`。在私聊中省略参数控制当前私聊，在群聊中必须指定用户。
+
+“开启/说话”在白名单模式下加入名单、在黑名单模式下移出名单；“关闭/闭嘴”执行相反操作。变更同步到 WebUI 并在重启后保留；名单之外也可执行管理指令。同一 Bot 绑定的适配器共用各自类型的列表。
+
+升级到 v0.3.3 后请在 WebUI 的 **会话黑白名单** 页签重新配置群聊和私聊名单。旧版共用名单会按原策略迁移，但群聊和私聊现在独立维护；建议重新确认模式与名单，避免私聊被默认白名单拦截。
+
+`/屏蔽 @用户` 或 `/屏蔽 123456` 屏蔽当前 Bot、当前会话中用户的后续发言，在媒体解析和入库前拦截，不触发回复；不影响该用户在其他会话的发言，也不删除已有记录。屏蔽信息保存在插件数据目录的 `bots_config.json` 的 `blocked_users` 中，按完整会话标识隔离；WebUI 保存机器人配置时会保留。上述管理指令及其响应均不入库。
+
+`/取消屏蔽 @用户` 或 `/取消屏蔽 123456` 解除当前 Bot、当前会话中的用户屏蔽。
+
+原 `_conf_schema.json` 的全局群组/用户/私聊白名单及私聊绕过开关不再使用。`/静默`（别名 `/休眠`）仍只重置活跃状态。
 
 ### 会话黑话
 
