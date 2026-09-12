@@ -115,8 +115,15 @@ class DecisionEngine:
             for c in event.get_messages()
         )
         is_private = not event.get_group_id()
-        if is_private:
+        private_decision_enabled = bool(
+            decision_conf.get("private_chat_decision_enabled", False)
+        )
+        if is_private and not private_decision_enabled:
             is_just_at = True
+        elif is_private:
+            # Private messages opt into the same decision model without treating
+            # the message as an @ mention, so every allowed message is evaluated.
+            is_just_at = False
 
         debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
 
@@ -134,7 +141,7 @@ class DecisionEngine:
         active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
         is_active_window = active_counter > 0
 
-        # 是否针对当前消息强制直接回复（不走小模型判断）
+        # 是否针对当前消息强制直接回复（不走前置决策）
         should_force_reply = False
         # 是否需要递减接话分析窗口的标志
         decrement_counter = False
@@ -144,14 +151,14 @@ class DecisionEngine:
                 should_force_reply = True
             else:
                 at_behavior = decision_conf.get("at_behavior", "force_reply")
-                has_decision_provider = decision_conf.get("enabled", True) and bool(
+                has_decision_provider = bool(
                     decision_conf.get("provider_ids")
                     or decision_conf.get("provider_id")
                 )
                 if not has_decision_provider:
                     if at_behavior != "force_reply":
                         logger.warning(
-                            f"[Giftia] {bot_name}: @ behavior '{at_behavior}' falls back to a forced reply because no decision provider is enabled"
+                            f"[Giftia] {bot_name}: @ behavior '{at_behavior}' falls back to a forced reply because no decision provider is configured"
                         )
                     should_force_reply = True
                 elif at_behavior == "force_reply":
@@ -166,7 +173,7 @@ class DecisionEngine:
                 else:
                     should_force_reply = True
 
-                # 如果 @ 行为交由小模型判断，则立即刷新/激活活跃窗口计数
+                # 如果 @ 行为交由前置决策，则立即刷新/激活活跃窗口计数
                 if not should_force_reply:
                     window_size = decision_conf.get("reply_active_window", 10)
                     self.plugin.active_reply_counters[fmt_key] = window_size
@@ -174,17 +181,22 @@ class DecisionEngine:
                         f"[Giftia] {bot_name} 收到 @ 消息，根据 @ 行为策略刷新接话分析窗口为 {window_size} 并交由小模型进行判断"
                     )
         else:
-            if not decision_conf.get("enabled", True) or not (
+            if not (
                 decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
-                logger.debug("没有at机器人且未开启决策，跳过处理")
+                logger.debug(
+                    "Skipping unmentioned message: no decision provider configured"
+                )
                 return False, None, None, None
             # 活跃窗口与主动接话概率检查
             proactive_prob = decision_conf.get("proactive_probability", 0)
             is_proactive_hit = False
             is_keyword_hit = False
+            should_decide_private = is_private and private_decision_enabled
 
-            if is_active_window:
+            if should_decide_private:
+                is_proactive_hit = True
+            elif is_active_window:
                 decrement_counter = True
             else:
                 is_proactive_hit = (

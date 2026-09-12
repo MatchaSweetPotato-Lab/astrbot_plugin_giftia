@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.3.3-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.3.4-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -59,7 +59,7 @@
      - 设置机器人唯一名称 (`name`) 与显示昵称 (`nickname`)。
      - 绑定消息平台适配器 ID (插件已识别适配器列表，选择自己配置的 AstrBot 机器人即可)。
      - 配置小模型主动接话审查（决策 Prompt、接话概率、关键词规则）。
-     - 配置大模型回复 使用的 AstrBot 人格 与提供商优先级列表。
+     - 配置正式回复 使用的 AstrBot 人格 与提供商优先级列表。
      - 配置 TTS 语音合成供应商、语言映射及标志性语音。
      - 勾选允许该机器人调用的内置 XML 互动工具（如戳一戳、复读、点赞名片、表情包发送等）。
 
@@ -116,7 +116,7 @@ AstrBot 管理员可用以下指令管理接收指令的 Bot：
 
 `/取消屏蔽 @用户` 或 `/取消屏蔽 123456` 解除当前 Bot、当前会话中的用户屏蔽。
 
-原 `_conf_schema.json` 的全局群组/用户/私聊白名单及私聊绕过开关不再使用。`/静默`（别名 `/休眠`）仍只重置活跃状态。
+原 `_conf_schema.json` 的全局群组/用户/私聊白名单及私聊绕过开关不再使用；私聊是否先经过小模型决策，改在 WebUI 机器人配置的 **触发与接话策略** 页签中按 Bot 设置，默认关闭。`/静默`（别名 `/休眠`）仍只重置活跃状态。
 
 ### 会话黑话
 

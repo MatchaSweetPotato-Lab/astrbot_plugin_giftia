@@ -176,7 +176,7 @@ def deduplicate_tool_calls(completion_text: str) -> str:
         new_text = new_text[:start] + new_text[end:]
         
     if to_remove:
-        logger.info(f"[Giftia] 防流口水：已从大模型回复中过滤了 {len(to_remove)} 个重复的 tool_call 标签")
+        logger.info(f"[Giftia] 防流口水：已从正式回复中过滤了 {len(to_remove)} 个重复的 tool_call 标签")
         
     return new_text
 

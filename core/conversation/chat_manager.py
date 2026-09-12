@@ -363,7 +363,12 @@ class ChatManager:
                 for c in event.get_messages()
             )
             is_private = not event.get_group_id()
-            if is_private:
+            private_decision_enabled = bool(
+                bot_conf.get("decision_conf", {}).get(
+                    "private_chat_decision_enabled", False
+                )
+            )
+            if is_private and not private_decision_enabled:
                 is_just_at = True
 
             fmt_key = f"{bot_name}:{group_or_user_id}"

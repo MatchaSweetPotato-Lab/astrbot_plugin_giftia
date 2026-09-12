@@ -293,7 +293,11 @@ class BotApi:
                         body[key] = previous[key]
                 # Older dashboard tabs must not overwrite the separate private list.
                 decision_conf = body["decision_conf"] = body.get("decision_conf") or {}
-                for key in ("private_whitelist_mode", "private_whitelist"):
+                for key in (
+                    "private_whitelist_mode",
+                    "private_whitelist",
+                    "private_chat_decision_enabled",
+                ):
                     if key not in decision_conf:
                         decision_conf[key] = previous["decision_conf"][key]
 
@@ -550,4 +554,3 @@ class BotApi:
         except Exception as e:
             logger.error(f"[Giftia API] delete_signature_voice error: {e}", exc_info=True)
             return error_response(f"删除语音文件失败: {str(e)}")
-
