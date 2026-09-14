@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -143,6 +144,36 @@ async def test_short_task_create_defaults_expiry_and_limit(task_runtime):
     )
     assert board.json()["data"]["stats"]["active"] == 3
     assert len(await plugin.db.get_short_tasks("Giftia", "g1")) == 3
+
+
+@pytest.mark.asyncio
+async def test_short_task_create_limit_is_atomic_under_concurrency(task_runtime):
+    plugin, client = task_runtime
+    payload = {
+        "bot_name": "Giftia",
+        "group_or_user_id": "g1",
+        "content": "concurrent task",
+    }
+
+    responses = await asyncio.gather(
+        *[
+            client.post(
+                "/task_board/create",
+                json={**payload, "content": f"concurrent task {index}"},
+            )
+            for index in range(20)
+        ]
+    )
+
+    successes = [response for response in responses if response.status_code == 200]
+    failures = [response for response in responses if response.status_code == 400]
+    assert len(successes) == plugin.tools_config["task_board_max_active"]
+    assert len(failures) == 20 - len(successes)
+    assert all("上限" in response.json()["message"] for response in failures)
+    assert (
+        await plugin.db.count_active_short_tasks("Giftia", "g1")
+        == plugin.tools_config["task_board_max_active"]
+    )
 
 
 @pytest.mark.asyncio

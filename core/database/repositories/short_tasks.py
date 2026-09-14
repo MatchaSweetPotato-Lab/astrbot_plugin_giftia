@@ -1,7 +1,8 @@
 from datetime import datetime
-import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import ShortTask
+from .base import BaseRepository
+
 
 class ShortTasksRepository(BaseRepository):
     @staticmethod
@@ -47,6 +48,52 @@ class ShortTasksRepository(BaseRepository):
             ),
         )
         await self.conn.commit()
+
+    async def insert_short_task_if_capacity(
+        self, task: ShortTask, max_active_tasks: int
+    ) -> bool:
+        """Insert an active task only when the session is below its limit.
+
+        Keeping the count predicate in the INSERT statement makes the capacity
+        check and write one SQLite operation, so concurrent creators cannot
+        both pass a separate count check and exceed the configured limit.
+        """
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO short_tasks (
+                task_id, bot_name, group_or_user_id, creator_user_id,
+                creator_nickname, content, status, closed_by_user_id,
+                close_reason, expires_at, created_at, updated_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE (
+                SELECT COUNT(*)
+                FROM short_tasks
+                WHERE bot_name = ?
+                  AND group_or_user_id = ?
+                  AND status = 'active'
+            ) < ?
+            """,
+            (
+                task.task_id,
+                task.bot_name,
+                task.group_or_user_id,
+                task.creator_user_id,
+                task.creator_nickname,
+                task.content,
+                task.status,
+                task.closed_by_user_id,
+                task.close_reason,
+                task.expires_at,
+                task.created_at,
+                task.updated_at,
+                task.bot_name,
+                task.group_or_user_id,
+                max_active_tasks,
+            ),
+        )
+        await self.conn.commit()
+        return (cursor.rowcount or 0) > 0
 
     async def expire_short_tasks(
         self, bot_name: str | None = None, group_or_user_id: str | None = None

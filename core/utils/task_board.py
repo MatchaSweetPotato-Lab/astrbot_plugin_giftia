@@ -116,7 +116,9 @@ class TaskBoardManager:
             created_at=now,
             updated_at=now,
         )
-        await self.plugin.db.insert_short_task(task)
+        inserted = await self.plugin.db.insert_short_task_if_capacity(task, limit)
+        if not inserted:
+            return False, f"活跃任务已达上限 {limit} 条", None
         return True, "创建短期任务成功", task
 
     async def close_task(

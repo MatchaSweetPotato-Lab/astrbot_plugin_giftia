@@ -218,6 +218,13 @@ class Database(ProfileStoreMixin):
     async def insert_short_task(self, task: ShortTask) -> None:
         return await self.short_tasks_repo.insert_short_task(task)
 
+    async def insert_short_task_if_capacity(
+        self, task: ShortTask, max_active_tasks: int
+    ) -> bool:
+        return await self.short_tasks_repo.insert_short_task_if_capacity(
+            task, max_active_tasks
+        )
+
     async def expire_short_tasks(self, bot_name: str | None = None, group_or_user_id: str | None = None) -> int:
         return await self.short_tasks_repo.expire_short_tasks(bot_name, group_or_user_id)
 
