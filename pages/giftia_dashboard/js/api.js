@@ -1,10 +1,12 @@
 // Giftia Dashboard API Client
 
+const API_ENVELOPE_STATUSES = new Set(["success", "error", "warning"]);
+
 window.apiGet = async function(endpoint, params) {
     if (window.AstrBotPluginPage) {
         try {
             const res = await window.AstrBotPluginPage.apiGet(endpoint, params);
-            if (res && typeof res === "object" && "status" in res) {
+            if (res && typeof res === "object" && API_ENVELOPE_STATUSES.has(res.status)) {
                 return res;
             }
             return { status: "success", data: res };
@@ -19,7 +21,7 @@ window.apiPost = async function(endpoint, body) {
     if (window.AstrBotPluginPage) {
         try {
             const res = await window.AstrBotPluginPage.apiPost(endpoint, body);
-            if (res && typeof res === "object" && "status" in res) {
+            if (res && typeof res === "object" && API_ENVELOPE_STATUSES.has(res.status)) {
                 return res;
             }
             return { status: "success", data: res };

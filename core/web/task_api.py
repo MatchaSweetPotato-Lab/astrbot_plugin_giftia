@@ -1,3 +1,7 @@
+import json
+import uuid
+from datetime import datetime
+
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
@@ -36,7 +40,9 @@ class TaskApi:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
             )
-            stats = await self.giftia.db.get_short_task_stats(bot_name, group_or_user_id)
+            stats = await self.giftia.db.get_short_task_stats(
+                bot_name, group_or_user_id
+            )
             return json_response(
                 {
                     "status": "success",
@@ -51,6 +57,53 @@ class TaskApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_task_board error: {e}")
             return error_response(f"获取短期任务失败: {str(e)}")
+
+    async def create_task_board(self):
+        """Create an active short task using the existing board limits.
+
+        Returns:
+            A JSON response containing the new task or a validation error.
+        """
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            content = str(body.get("content") or "").strip()
+            expires_at = str(body.get("expires_at") or "").strip()
+            if not bot_name or not group_or_user_id:
+                return error_response("缺少 bot_name 或 group_or_user_id 参数")
+            if not content:
+                return error_response("任务内容不能为空")
+            if not hasattr(self.giftia, "task_board"):
+                return error_response("短期任务看板不可用")
+            if expires_at:
+                try:
+                    expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                except ValueError:
+                    return error_response("过期时间格式错误")
+                if expiry <= datetime.now(expiry.tzinfo):
+                    return error_response("过期时间必须晚于当前时间")
+
+            ok, message, task = await self.giftia.task_board.create_task(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                creator_user_id="dashboard",
+                creator_nickname="任务看板",
+                content=content,
+                expires_at=expires_at or None,
+            )
+            if not ok:
+                return error_response(message)
+            return json_response(
+                {
+                    "status": "success",
+                    "message": message,
+                    "data": self._serialize_short_task(task),
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] create_task_board error: {e}")
+            return error_response(f"创建短期任务失败: {str(e)}")
 
     async def update_task_board(self):
         """Update a short task from dashboard without creator permission checks."""
@@ -127,14 +180,20 @@ class TaskApi:
             if not hasattr(self.giftia, "task_board"):
                 return error_response("短期任务看板不可用")
 
-            ok, message, count = await self.giftia.task_board.clear_tasks_from_dashboard(
+            (
+                ok,
+                message,
+                count,
+            ) = await self.giftia.task_board.clear_tasks_from_dashboard(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 status=status,
             )
             if not ok:
                 return error_response(message)
-            return json_response({"status": "success", "message": message, "cleared_count": count})
+            return json_response(
+                {"status": "success", "message": message, "cleared_count": count}
+            )
         except Exception as e:
             logger.error(f"[Giftia API] clear_task_board error: {e}")
             return error_response(f"清空短期任务失败: {str(e)}")
@@ -168,6 +227,93 @@ class TaskApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_scheduled_tasks error: {e}")
             return error_response(f"获取定时任务列表失败: {str(e)}")
+
+    async def create_scheduled_task(self):
+        """Create a reminder with routing recorded from the destination session.
+
+        Returns:
+            A JSON response with the job ID or an actionable creation error.
+        """
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            time_expr = str(body.get("time_expr") or "").strip()
+            remind_message = str(body.get("remind_message") or "").strip()
+            if not bot_name or not group_or_user_id:
+                return error_response("缺少 bot_name 或 group_or_user_id 参数")
+            if not time_expr:
+                return error_response("时间规则不能为空")
+            if not remind_message:
+                return error_response("任务内容不能为空")
+            if not hasattr(self.giftia, "task_manager"):
+                return error_response("定时任务调度器不可用")
+
+            # Prefer recorded routing; existing reminders support older sessions.
+            raw_context = await self.giftia.db.get_kv_data(
+                f"task_session:{bot_name}:{group_or_user_id}"
+            )
+            context = json.loads(raw_context) if raw_context else None
+            if not context:
+                for job in self.giftia.task_manager.scheduler.get_jobs():
+                    kwargs = job.kwargs or {}
+                    if (
+                        job.args
+                        and job.args[0] == "remind"
+                        and kwargs.get("bot_name") == bot_name
+                        and kwargs.get("group_or_user_id") == group_or_user_id
+                    ):
+                        context = kwargs
+                        break
+            routing_fields = (
+                "unified_msg_origin",
+                "adapter_id",
+                "self_id",
+                "platform_name",
+                "group_id",
+            )
+            if not context or any(field not in context for field in routing_fields):
+                return error_response(
+                    "缺少会话路由信息，请先在该会话发送一条消息后重试"
+                )
+
+            try:
+                run_date = datetime.fromisoformat(time_expr)
+            except ValueError:
+                pass  # The scheduler validates cron expressions.
+            else:
+                if run_date <= datetime.now(run_date.tzinfo):
+                    return error_response("执行时间必须晚于当前时间")
+
+            task_id = f"{bot_name}_{group_or_user_id}_{uuid.uuid4().hex[:8]}"
+            message = self.giftia.task_manager.add_job(
+                task_id=task_id,
+                func_name="remind",
+                time_expr=time_expr,
+                kwargs={
+                    **{field: context[field] for field in routing_fields},
+                    "bot_name": bot_name,
+                    "nickname": self.giftia.get_bot_config(bot_name).get(
+                        "nickname", bot_name
+                    ),
+                    "group_or_user_id": group_or_user_id,
+                    "user_id": "dashboard" if context["group_id"] else group_or_user_id,
+                    "user_name": "任务看板",
+                    "remind_message": remind_message,
+                },
+            )
+            if not self.giftia.task_manager.scheduler.get_job(task_id):
+                return error_response(message)
+            return json_response(
+                {
+                    "status": "success",
+                    "message": message,
+                    "data": {"task_id": task_id},
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] create_scheduled_task error: {e}")
+            return error_response(f"创建定时任务失败: {str(e)}")
 
     async def update_scheduled_task(self):
         """Update scheduled task content and time expression with session ownership verification."""
@@ -251,11 +397,13 @@ class TaskApi:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
             )
-            return json_response({
-                "status": "success",
-                "message": f"成功清空 {count} 条定时任务",
-                "cleared_count": count,
-            })
+            return json_response(
+                {
+                    "status": "success",
+                    "message": f"成功清空 {count} 条定时任务",
+                    "cleared_count": count,
+                }
+            )
         except Exception as e:
             logger.error(f"[Giftia API] clear_scheduled_tasks error: {e}")
             return error_response(f"清空定时任务失败: {str(e)}")

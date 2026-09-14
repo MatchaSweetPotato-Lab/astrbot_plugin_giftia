@@ -71,7 +71,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.addEventListener("wheel", function(e) {
-        const activeOverlay = document.querySelector(".modal-overlay.show");
+        const activeOverlay = e.target.closest(".modal-overlay.show") || document.querySelector(".modal-overlay.show");
         if (!activeOverlay) return;
 
         if (!activeOverlay.contains(e.target)) {
@@ -97,7 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }, { passive: false });
 
     document.addEventListener("touchmove", function(e) {
-        const activeOverlay = document.querySelector(".modal-overlay.show");
+        const activeOverlay = e.target.closest(".modal-overlay.show") || document.querySelector(".modal-overlay.show");
         if (!activeOverlay) return;
 
         if (!activeOverlay.contains(e.target)) {

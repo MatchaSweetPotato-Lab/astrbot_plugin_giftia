@@ -218,6 +218,13 @@ class Database(ProfileStoreMixin):
     async def insert_short_task(self, task: ShortTask) -> None:
         return await self.short_tasks_repo.insert_short_task(task)
 
+    async def insert_short_task_if_capacity(
+        self, task: ShortTask, max_active_tasks: int
+    ) -> bool:
+        return await self.short_tasks_repo.insert_short_task_if_capacity(
+            task, max_active_tasks
+        )
+
     async def expire_short_tasks(self, bot_name: str | None = None, group_or_user_id: str | None = None) -> int:
         return await self.short_tasks_repo.expire_short_tasks(bot_name, group_or_user_id)
 
@@ -248,6 +255,16 @@ class Database(ProfileStoreMixin):
 
     async def delete_short_task(self, task_id: str, bot_name: str, group_or_user_id: str) -> bool:
         return await self.short_tasks_repo.delete_short_task(task_id, bot_name, group_or_user_id)
+
+    async def clear_short_tasks(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        statuses: list[str] | None = None,
+    ) -> int:
+        return await self.short_tasks_repo.clear_short_tasks(
+            bot_name, group_or_user_id, statuses
+        )
 
     async def get_short_task_stats(self, bot_name: str, group_or_user_id: str) -> dict:
         return await self.short_tasks_repo.get_short_task_stats(bot_name, group_or_user_id)

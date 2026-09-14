@@ -289,6 +289,8 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.data_cache.add_message = AsyncMock()
         self.plugin.data_cache.get_bot_status = AsyncMock()
         self.plugin.data_cache.update_bot_custom_status = AsyncMock()
+        self.plugin.db.get_kv_data = AsyncMock(return_value=None)
+        self.plugin.db.upsert_kv_data = AsyncMock()
         self.plugin.message_parser.parse_user_message = AsyncMock(
             return_value=(MagicMock(), [], [])
         )
@@ -308,6 +310,8 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         event.get_self_id = MagicMock(return_value="3970706156")
         event.get_sender_id = MagicMock(return_value="12345678")
         event.get_group_id = MagicMock(return_value="10001")
+        event.get_platform_name = MagicMock(return_value="aiocqhttp")
+        event.unified_msg_origin = "adapter_1:GroupMessage:10001"
         event.get_messages = MagicMock(return_value=[])
         event.get_message_str = MagicMock(return_value=message_str)
         event.platform_meta = MagicMock()
