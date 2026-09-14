@@ -50,6 +50,9 @@ def runtime(tmp_path):
             parse_user_message=AsyncMock(), chain_to_result=AsyncMock()
         ),
         data_cache=SimpleNamespace(add_message=AsyncMock()),
+        db=SimpleNamespace(
+            get_kv_data=AsyncMock(return_value=None), upsert_kv_data=AsyncMock()
+        ),
         get_caption_config=lambda bot: {"defer_caption_enabled": False},
         parse_locks=defaultdict(asyncio.Lock),
         replying_status={},
@@ -96,6 +99,7 @@ def event():
         get_group_id=Mock(return_value="100"),
         get_sender_id=Mock(return_value="200"),
         get_self_id=Mock(return_value="999"),
+        get_platform_name=Mock(return_value="aiocqhttp"),
         get_messages=Mock(return_value=[At(qq="999")]),
         get_message_str=Mock(return_value="说话"),
         is_at_or_wake_command=True,
@@ -580,6 +584,18 @@ async def test_inflight_reply_is_discarded_after_access_changes(
 
     manager.reply_pipeline.dispatch_llm_reply_loop = reply
     await manager.job(event)
+    session_key, context_json = runtime.db.upsert_kv_data.call_args.args
+    assert session_key == (
+        "task_session:bot:200" if private else "task_session:bot:100"
+    )
+    context = json.loads(context_json)
+    assert context == {
+        "unified_msg_origin": event.unified_msg_origin,
+        "adapter_id": "adapter",
+        "self_id": "999",
+        "platform_name": "aiocqhttp",
+        "group_id": "" if private else "100",
+    }
     manager.action_dispatcher.dispatch_actions.assert_not_awaited()
     assert runtime.replying_status["bot:200" if private else "bot:100"] == 0
 

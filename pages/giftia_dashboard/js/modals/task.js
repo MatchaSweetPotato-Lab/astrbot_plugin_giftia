@@ -129,6 +129,80 @@ window.taskBoardActiveTab = "active";
 window.taskBoardCachedData = null;
 window.scheduledTasksCachedData = null;
 
+window.openCreateTaskModal = function() {
+    const bot = document.getElementById("task-board-bot").value;
+    const group = document.getElementById("task-board-group").value;
+    if (!bot || !group) {
+        window.showToast("请先选择会话");
+        return;
+    }
+    const submit = document.getElementById("create-task-submit");
+    if (submit.disabled) return;
+    const scheduled = window.taskBoardMainTab === "scheduled";
+    document.getElementById("create-task-form").reset();
+    document.getElementById("create-task-type").value = scheduled ? "scheduled" : "short";
+    document.getElementById("create-task-bot").value = bot;
+    document.getElementById("create-task-group").value = group;
+    document.getElementById("create-task-title").textContent = scheduled ? "新建定时任务" : "新建短期任务";
+    document.getElementById("create-task-session").textContent = `${bot} · ${group}`;
+    document.getElementById("create-short-task-fields").style.display = scheduled ? "none" : "flex";
+    document.getElementById("create-scheduled-task-fields").style.display = scheduled ? "flex" : "none";
+    document.getElementById("create-task-expires").disabled = scheduled;
+    document.getElementById("create-task-time").disabled = !scheduled;
+    document.getElementById("create-task-time").required = scheduled;
+    window.openModal("create-task-modal");
+    document.getElementById("create-task-content").focus();
+};
+
+window.submitCreateTask = async function() {
+    const submit = document.getElementById("create-task-submit");
+    if (submit.disabled) return;
+    const bot = document.getElementById("create-task-bot").value;
+    const group = document.getElementById("create-task-group").value;
+    const scheduled = document.getElementById("create-task-type").value === "scheduled";
+    const content = document.getElementById("create-task-content").value.trim();
+    const timeExpr = document.getElementById("create-task-time").value.trim();
+    if (!bot || !group) {
+        window.showToast("请先选择会话");
+        return;
+    }
+    if (!content || (scheduled && !timeExpr)) {
+        window.showToast(!content ? "任务内容不能为空" : "时间规则不能为空");
+        return;
+    }
+
+    const body = { bot_name: bot, group_or_user_id: group };
+    if (scheduled) {
+        body.remind_message = content;
+        body.time_expr = timeExpr;
+    } else {
+        body.content = content;
+        body.expires_at = document.getElementById("create-task-expires").value;
+    }
+    submit.disabled = true;
+    submit.textContent = "创建中...";
+    try {
+        const res = await window.apiPost(scheduled ? "/scheduled_tasks/create" : "/task_board/create", body);
+        if (res.status !== "success") {
+            window.showToast(`创建失败: ${res.message || "未知错误"}`);
+            return;
+        }
+        window.showToast(scheduled ? "定时任务已创建" : "短期任务已创建");
+        window.closeModal("create-task-modal");
+        if (document.getElementById("task-board-bot").value === bot &&
+            document.getElementById("task-board-group").value === group) {
+            if (!scheduled) window.setTaskBoardTab("active");
+            await window.refreshTaskBoardModal();
+        }
+        if (!scheduled) window.GiftiaApp.loadBotStatus();
+    } catch (e) {
+        window.showToast(`创建失败: ${e.message}`);
+    } finally {
+        submit.disabled = false;
+        submit.textContent = "创建";
+    }
+};
+
 window.setTaskBoardMainTab = function(mainTab) {
     window.taskBoardMainTab = mainTab;
     document.querySelectorAll(".task-board-main-tab").forEach(btn => {

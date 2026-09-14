@@ -910,9 +910,43 @@
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     <span id="task-board-clear-text">清空进行中任务</span>
                 </button>
-                <button class="btn btn-primary" onclick="window.refreshTaskBoardModal()">刷新</button>
+                <button class="btn btn-primary" id="task-board-create-btn" onclick="window.openCreateTaskModal()">新建</button>
             </div>
         </div>
+    </div>
+
+    <!-- MODAL: Create Short or Scheduled Task -->
+    <div id="create-task-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="create-task-title">
+        <form id="create-task-form" class="modal-card card" onsubmit="event.preventDefault(); window.submitCreateTask()">
+            <div class="modal-header">
+                <h2 id="create-task-title" class="text-h3 pa-4 pb-0 pl-6">新建短期任务</h2>
+                <button type="button" class="modal-close-btn" aria-label="关闭" onclick="closeModal('create-task-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="create-task-type">
+                <input type="hidden" id="create-task-bot">
+                <input type="hidden" id="create-task-group">
+                <p id="create-task-session" class="text-secondary"></p>
+                <div class="form-group">
+                    <label for="create-task-content">任务内容 <span class="required">*</span></label>
+                    <textarea id="create-task-content" rows="4" required placeholder="请输入任务内容"></textarea>
+                </div>
+                <div id="create-short-task-fields" class="form-group">
+                    <label for="create-task-expires">过期时间（可选）</label>
+                    <input id="create-task-expires" type="datetime-local">
+                    <small class="text-secondary">留空使用配置中的默认有效期。</small>
+                </div>
+                <div id="create-scheduled-task-fields" class="form-group" style="display: none;">
+                    <label for="create-task-time">时间规则 <span class="required">*</span></label>
+                    <input id="create-task-time" type="text" placeholder="例如：0 8 * * *">
+                    <small class="text-secondary">使用服务端时区。支持五段 Cron（如每天 8 点：0 8 * * *）或具体日期时间（YYYY-MM-DD HH:mm:ss）。</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" variant="text" onclick="closeModal('create-task-modal')">取消</button>
+                <button type="submit" id="create-task-submit" class="btn btn-primary" variant="tonal">创建</button>
+            </div>
+        </form>
     </div>
 
     <div id="slang-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="slang-modal-title">

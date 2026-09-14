@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import json
 import time
 import uuid
 from typing import Any
@@ -22,7 +23,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 )
 from astrbot.core.utils.session_lock import session_lock_manager
 
-from ..utils.event_utils import bind_fake_event_extras, build_fake_event
+from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
 from ..utils.message_media import format_node_components
 from ..utils.notice_parse import NoticeParseResult
 from ..utils.schemas import XmlLlmResult
@@ -351,6 +352,21 @@ class ChatManager:
                 f"[Giftia] {bot_name}: skipping command storage and replies (excluded={exclude_logging}, command={is_command})"
             )
             return
+
+        # Preserve real platform routing for reminders created from the dashboard.
+        session_context = json.dumps(
+            {
+                "unified_msg_origin": event.unified_msg_origin,
+                "adapter_id": get_adapter_id(event),
+                "self_id": event.get_self_id(),
+                "platform_name": event.get_platform_name(),
+                "group_id": event.get_group_id() or "",
+            },
+            ensure_ascii=False,
+        )
+        session_key = f"task_session:{bot_name}:{group_or_user_id}"
+        if await self.plugin.db.get_kv_data(session_key) != session_context:
+            await self.plugin.db.upsert_kv_data(session_key, session_context)
 
         # 检查是否开启延迟多媒体转述 (仅在没有 @ 且不在发言窗口时延迟)
         caption_config = self.plugin.get_caption_config(bot_conf)

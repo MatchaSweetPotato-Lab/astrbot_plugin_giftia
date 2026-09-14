@@ -196,6 +196,12 @@ class WebUIManager:
             desc="Get short task board",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/task_board/create",
+            view_handler=self.web_api.create_task_board,
+            methods=["POST"],
+            desc="Create short task",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/task_board/update",
             view_handler=self.web_api.update_task_board,
             methods=["POST"],
@@ -218,6 +224,12 @@ class WebUIManager:
             view_handler=self.web_api.get_scheduled_tasks,
             methods=["GET"],
             desc="Get scheduled tasks list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/scheduled_tasks/create",
+            view_handler=self.web_api.create_scheduled_task,
+            methods=["POST"],
+            desc="Create scheduled reminder",
         )
         ctx.register_web_api(
             route="/astrbot_plugin_giftia/scheduled_tasks/update",

@@ -1,5 +1,9 @@
 /* Short Task Board Modal Styling */
 
+#create-task-modal {
+    z-index: 1100;
+}
+
 .task-board-modal-card {
     max-width: 920px !important;
     width: 95% !important;
