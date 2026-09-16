@@ -666,7 +666,7 @@ class InspectMediaTool(FunctionTool):
     name: str = "inspect_media"
     description: str = (
         "按 media_id 查看当前会话中未转述的历史媒体（图片/语音/视频），或对已有媒体提出具体问题重新深入查看。"
-        "如果目标为较长视频，可通过 start_time 指定切片起始秒数（默认为 0 秒）。"
+        "视频可通过 start_time 和 duration 指定切片起始时间和时长。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -683,6 +683,10 @@ class InspectMediaTool(FunctionTool):
                 "start_time": {
                     "type": "integer",
                     "description": "若为视频，可指定截取起始时间(秒)，默认 0。",
+                },
+                "duration": {
+                    "type": "integer",
+                    "description": "视频切片时长（秒）。",
                 },
             },
             "required": ["media_id"],
@@ -706,6 +710,9 @@ class InspectMediaTool(FunctionTool):
 
         media_id = str(kwargs.get("media_id") or "").strip()
         start_time = int(kwargs.get("start_time") or 0)
+        duration = kwargs.get("duration")
+        if duration is not None:
+            duration = int(duration)
         question = str(kwargs.get("question") or "").strip()
 
         if not media_id:
@@ -715,6 +722,7 @@ class InspectMediaTool(FunctionTool):
             hash_val=media_id,
             question=question,
             start_time=start_time,
+            duration=duration,
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
