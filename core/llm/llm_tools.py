@@ -709,10 +709,17 @@ class InspectMediaTool(FunctionTool):
             group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
 
         media_id = str(kwargs.get("media_id") or "").strip()
-        start_time = int(kwargs.get("start_time") or 0)
+        start_time = kwargs.get("start_time")
+        try:
+            start_time = int(start_time) if start_time is not None else 0
+        except (TypeError, ValueError, OverflowError):
+            return "请求参数错误：start_time 必须是整数"
         duration = kwargs.get("duration")
         if duration is not None:
-            duration = int(duration)
+            try:
+                duration = int(duration)
+            except (TypeError, ValueError, OverflowError):
+                return "请求参数错误：duration 必须是整数"
         question = str(kwargs.get("question") or "").strip()
 
         if not media_id:

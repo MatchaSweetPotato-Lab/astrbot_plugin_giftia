@@ -374,6 +374,7 @@ class MediaCaptioner:
         Returns:
             The video caption or an error message.
         """
+        start_time = max(0, start_time)
         if (
             not question
             and start_time == 0
@@ -388,6 +389,9 @@ class MediaCaptioner:
         clip_duration = (
             threshold if duration is None else min(max(1, duration), threshold)
         )
+        video_duration = media_caption.duration or 0.0
+        if video_duration > 0 and start_time >= video_duration:
+            return "[视频切片起始时间超出视频时长]"
 
         url = media_caption.url or media_caption.file_name
         if not url:
@@ -413,7 +417,6 @@ class MediaCaptioner:
                 else:
                     return "[视频文件路径不存在或不在允许的安全目录中]"
 
-        video_duration = media_caption.duration or 0.0
         target_video_file = str(local_video_path)
         clip_info_str = ""
 
@@ -432,9 +435,13 @@ class MediaCaptioner:
                 if not success:
                     return "[视频切片失败，无法查看指定片段]"
             target_video_file = str(clip_output)
-            clip_info_str = (
-                f" (切片区间: {start_time}s ~ {start_time + clip_duration}s)"
-            )
+            clip_end = start_time + clip_duration
+            if video_duration > 0:
+                clip_end = min(clip_end, video_duration)
+                interval_label = "切片区间"
+            else:
+                interval_label = "请求切片区间"
+            clip_info_str = f" ({interval_label}: {start_time}s ~ {clip_end:g}s)"
 
         # 1. 主动智能压制：如果目标视频/切片体积大于 5MB，主动调用 ffmpeg 压制为 720p/CRF 28，确保数据轻量快速
         if os.path.exists(target_video_file):

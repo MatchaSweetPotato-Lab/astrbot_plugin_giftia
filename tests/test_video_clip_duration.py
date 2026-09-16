@@ -63,6 +63,7 @@ def video_runtime(tmp_path, monkeypatch):
         ({"duration": 10}, 0, 0, 10),
         ({"duration": 30}, 90, 0, 30),
         ({"duration": 100}, 90, 5, 30),
+        ({"duration": "10"}, 90, 5, 10),
         ({"duration": 0}, 90, 0, 1),
         ({"duration": -5}, 90, 0, 1),
     ],
@@ -136,5 +137,84 @@ async def test_clip_failure_does_not_send_full_video(video_runtime):
     )
 
     assert "视频切片失败" in output
+    runtime.plugin.call_llm.call_llm_video_caption.assert_not_awaited()
+    runtime.plugin.data_cache.update_caption.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parameter", ["duration", "start_time"])
+@pytest.mark.parametrize("value", ["", "abc", "1.5", [], {}, float("inf")])
+async def test_invalid_video_parameters_return_clear_error(
+    video_runtime, parameter, value
+):
+    runtime = video_runtime
+
+    output = await runtime.tool.call(
+        runtime.context, media_id=runtime.video.hash_val, **{parameter: value}
+    )
+
+    assert output == f"请求参数错误：{parameter} 必须是整数"
+    runtime.plugin.data_cache.get_caption_by_hash.assert_not_awaited()
+    runtime.clip.assert_not_awaited()
+    runtime.plugin.call_llm.call_llm_video_caption.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached_clip", [False, True])
+@pytest.mark.parametrize(
+    "video_length,start_time,expected_interval",
+    [
+        (20, 0, "切片区间: 0s ~ 20s"),
+        (20, 15, "切片区间: 15s ~ 20s"),
+        (20.5, 15, "切片区间: 15s ~ 20.5s"),
+        (20, -5, "切片区间: 0s ~ 20s"),
+        (0, 0, "请求切片区间: 0s ~ 30s"),
+        (0, 5, "请求切片区间: 5s ~ 35s"),
+    ],
+)
+async def test_video_interval_respects_known_duration(
+    video_runtime, cached_clip, video_length, start_time, expected_interval
+):
+    runtime = video_runtime
+    runtime.video.duration = video_length
+    if cached_clip:
+        clip_path = runtime.cache_dir / (
+            f"{runtime.video.hash_val}_clip_{max(0, start_time)}_30.mp4"
+        )
+        clip_path.write_bytes(b"cached clip")
+
+    output = await runtime.tool.call(
+        runtime.context,
+        media_id=runtime.video.hash_val,
+        start_time=start_time,
+        duration=30,
+    )
+
+    assert f" ({expected_interval})" in output
+    assert runtime.video.caption == f"New caption ({expected_interval})"
+    runtime.plugin.call_llm.call_llm_video_caption.assert_awaited_once()
+    runtime.plugin.data_cache.update_caption.assert_awaited_once()
+    if cached_clip:
+        runtime.clip.assert_not_awaited()
+    else:
+        runtime.clip.assert_awaited_once()
+        assert runtime.clip.call_args.kwargs["start_time"] == max(0, start_time)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_time", [20, 25])
+async def test_video_start_at_or_past_end_returns_error(video_runtime, start_time):
+    runtime = video_runtime
+    runtime.video.duration = 20
+
+    output = await runtime.tool.call(
+        runtime.context,
+        media_id=runtime.video.hash_val,
+        start_time=start_time,
+        duration=10,
+    )
+
+    assert "视频切片起始时间超出视频时长" in output
+    runtime.clip.assert_not_awaited()
     runtime.plugin.call_llm.call_llm_video_caption.assert_not_awaited()
     runtime.plugin.data_cache.update_caption.assert_not_awaited()
