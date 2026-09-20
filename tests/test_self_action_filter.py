@@ -21,6 +21,8 @@ from core.conversation.chat_manager import ChatManager
 class SelfActionFilterTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.plugin = MagicMock()
+        self.plugin._terminated = False
+        self.plugin.running_tasks = {}
         self.plugin.adapter_id_map = {"adapter_1": "bot_arisu"}
         self.plugin.bot_map = {"bot_arisu": {"nickname": "Arisu"}}
         self.plugin.active_reply_counters = {}
