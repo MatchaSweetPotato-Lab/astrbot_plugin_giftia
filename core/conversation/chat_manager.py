@@ -165,7 +165,14 @@ class ChatManager:
         return is_command, exclude_logging
 
     async def handle_message(self, event: AstrMessageEvent):
-        """接收并处理消息"""
+        """Prepare a message and schedule processing without delaying other plugins.
+
+        Args:
+            event: Incoming message event shared with AstrBot's other handlers.
+        """
+        if getattr(self.plugin, "_terminated", False):
+            return
+
         # 1. 检查白名单拦截
         if not self.decision_engine.check_whitelists(event):
             return
@@ -309,31 +316,40 @@ class ChatManager:
 
         event.send = intercepted_send
 
-        # 4. 创建后台回复任务
-        task = asyncio.create_task(self.job(event))
-        task_id = str(id(task))
-        self.plugin.running_tasks[task_id] = task
-        try:
-            await task
+        if not is_command:
+            # AstrBot uses True to inhibit its default LLM request. Keep event
+            # propagation and _has_send_oper unchanged for other plugins.
+            event.should_call_llm(True)
 
-            # 被动记忆后台触发检查
+        async def process_message():
+            await self.job(event)
+
             if self.plugin.passive_memory_enabled:
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
                 group_or_user_id = event.get_group_id() or event.get_sender_id()
                 if bot_name:
-                    asyncio.create_task(
-                        self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            self_id=event.get_self_id(),
-                        )
+                    await self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        self_id=event.get_self_id(),
                     )
-        except asyncio.CancelledError:
-            logger.info(f"{task_id} 任务被取消")
-        except Exception as e:
-            logger.error(f"{task_id} 任务执行失败: {e}", exc_info=True)
-        finally:
+
+        # AstrBot awaits handlers in order; only schedule the slow work here.
+        task = asyncio.create_task(process_message())
+        task_id = str(id(task))
+        self.plugin.running_tasks[task_id] = task
+
+        def task_done(completed: asyncio.Task):
+            # A callback also runs when cancellation happens before the task starts.
             self.plugin.running_tasks.pop(task_id, None)
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                logger.debug(f"[Giftia] Message task {task_id} cancelled")
+            except Exception:
+                logger.error(f"[Giftia] Message task {task_id} failed", exc_info=True)
+
+        task.add_done_callback(task_done)
 
     async def job(self, event: AstrMessageEvent):
         # 获取基础信息

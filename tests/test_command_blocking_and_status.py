@@ -281,6 +281,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.plugin = MagicMock()
         self.plugin._terminated = False
+        self.plugin.running_tasks = {}
         self.plugin.adapter_id_map = {"adapter_1": "Giftia"}
         self.plugin.bot_map = {"Giftia": {"nickname": "小吉", "name": "Giftia"}}
         self.plugin.active_reply_counters = {}
@@ -303,6 +304,9 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
 
         self.chat_manager = ChatManager(self.plugin)
         self.chat_manager.decision_engine.check_whitelists = MagicMock(return_value=True)
+
+    async def asyncTearDown(self):
+        await asyncio.gather(*self.plugin.running_tasks.values(), return_exceptions=True)
 
     def _create_mock_event(self, activated_handlers: list | None = None, message_str: str = ""):
         event = MagicMock()
@@ -373,7 +377,8 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         # 检查 bypass 标记未设置
         self.assertFalse(getattr(event, "_giftia_bypass_logging", False))
 
-        # 用户指令应被正常解析
+        # Command parsing now finishes in the tracked background task.
+        await asyncio.gather(*self.plugin.running_tasks.values())
         self.plugin.message_parser.parse_user_message.assert_called_once()
 
         # 测试 Bot 响应通过 event.send
@@ -418,7 +423,8 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         # bypass 标记应为 False
         self.assertFalse(getattr(event, "_giftia_bypass_logging", False))
 
-        # 用户消息被正常解析入库
+        # Message parsing now finishes in the tracked background task.
+        await asyncio.gather(*self.plugin.running_tasks.values())
         self.plugin.message_parser.parse_user_message.assert_called_once()
 
     async def test_set_persistent_status_command(self):

@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.27.0%2B-75B9D8.svg)](https://github.com/AstrBotDevs/AstrBot)
-[![Giftia](https://img.shields.io/badge/Giftia-v0.3.5-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
+[![Giftia](https://img.shields.io/badge/Giftia-v0.3.6-FFD700.svg)](https://github.com/MatchaSweetPotato-Lab/astrbot_plugin_giftia)
 
 </div>
 
@@ -28,6 +28,8 @@
 ---
 
 ## 媒体缓存机制与第三方插件适配
+
+Giftia 保持原有消息处理优先级，完成名单检查、指令识别和发送记录挂钩后立即返回；媒体解析、接话判断和正式回复在后台执行，后续插件无需等待这些步骤完成。Giftia 接管的普通消息会禁用 AstrBot 默认 AI 回复，避免后台处理期间重复回复，但不会停止消息向其他插件传播。指令和未被 Giftia 接管的消息保留原有默认 AI 行为。
 
 由于 AstrBot 原生的媒体缓存机制往往会过早清理临时媒体文件，导致多轮对话或异步任务中媒体丢失，Giftia 内置了一套独立的**持久化媒体缓存与哈希索引机制**：
 - 对话上下文中出现的媒体消息（图片、语音、视频）会被持久化缓存，并转换为唯一的 16 位哈希 ID 索引（如 `[图片:a1b2c3d4e5f67890]`）。
