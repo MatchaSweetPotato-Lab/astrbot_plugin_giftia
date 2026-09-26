@@ -300,7 +300,7 @@ def test_group_rules_are_injected_verbatim_into_both_prompts():
     status = Status()
     prompts = [
         build_decision_prompt(
-            "A", "", [], MessageData(user_id="A"), status, group_profile=rules
+            "A", "", [], [MessageData(user_id="A")], status, group_profile=rules
         ),
         build_reply_prompt([], [], status, group_profile=rules),
     ]

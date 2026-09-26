@@ -114,22 +114,23 @@ class ActionDispatcher:
 
         logs = []
         actor_user_id = str(event.get_sender_id() or "")
-        actor_name = event.get_sender_name() or ""
 
         for item in llm_result.task_board_actions:
             action = str(item.get("action") or "").strip().lower()
             if action == "create":
+                creator_user_id = item["user_id"]
                 ok, message, task = await self.plugin.task_board.create_task(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
-                    creator_user_id=actor_user_id,
-                    creator_nickname=actor_name,
+                    creator_user_id=creator_user_id,
+                    creator_nickname=llm_result.task_creator_names[creator_user_id],
                     content=item.get("content") or "",
                     expires_at=item.get("expires_at") or "",
                 )
                 task_id = task.task_id if task else ""
                 logs.append(
                     f"<task_board action='create' task_id={quoteattr(task_id)} "
+                    f"user_id={quoteattr(creator_user_id)} "
                     f"result={quoteattr('success' if ok else 'failed')} "
                     f"message={quoteattr(message)}/>"
                 )
@@ -670,6 +671,8 @@ class ActionDispatcher:
                     image_type=send_image_type,
                 )
             sent_index += 1
+            if not success:
+                raise RuntimeError("Platform failed to deliver the reply")
             if success and message_id:
                 iso_string = datetime.now().isoformat()
                 if item_type == "tts":
@@ -859,6 +862,7 @@ class ActionDispatcher:
                 sent_index += 1
             except Exception as e:
                 logger.error(f"{bot_name} 通用平台发送消息失败: {e}")
+                raise RuntimeError("Platform failed to deliver the reply") from e
 
     async def dispatch_actions(
         self,
@@ -894,6 +898,37 @@ class ActionDispatcher:
         ):
             self.plugin.tts_manager.preprocess_signatures(llm_result, bot_conf)
 
+        common_logs = []
+        # Validate both creation tools against identities visible in this reply.
+        # The routing event may belong to a different member of the message batch.
+        for field_name, tool_name in (
+            ("schedule_tasks", "schedule_task"),
+            ("task_board_actions", "task_board"),
+        ):
+            valid_requests = []
+            for item in getattr(llm_result, field_name):
+                if tool_name == "task_board" and item.get("action") != "create":
+                    valid_requests.append(item)
+                    continue
+                creator_user_id = str(item.get("user_id") or "").strip()
+                if creator_user_id and creator_user_id in llm_result.task_creator_names:
+                    item["user_id"] = creator_user_id
+                    valid_requests.append(item)
+                    continue
+                reason = (
+                    "创建失败：缺少创建者 user_id。"
+                    if not creator_user_id
+                    else "创建失败：user_id 不在本轮上下文中。"
+                )
+                log = (
+                    f"<{tool_name} action='create' user_id={quoteattr(creator_user_id)} "
+                    f"result='failed' reason={quoteattr(reason)} "
+                    f"content={quoteattr(item.get('content') or '')}/>"
+                )
+                common_logs.append(log)
+                llm_result.xml_tool_results.append({"name": tool_name, "results": log})
+            setattr(llm_result, field_name, valid_requests)
+
         task_board_logs = await self._dispatch_task_board_actions(
             event=event,
             bot_name=bot_name,
@@ -912,7 +947,7 @@ class ActionDispatcher:
             group_or_user_id=group_or_user_id,
             llm_result=llm_result,
         )
-        common_logs = task_board_logs + set_call_name_logs + set_status_logs
+        common_logs.extend(task_board_logs + set_call_name_logs + set_status_logs)
 
         for user_id, avatar_description in llm_result.set_avatars:
             user_id = user_id.strip()
@@ -1001,7 +1036,9 @@ class ActionDispatcher:
 
             # 8. 添加定时任务
             if llm_result.schedule_tasks:
-                for group_id, time_expr, remind_content in llm_result.schedule_tasks:
+                for item in llm_result.schedule_tasks:
+                    time_expr = item["time_expr"]
+                    creator_user_id = item["user_id"]
                     task_id = f"{bot_name}_{group_or_user_id}_{uuid.uuid4().hex[:6]}"
                     kwargs = {
                         "unified_msg_origin": event.unified_msg_origin,
@@ -1010,11 +1047,11 @@ class ActionDispatcher:
                         "nickname": nickname,
                         "self_id": event.get_self_id(),
                         "platform_name": event.get_platform_name(),
-                        "user_id": event.get_sender_id(),
-                        "user_name": event.get_sender_name(),
+                        "user_id": creator_user_id,
+                        "user_name": llm_result.task_creator_names[creator_user_id],
                         "group_id": event.get_group_id(),
                         "group_or_user_id": group_or_user_id,
-                        "remind_message": remind_content,
+                        "remind_message": item["content"],
                     }
                     err_msg = self.plugin.task_manager.add_job(
                         task_id,
@@ -1023,7 +1060,9 @@ class ActionDispatcher:
                         kwargs=kwargs,
                     )
                     success_logs.append(
-                        f"<schedule_task task_id={task_id} time_expr={time_expr} result={err_msg or 'success'}/>"
+                        f"<schedule_task task_id={quoteattr(task_id)} "
+                        f"user_id={quoteattr(creator_user_id)} "
+                        f"time_expr={quoteattr(time_expr)} result={quoteattr(err_msg or 'success')}/>"
                     )
 
             # 9. 删除定时任务

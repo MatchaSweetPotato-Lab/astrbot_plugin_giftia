@@ -1,12 +1,15 @@
 import json
 from datetime import datetime
+
 import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import (
-    MessageData,
     FORWARD_MEDIA_PATTERN,
     FORWARD_NESTED_PATTERN,
+    MessageData,
 )
+from .base import BaseRepository
+
 
 def _decode_json_list(raw) -> list:
     if not raw:
@@ -436,6 +439,28 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    async def update_processing_status(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_ids: list[str],
+        status: str,
+    ) -> None:
+        """Record scheduling state independently of the model's decision.
+
+        Args:
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            message_ids: Exact messages included in this state transition.
+            status: Pending, processing, handled, skipped, failed, or interrupted.
+        """
+        await self.conn.executemany(
+            "UPDATE chat_history SET processing_status = ? "
+            "WHERE bot_name = ? AND group_or_user_id = ? AND message_id = ?",
+            [(status, bot_name, group_or_user_id, mid) for mid in message_ids],
+        )
+        await self.conn.commit()
+
     async def update_message_decision(
         self,
         bot_name: str,
@@ -593,7 +618,13 @@ class ChatHistoryRepository(BaseRepository):
             group_or_user_id = session["group_or_user_id"]
 
             conds = []
-            params = [bot_name, group_or_user_id, bot_name, group_or_user_id, clean_keep]
+            params = [
+                bot_name,
+                group_or_user_id,
+                bot_name,
+                group_or_user_id,
+                clean_keep,
+            ]
 
             if clean_count > 0:
                 conds.append(
@@ -609,9 +640,7 @@ class ChatHistoryRepository(BaseRepository):
                 params.extend([bot_name, group_or_user_id, clean_count])
 
             if clean_days > 0:
-                conds.append(
-                    f"created_at < datetime('now', '-{clean_days} days')"
-                )
+                conds.append(f"created_at < datetime('now', '-{clean_days} days')")
 
             if not conds:
                 continue
@@ -634,5 +663,3 @@ class ChatHistoryRepository(BaseRepository):
 
         await self.conn.commit()
         return total_deleted
-
-

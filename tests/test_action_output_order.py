@@ -643,3 +643,14 @@ async def test_reminders_dispatch_tools_and_images_in_order(tool_runtime, platfo
     assert runtime.observed == ["image", "image tool tail", "after"]
     assert len(result.xml_tool_results) == 1
     assert plugin.replying_status["bot:100"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_platform_delivery_is_reported_to_batch_owner(runtime):
+    result = await runtime.parser.decode_llm_xml("<message>reply</message>", "100")
+    runtime.plugin.aiocqhttp.send_message.return_value = (False, None)
+    with pytest.raises(RuntimeError, match="deliver"):
+        await runtime.dispatcher.dispatch_actions(
+            runtime.event, "bot", "Bot", "100", result
+        )
+    runtime.plugin.data_cache.add_message.assert_not_awaited()

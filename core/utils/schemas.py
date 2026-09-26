@@ -289,8 +289,10 @@ class XmlLlmResult:
     xml_tool_results: list[dict] = field(default_factory=list)
     # 原生 function calling / tool loop 已调用的工具名
     native_tools_called: list[str] = field(default_factory=list)
-    # 定时任务，群号/用户ID，时间，内容
-    schedule_tasks: list[tuple[str, str, str]] = field(default_factory=list)
+    # Scheduled requests contain time_expr, content, and the creator's user_id.
+    schedule_tasks: list[dict[str, str]] = field(default_factory=list)
+    # Trusted identities supplied by the reply pipeline, never parsed from XML.
+    task_creator_names: dict[str, str] = field(default_factory=dict)
     # 删除定时任务，任务ID
     delete_schedule_tasks: list[str] = field(default_factory=list)
     # 获取全部定时任务，群号

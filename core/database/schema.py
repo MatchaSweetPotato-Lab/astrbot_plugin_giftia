@@ -52,6 +52,17 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             ):
                 logger.warning(f"Failed to add role column to chat_history: {e}")
         # 创建索引
+        async with conn.execute("PRAGMA table_info(chat_history)") as columns:
+            history_columns = {row[1] for row in await columns.fetchall()}
+        if "processing_status" not in history_columns:
+            await cursor.execute(
+                "ALTER TABLE chat_history ADD COLUMN processing_status TEXT DEFAULT 'history'"
+            )
+        # A restart must not silently turn an unfinished batch into a completed one.
+        await cursor.execute(
+            "UPDATE chat_history SET processing_status = 'interrupted' "
+            "WHERE processing_status IN ('pending', 'processing')"
+        )
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_group_bot ON chat_history (group_or_user_id, bot_name, created_at)"
         )
@@ -107,7 +118,11 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 updated_at DATETIME
             )
         """)
-        for col_def in ("is_captioned INTEGER DEFAULT 1", "duration REAL DEFAULT 0.0", "file_size INTEGER DEFAULT 0"):
+        for col_def in (
+            "is_captioned INTEGER DEFAULT 1",
+            "duration REAL DEFAULT 0.0",
+            "file_size INTEGER DEFAULT 0",
+        ):
             try:
                 await cursor.execute(f"ALTER TABLE media_caption ADD COLUMN {col_def}")
             except aiosqlite.OperationalError as e:
@@ -144,7 +159,10 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         try:
             await cursor.execute("ALTER TABLE bot_status ADD COLUMN custom_status TEXT")
         except aiosqlite.OperationalError as e:
-            if "duplicate" not in str(e).lower() and "already exists" not in str(e).lower():
+            if (
+                "duplicate" not in str(e).lower()
+                and "already exists" not in str(e).lower()
+            ):
                 logger.warning(f"Failed to migrate bot_status column: {e}")
         # 创建索引
         await cursor.execute(
@@ -190,9 +208,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                     "duplicate" not in str(e).lower()
                     and "already exists" not in str(e).lower()
                 ):
-                    logger.warning(
-                        f"Failed to migrate user_profiles column: {e}"
-                    )
+                    logger.warning(f"Failed to migrate user_profiles column: {e}")
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique ON user_profiles (user_id, group_or_user_id, bot_name)"
@@ -409,11 +425,13 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         # 检查关系数据回填的迁移是否已运行，避免每次启动都对全表进行重型更新与插入扫描
         await cursor.execute(
             "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
-            ("relations_migration_done",)
+            ("relations_migration_done",),
         )
         row = await cursor.fetchone()
         if not row:
-            logger.info("[Database] Running relations schema migration to user_profiles...")
+            logger.info(
+                "[Database] Running relations schema migration to user_profiles..."
+            )
             await cursor.execute("""
                 UPDATE user_profiles
                 SET
@@ -483,7 +501,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                     value=excluded.value,
                     updated_at=excluded.updated_at
                 """,
-                ("relations_migration_done", "1", update_time, update_time)
+                ("relations_migration_done", "1", update_time, update_time),
             )
             logger.info("[Database] Relations schema migration completed.")
 
@@ -553,14 +571,18 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_token_daily_date ON token_daily_stats (date)"
         )
-        
+
         # 数据库迁移：为已存在的表添加 call_count 字段
         try:
-            await cursor.execute("ALTER TABLE token_usage ADD COLUMN call_count INTEGER DEFAULT 1")
+            await cursor.execute(
+                "ALTER TABLE token_usage ADD COLUMN call_count INTEGER DEFAULT 1"
+            )
         except Exception:
             pass
         try:
-            await cursor.execute("ALTER TABLE token_daily_stats ADD COLUMN call_count INTEGER DEFAULT 0")
+            await cursor.execute(
+                "ALTER TABLE token_daily_stats ADD COLUMN call_count INTEGER DEFAULT 0"
+            )
         except Exception:
             pass
     # 提交

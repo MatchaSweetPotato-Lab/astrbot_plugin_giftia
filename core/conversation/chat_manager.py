@@ -3,6 +3,9 @@ import contextvars
 import json
 import time
 import uuid
+from collections import deque
+from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,7 +29,7 @@ from astrbot.core.utils.session_lock import session_lock_manager
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
 from ..utils.message_media import format_node_components
 from ..utils.notice_parse import NoticeParseResult
-from ..utils.schemas import XmlLlmResult
+from ..utils.schemas import MessageData, XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
 from .reply_pipeline import ReplyPipeline
@@ -96,14 +99,39 @@ def _patch_bot_for_message_id_capture(bot: Any) -> None:
         pass
 
 
+@dataclass
+class QueuedMessage:
+    """A parsed message with an admission choice evaluated exactly once."""
+
+    event: AstrMessageEvent
+    message: MessageData
+    force_reply: bool
+    arrived_at: float
+
+
+@dataclass
+class SessionState:
+    """One session's queue and worker; all mutations run on the event loop."""
+
+    pending: deque[QueuedMessage] = field(default_factory=deque)
+    current: list[QueuedMessage] = field(default_factory=list)
+    seen: deque[str] = field(default_factory=lambda: deque(maxlen=1024))
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    task: asyncio.Task | None = None
+    last_started: float = float("-inf")
+    last_arrival: float = 0
+    effects_started: bool = False
+
+
 class ChatManager:
     def __init__(self, plugin):
         self.plugin = plugin
         self.decision_engine = DecisionEngine(plugin)
         self.reply_pipeline = ReplyPipeline(plugin)
         self.action_dispatcher = ActionDispatcher(plugin)
+        self.sessions: dict[tuple[str, str], SessionState] = {}
         self._pending_reminders: dict[
-            tuple[str, str], tuple[list[str], asyncio.Task[None]]
+            tuple[str, str], tuple[list[tuple[str, str, str]], asyncio.Task[None]]
         ] = {}
 
     def _check_command_info(self, event: AstrMessageEvent) -> tuple[bool, bool]:
@@ -357,7 +385,6 @@ class ChatManager:
         if not bot_name:
             return
         bot_conf = self.plugin.bot_map.get(bot_name, {})
-        nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
         # Always exclude deletion and access-control commands from message storage.
@@ -411,7 +438,7 @@ class ChatManager:
                 should_defer = True
 
         # 解析用户消息并缓存多媒体
-        async with self.plugin.parse_locks[f"{bot_name}:{group_or_user_id}"]:
+        async with self.plugin.parse_locks[f"{bot_name}:{event.unified_msg_origin}"]:
             if not self.decision_engine.check_whitelists(event):
                 return
             (
@@ -422,172 +449,502 @@ class ChatManager:
                 event, bot_name, defer_caption=should_defer
             )
 
-        if is_command:
-            logger.debug(
-                f"{bot_name} command message detected, logged to database, skipping LLM reply"
-            )
-            return
-
-        # 检查是否为系统通知类事件，若是则统一在此处更新禁言状态，并跳过 LLM 回复（贴表情除外）
-        notice_result: NoticeParseResult | None = getattr(event, "_notice_result", None)
-        if notice_result is None:
-            raw_msg = getattr(getattr(event, "message_obj", None), "raw_message", None)
-            if (
-                raw_msg
-                and hasattr(self.plugin, "message_parser")
-                and hasattr(self.plugin.message_parser, "notice_parser")
-            ):
-                notice_result = (
-                    await self.plugin.message_parser.notice_parser.parse_notice(
-                        event, raw_msg, bot_name
-                    )
-                )
-                event._notice_result = notice_result
-
-        if notice_result and notice_result.is_notice:
-            # 禁言事件：更新缓存并根据条件触发告状
-            if notice_result.is_ban_event:
-                if notice_result.is_all_member_ban:
-                    if hasattr(self.plugin, "data_cache"):
-                        self.plugin.data_cache.set_bot_muted(
-                            bot_name, notice_result.group_id, -1
-                        )
-                        logger.info(
-                            f"[Giftia] 群 {notice_result.group_id} 开启全员禁言，Bot {bot_name} 进入静默状态"
-                        )
-                elif notice_result.is_target_self:
-                    if hasattr(self.plugin, "data_cache"):
-                        self.plugin.data_cache.set_bot_muted(
-                            bot_name, notice_result.group_id, notice_result.duration
-                        )
-                        logger.info(
-                            f"[Giftia] Bot {bot_name} 在群 {notice_result.group_id} 被禁言 {notice_result.duration} 秒，进入静默状态"
-                        )
-
-                if notice_result.is_all_member_ban or notice_result.is_target_self:
-                    asyncio.create_task(
-                        self.report_ban_to_stronghold(
-                            bot_name=bot_name,
-                            event=event,
-                            notice_result=notice_result,
-                        )
-                    )
-            # 解禁事件：更新缓存
-            elif notice_result.is_lift_ban_event:
-                if (
-                    notice_result.is_all_member_ban or notice_result.is_target_self
-                ) and hasattr(self.plugin, "data_cache"):
-                    self.plugin.data_cache.lift_bot_mute(
-                        bot_name, notice_result.group_id
-                    )
-                    logger.info(
-                        f"[Giftia] 群 {notice_result.group_id} 禁言已解除，Bot {bot_name} 恢复正常发言状态"
-                    )
-
-            if notice_result.role == "system":
+            if is_command:
                 logger.debug(
-                    f"{bot_name} 系统通知事件({notice_result.notice_type or notice_result.sub_type})已记录入库，跳过 LLM 自动回复"
+                    f"{bot_name} command message detected, logged to database, skipping LLM reply"
                 )
                 return
 
-        # 5. 调用决策引擎进行发言判断
-        (
-            should_reply,
-            relevant_memories,
-            pending_recall_memories,
-            meme_tags,
-        ) = await self.decision_engine.evaluate_decision(
-            event=event,
-            bot_name=bot_name,
-            nickname=nickname,
-            group_or_user_id=group_or_user_id,
-            current_message=current_message,
-        )
-
-        if not should_reply:
-            return
-
-        # 6. 进入 LLM 回复流水线
-        reply_key = f"{bot_name}:{group_or_user_id}"
-        async with session_lock_manager.acquire_lock(event.unified_msg_origin):
-            if not self.decision_engine.check_whitelists(event):
-                return
-            self.plugin.replying_status[reply_key] = (
-                self.plugin.replying_status.get(reply_key, 0) + 1
+            # 检查是否为系统通知类事件，若是则统一在此处更新禁言状态，并跳过 LLM 回复（贴表情除外）
+            notice_result: NoticeParseResult | None = getattr(
+                event, "_notice_result", None
             )
-            if pending_recall_memories is None:
-                pending_recall_memories = []
-
-            try:
-                has_sent_reply = False
-                async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
-                    event=event,
-                    bot_name=bot_name,
-                    nickname=nickname,
-                    group_or_user_id=group_or_user_id,
-                    current_message=current_message,
-                    relevant_memories=relevant_memories,
-                    pending_recall_memories=pending_recall_memories,
-                    meme_tags=meme_tags,
+            if notice_result is None:
+                raw_msg = getattr(
+                    getattr(event, "message_obj", None), "raw_message", None
+                )
+                if (
+                    raw_msg
+                    and hasattr(self.plugin, "message_parser")
+                    and hasattr(self.plugin.message_parser, "notice_parser")
                 ):
-                    if not self.decision_engine.check_whitelists(event):
-                        break
-                    if chunk:
-                        if isinstance(chunk, XmlLlmResult):
-                            # 派发具体写操作和消息发送
-                            await self.action_dispatcher.dispatch_actions(
-                                event=event,
+                    notice_result = (
+                        await self.plugin.message_parser.notice_parser.parse_notice(
+                            event, raw_msg, bot_name
+                        )
+                    )
+                    event._notice_result = notice_result
+
+            if notice_result and notice_result.is_notice:
+                # 禁言事件：更新缓存并根据条件触发告状
+                if notice_result.is_ban_event:
+                    if notice_result.is_all_member_ban:
+                        if hasattr(self.plugin, "data_cache"):
+                            self.plugin.data_cache.set_bot_muted(
+                                bot_name, notice_result.group_id, -1
+                            )
+                            logger.info(
+                                f"[Giftia] 群 {notice_result.group_id} 开启全员禁言，Bot {bot_name} 进入静默状态"
+                            )
+                    elif notice_result.is_target_self:
+                        if hasattr(self.plugin, "data_cache"):
+                            self.plugin.data_cache.set_bot_muted(
+                                bot_name, notice_result.group_id, notice_result.duration
+                            )
+                            logger.info(
+                                f"[Giftia] Bot {bot_name} 在群 {notice_result.group_id} 被禁言 {notice_result.duration} 秒，进入静默状态"
+                            )
+
+                    if notice_result.is_all_member_ban or notice_result.is_target_self:
+                        asyncio.create_task(
+                            self.report_ban_to_stronghold(
                                 bot_name=bot_name,
-                                nickname=nickname,
-                                group_or_user_id=group_or_user_id,
-                                llm_result=chunk,
+                                event=event,
+                                notice_result=notice_result,
                             )
-                            has_tts_reply = (
-                                bool(chunk.tts_segments)
-                                and hasattr(self.plugin, "tts_manager")
-                                and self.plugin.tts_manager.enabled(bot_conf)
-                            )
-                            if (
-                                chunk.msg_chains
-                                or has_tts_reply
-                                or chunk.repeat_message_ids
-                            ):
-                                has_sent_reply = True
-                    else:
-                        logger.error(f"{bot_name} 生成消息失败，收到空消息块")
-
-                if has_sent_reply:
-                    fmt_key = f"{bot_name}:{group_or_user_id}"
-                    active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
-                    decision_conf = bot_conf.get("decision_conf", {})
-                    window_size = decision_conf.get("reply_active_window", 10)
-                    self.plugin.active_reply_counters[fmt_key] = window_size
-
-                    trigger_msg_id = None
+                        )
+                # 解禁事件：更新缓存
+                elif notice_result.is_lift_ban_event:
                     if (
-                        active_counter == 0
-                        and "current_message" in locals()
-                        and current_message
-                    ):
-                        trigger_msg_id = current_message.message_id
+                        notice_result.is_all_member_ban or notice_result.is_target_self
+                    ) and hasattr(self.plugin, "data_cache"):
+                        self.plugin.data_cache.lift_bot_mute(
+                            bot_name, notice_result.group_id
+                        )
+                        logger.info(
+                            f"[Giftia] 群 {notice_result.group_id} 禁言已解除，Bot {bot_name} 恢复正常发言状态"
+                        )
 
-                    await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                if notice_result.role == "system":
+                    logger.debug(
+                        f"{bot_name} 系统通知事件({notice_result.notice_type or notice_result.sub_type})已记录入库，跳过 LLM 自动回复"
+                    )
+                    return
+
+            await self._enqueue_message(
+                event, bot_name, group_or_user_id, current_message
+            )
+
+    async def _enqueue_message(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        group_or_user_id: str,
+        message: MessageData,
+    ) -> None:
+        """Admit a ready message while the session's parse lock is held.
+
+        Args:
+            event: Incoming event, used for routing and policy checks.
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            message: Parsed and stored message.
+        """
+        if getattr(self.plugin, "_terminated", False):
+            return
+        key = (bot_name, event.unified_msg_origin)
+        state = self.sessions.setdefault(key, SessionState())
+        if message.message_id in state.seen:
+            return
+        busy = state.task is not None and not state.task.done()
+        trigger = self.decision_engine.get_trigger(
+            event,
+            bot_name,
+            group_or_user_id,
+            message,
+            continuation=busy
+            or self.plugin.replying_status.get(f"{bot_name}:{group_or_user_id}", 0) > 0,
+        )
+        if trigger is None:
+            return
+        await self.plugin.db.chat_history_repo.update_processing_status(
+            bot_name,
+            group_or_user_id,
+            [message.message_id],
+            "pending",
+        )
+        state.seen.append(message.message_id)
+        now = time.monotonic()
+        state.pending.append(QueuedMessage(event, message, trigger, now))
+        state.last_arrival = now
+        state.wake.set()
+        # The previous worker may have finished while the pending state was saved.
+        busy = state.task is not None and not state.task.done()
+        if not busy:
+            task = asyncio.create_task(
+                self._run_session(bot_name, group_or_user_id, state)
+            )
+            state.task = task
+            task_id = str(id(task))
+            self.plugin.running_tasks[task_id] = task
+
+            def completed(done: asyncio.Task) -> None:
+                self.plugin.running_tasks.pop(task_id, None)
+                try:
+                    done.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.error("[Giftia] Session worker failed", exc_info=True)
+
+            task.add_done_callback(completed)
+
+    async def _set_batch_status(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        batch: list[QueuedMessage],
+        status: str,
+    ) -> None:
+        """Persist the exact batch's state without touching later arrivals.
+
+        Args:
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            batch: Messages belonging to this transition.
+            status: Scheduling outcome, separate from reply_decision.
+        """
+        if batch:
+            await self.plugin.db.chat_history_repo.update_processing_status(
+                bot_name,
+                group_or_user_id,
+                [item.message.message_id for item in batch],
+                status,
+            )
+
+    async def _run_session(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        state: SessionState,
+    ) -> None:
+        """Drain batches serially, retaining arrivals during model calls and cooldowns.
+
+        Args:
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            state: Queue and timing state owned by this worker.
+        """
+        debounce = max(0, getattr(self.plugin, "session_debounce_time", 0))
+        max_wait = max(0, getattr(self.plugin, "session_max_debounce_time", 30))
+        interval = max(0, getattr(self.plugin, "decision_interval", 0))
+        batch_limit = max(1, getattr(self.plugin, "batch_max_messages", 50))
+        try:
+            while state.pending and not getattr(self.plugin, "_terminated", False):
+                # Only one timer exists per session. New messages extend the quiet
+                # period, but neither the maximum wait nor the cooldown deadline.
+                state.wake.clear()
+                ready_at = max(
+                    min(
+                        state.last_arrival + debounce,
+                        state.pending[0].arrived_at + max_wait,
+                    ),
+                    state.last_started + interval,
+                )
+                remaining = ready_at - time.monotonic()
+                if remaining > 0:
+                    try:
+                        await asyncio.wait_for(state.wake.wait(), remaining)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
+                event = state.pending[0].event
+                parse_key = f"{bot_name}:{event.unified_msg_origin}"
+                # The shared AstrBot lock also serializes reminders and media callbacks.
+                async with session_lock_manager.acquire_lock(event.unified_msg_origin):
+                    state.effects_started = False
+                    try:
+                        async with self.plugin.parse_locks[parse_key]:
+                            recent = await self.plugin.data_cache.get_recent_message(
+                                bot_name,
+                                group_or_user_id,
+                                getattr(self.plugin, "msg_number", 300),
+                            )
+                            state.current = [
+                                state.pending.popleft()
+                                for _ in range(min(batch_limit, len(state.pending)))
+                            ]
+                            later_ids = {
+                                item.message.message_id for item in state.pending
+                            }
+                            recent = deepcopy(
+                                [
+                                    msg
+                                    for msg in recent
+                                    if msg.message_id not in later_ids
+                                ]
+                            )
+                        blocked = [
+                            item
+                            for item in state.current
+                            if not self.decision_engine.check_whitelists(item.event)
+                            or item.message.is_recalled
+                        ]
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, blocked, "skipped"
+                        )
+                        state.current = [
+                            item for item in state.current if item not in blocked
+                        ]
+                        if not state.current:
+                            continue
+                        event = next(
+                            (item.event for item in state.current if item.force_reply),
+                            state.current[-1].event,
+                        )
+                        group_id = event.get_group_id()
+                        if group_id and self.plugin.data_cache.is_bot_muted(
+                            bot_name, str(group_id)
+                        ):
+                            await self._set_batch_status(
+                                bot_name, group_or_user_id, state.current, "skipped"
+                            )
+                            continue
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, state.current, "processing"
+                        )
+                        state.last_started = time.monotonic()
+                        batch_ids = {
+                            item.message.message_id
+                            for item in [*state.current, *blocked]
+                        }
+                        history = [
+                            msg for msg in recent if msg.message_id not in batch_ids
+                        ][-12:]
+                        (
+                            should_reply,
+                            memories,
+                            recall_records,
+                            meme_tags,
+                        ) = await self.decision_engine.evaluate_decision(
+                            event=event,
+                            bot_name=bot_name,
+                            nickname=self.plugin.bot_map[bot_name].get(
+                                "nickname", bot_name
+                            ),
+                            group_or_user_id=group_or_user_id,
+                            pending_messages=[item.message for item in state.current],
+                            recent_messages=history,
+                            force_reply=any(item.force_reply for item in state.current),
+                        )
+                        if not should_reply:
+                            await self._set_batch_status(
+                                bot_name, group_or_user_id, state.current, "handled"
+                            )
+                            continue
+
+                        # Freeze the reply after the decision and after acquiring the
+                        # parse lock. Messages still being parsed cannot be consumed.
+                        async with self.plugin.parse_locks[parse_key]:
+                            recent = await self.plugin.data_cache.get_recent_message(
+                                bot_name,
+                                group_or_user_id,
+                                getattr(self.plugin, "msg_number", 300),
+                            )
+                            absorbed = [
+                                state.pending.popleft()
+                                for _ in range(
+                                    min(
+                                        batch_limit - len(state.current),
+                                        len(state.pending),
+                                    )
+                                )
+                            ]
+                            state.current.extend(absorbed)
+                            later_ids = {
+                                item.message.message_id for item in state.pending
+                            }
+                            recent = deepcopy(
+                                [
+                                    msg
+                                    for msg in recent
+                                    if msg.message_id not in later_ids
+                                ]
+                            )
+                        blocked = [
+                            item
+                            for item in state.current
+                            if not self.decision_engine.check_whitelists(item.event)
+                            or item.message.is_recalled
+                        ]
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, blocked, "skipped"
+                        )
+                        state.current = [
+                            item for item in state.current if item not in blocked
+                        ]
+                        if not state.current:
+                            continue
+                        event = next(
+                            (item.event for item in state.current if item.force_reply),
+                            state.current[-1].event,
+                        )
+                        blocked_ids = {item.message.message_id for item in blocked}
+                        recent = [
+                            msg for msg in recent if msg.message_id not in blocked_ids
+                        ]
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, state.current, "processing"
+                        )
+                        for item in absorbed:
+                            if item in state.current:
+                                await self.plugin.db.update_message_decision(
+                                    bot_name,
+                                    group_or_user_id,
+                                    item.message.message_id,
+                                    4,
+                                    2,
+                                )
+                        completed = await self._reply_batch(
+                            event,
+                            bot_name,
+                            group_or_user_id,
+                            state,
+                            recent,
+                            memories,
+                            recall_records,
+                            meme_tags,
+                        )
+                        await self._set_batch_status(
+                            bot_name,
+                            group_or_user_id,
+                            state.current,
+                            "handled" if completed else "skipped",
+                        )
+                    except asyncio.CancelledError:
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, state.current, "interrupted"
+                        )
+                        raise
+                    except Exception:
+                        # Provider calls already perform bounded retries. Replaying
+                        # a whole reply could repeat native tools or partial sends.
+                        if not state.current:
+                            state.current = [
+                                state.pending.popleft()
+                                for _ in range(min(batch_limit, len(state.pending)))
+                            ]
+                        await self._set_batch_status(
+                            bot_name,
+                            group_or_user_id,
+                            state.current,
+                            "partial_failed" if state.effects_started else "failed",
+                        )
+                        logger.error(
+                            "[Giftia] Batch failed for %s:%s",
+                            bot_name,
+                            group_or_user_id,
+                            exc_info=True,
+                        )
+                    finally:
+                        state.current = []
+        finally:
+            unfinished = [*state.current, *state.pending]
+            state.current = []
+            state.pending.clear()
+            await self._set_batch_status(
+                bot_name, group_or_user_id, unfinished, "interrupted"
+            )
+
+    async def _reply_batch(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        group_or_user_id: str,
+        state: SessionState,
+        recent_messages: list[MessageData],
+        relevant_memories: list[str] | None,
+        pending_recall_memories: list[dict] | None,
+        meme_tags: str | None,
+    ) -> bool:
+        """Generate and dispatch one frozen batch under the shared session lock.
+
+        Args:
+            event: Routing event selected from the batch.
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            state: Current batch and side-effect tracking.
+            recent_messages: Frozen history at reply start.
+            relevant_memories: Decision-selected memory texts.
+            pending_recall_memories: Memory records to commit on completion.
+            meme_tags: Decision-selected sticker search tags.
+
+        Returns:
+            Whether the reply finished normally, including intentional silence.
+        """
+        bot_conf = self.plugin.bot_map[bot_name]
+        nickname = bot_conf.get("nickname", bot_name)
+        reply_key = f"{bot_name}:{group_or_user_id}"
+        self.plugin.replying_status[reply_key] = (
+            self.plugin.replying_status.get(reply_key, 0) + 1
+        )
+        pending_recall_memories = pending_recall_memories or []
+        try:
+            has_sent_reply = False
+            async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
+                event=event,
+                bot_name=bot_name,
+                nickname=nickname,
+                group_or_user_id=group_or_user_id,
+                reply_messages=deepcopy([item.message for item in state.current]),
+                recent_messages=recent_messages,
+                relevant_memories=relevant_memories,
+                pending_recall_memories=pending_recall_memories,
+                meme_tags=meme_tags,
+            ):
+                if not all(
+                    self.decision_engine.check_whitelists(item.event)
+                    for item in state.current
+                ):
+                    return False
+                if event.get_group_id() and self.plugin.data_cache.is_bot_muted(
+                    bot_name, str(event.get_group_id())
+                ):
+                    return False
+                if isinstance(chunk, XmlLlmResult):
+                    state.effects_started = True
+                    await self.action_dispatcher.dispatch_actions(
+                        event=event,
                         bot_name=bot_name,
+                        nickname=nickname,
                         group_or_user_id=group_or_user_id,
-                        trigger_msg_id=trigger_msg_id,
+                        llm_result=chunk,
                     )
-                    logger.info(
-                        f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
+                    has_tts_reply = (
+                        bool(chunk.tts_segments)
+                        and hasattr(self.plugin, "tts_manager")
+                        and self.plugin.tts_manager.enabled(bot_conf)
                     )
-                self.reply_pipeline.commit_pending_session_recalled_memories(
+                    has_sent_reply = has_sent_reply or bool(
+                        chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids
+                    )
+            if has_sent_reply:
+                # Capture inactivity before refreshing the window. Passing a trigger
+                # advances the memory cursor and would discard active conversation.
+                trigger_msg_id = (
+                    state.current[0].message.message_id
+                    if self.plugin.active_reply_counters.get(reply_key, 0) == 0
+                    else None
+                )
+                self.plugin.active_reply_counters[reply_key] = bot_conf.get(
+                    "decision_conf", {}
+                ).get("reply_active_window", 10)
+                await self.plugin.passive_memory_manager.mark_silence_summary_armed(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
-                    pending_recall_memories=pending_recall_memories,
+                    trigger_msg_id=trigger_msg_id,
                 )
-            finally:
-                self.plugin.replying_status[reply_key] = max(
-                    0, self.plugin.replying_status.get(reply_key, 0) - 1
-                )
+            self.reply_pipeline.commit_pending_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                pending_recall_memories=pending_recall_memories,
+            )
+            return True
+        finally:
+            self.plugin.replying_status[reply_key] = max(
+                0, self.plugin.replying_status.get(reply_key, 0) - 1
+            )
 
     def get_platform_adapter(
         self, adapter_id: str
@@ -674,7 +1031,7 @@ class ChatManager:
             remind_message: Content of this individual reminder.
         """
         batch_key = (bot_name, unified_msg_origin)
-        reminder = f"{user_name}({user_id}): {remind_message}"
+        reminder = (str(user_id), user_name, remind_message)
         batch = self._pending_reminders.get(batch_key)
         if batch is None:
             reminders = [reminder]
@@ -720,7 +1077,7 @@ class ChatManager:
         user_name: str,
         group_id: str,
         group_or_user_id: str,
-        reminders: list[str],
+        reminders: list[tuple[str, str, str]],
     ):
         """Seal a one-second collection window and dispatch its reminders.
 
@@ -735,19 +1092,28 @@ class ChatManager:
             user_name: Creator display name from the first reminder.
             group_id: Group identifier, or an empty string for private chats.
             group_or_user_id: Conversation identifier used by the message cache.
-            reminders: Reminder contents, each prefixed with its own creator.
+            reminders: Creator ID, creator name, and content of each reminder.
         """
         await asyncio.sleep(1)
         # Close collection before waiting for the session lock or the LLM.
         self._pending_reminders.pop((bot_name, unified_msg_origin))
+        task_creator_names = {
+            creator_id: creator_name or creator_id
+            for creator_id, creator_name, _ in reminders
+            if creator_id
+        }
+        reminder_texts = [
+            f"{creator_name}({creator_id}): {content}"
+            for creator_id, creator_name, content in reminders
+        ]
         if len(reminders) == 1:
-            remind_message = f"[定时任务唤醒] {reminders[0]}"
+            remind_message = f"[定时任务唤醒] {reminder_texts[0]}"
         else:
             remind_message = (
                 f"[定时任务批量唤醒] 请完成以下 {len(reminders)} 个任务:\n"
                 + "\n".join(
                     f"{index}. {reminder}"
-                    for index, reminder in enumerate(reminders, start=1)
+                    for index, reminder in enumerate(reminder_texts, start=1)
                 )
             )
             logger.info(
@@ -818,6 +1184,7 @@ class ChatManager:
                     group_or_user_id=group_or_user_id,
                     remind_message=remind_message,
                     pending_recall_memories=pending_recall_memories,
+                    task_creator_names=task_creator_names,
                 ):
                     if not self.decision_engine.is_session_allowed(
                         bot_name, group_or_user_id, is_private=not bool(group_id)

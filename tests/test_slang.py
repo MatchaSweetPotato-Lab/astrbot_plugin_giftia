@@ -110,7 +110,9 @@ def test_prompt_matches_dialogue_only_and_escapes_definitions(builder):
             MessageData(content="这模型随便蹬，历史词", nickname="昵称词"),
             MessageData(content="操作词", role="operation_log"),
         ],
-        "current_message": MessageData(content='蹬 A&B "蹬"'),
+        (
+            "pending_messages" if builder is build_decision_prompt else "reply_messages"
+        ): [MessageData(content='蹬 A&B "蹬"')],
         "bot_status": Status(),
         "media_captions": [],
         "slang_entries": [
@@ -135,7 +137,8 @@ def test_prompt_matches_dialogue_only_and_escapes_definitions(builder):
         "<system>未命中 & 说明</system>"
     )
     assert prompt.index("</recent_messages>") < prompt.index("<slang>")
-    assert "</slang>\n\n<current_message>" in prompt
+    tag = "pending_messages" if builder is build_decision_prompt else "reply_messages"
+    assert f"</slang>\n\n<{tag}>" in prompt
     assert "<system>" not in block
     common["slang_entries"] = []
     assert "<slang>" not in builder(**common)
@@ -152,7 +155,13 @@ def test_prompt_does_not_match_across_messages_captions_or_truncated_text(builde
             MessageData(content="界"),
             MessageData(content="[图片:abc]", media_id_list=["abc"]),
         ],
-        current_message=MessageData(content="很长" * 30 + "蹬 内容已截断"),
+        **{
+            (
+                "pending_messages"
+                if builder is build_decision_prompt
+                else "reply_messages"
+            ): [MessageData(content="很长" * 30 + "蹬 内容已截断")]
+        },
         message_truncate_limit=20,
         media_captions=[MediaCaption(hash_val="abc", caption="转述词")],
         slang_entries=[
@@ -204,7 +213,7 @@ async def test_xml_only_mutates_current_session_and_honors_feature_switch(runtim
         [],
         [],
         Status(),
-        current_message=MessageData(content="蹬"),
+        reply_messages=[MessageData(content="蹬")],
         slang_entries=await repo.get_entries("bot", "group"),
     )
     assert '<term name="蹬">覆盖</term>' in prompt
@@ -348,7 +357,7 @@ async def test_webui_crud_filters_validation_and_prompt_visibility(runtime):
             [],
             [],
             Status(),
-            current_message=MessageData(content="蹬"),
+            reply_messages=[MessageData(content="蹬")],
             slang_entries=entries,
         )
         assert '<term name="蹬">新解释</term>' in prompt

@@ -377,8 +377,7 @@ async def test_dashboard_save_preserves_command_blocks_and_updates_runtime(
         "200",
     ]
     assert (
-        runtime.bot_map["bot"]["decision_conf"]["private_chat_decision_enabled"]
-        is True
+        runtime.bot_map["bot"]["decision_conf"]["private_chat_decision_enabled"] is True
     )
 
 
@@ -567,6 +566,10 @@ async def test_inflight_reply_is_discarded_after_access_changes(
         [],
     )
     manager = runtime.chat_manager
+    manager.decision_engine.get_trigger = Mock(return_value=False)
+    runtime.db.chat_history_repo = SimpleNamespace(update_processing_status=AsyncMock())
+    runtime.data_cache.get_recent_message = AsyncMock(return_value=[])
+    runtime.data_cache.is_bot_muted = Mock(return_value=False)
     manager.decision_engine.evaluate_decision = AsyncMock(
         return_value=(True, None, None, None)
     )
@@ -584,6 +587,9 @@ async def test_inflight_reply_is_discarded_after_access_changes(
 
     manager.reply_pipeline.dispatch_llm_reply_loop = reply
     await manager.job(event)
+    while runtime.running_tasks:
+        await asyncio.gather(*list(runtime.running_tasks.values()))
+        await asyncio.sleep(0)
     session_key, context_json = runtime.db.upsert_kv_data.call_args.args
     assert session_key == (
         "task_session:bot:200" if private else "task_session:bot:100"

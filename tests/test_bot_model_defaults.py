@@ -1,6 +1,4 @@
-import asyncio
 import json
-from collections import defaultdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -45,14 +43,8 @@ def test_model_switches_are_removed_on_load_and_save(tmp_path, legacy_enabled):
 def runtime():
     plugin = SimpleNamespace(
         bot_map={"bot": {"decision_conf": {"provider_ids": ["decision"]}}},
-        user_debounce_time=0,
-        user_throttle_time=0,
-        group_throttle_time=0,
         active_reply_counters={},
         replying_status={},
-        user_locks=defaultdict(asyncio.Lock),
-        group_locks=defaultdict(asyncio.Lock),
-        concurrent_strategy="stall",
         tools_config={},
         get_caption_config=lambda bot: {},
         db=SimpleNamespace(
@@ -130,10 +122,20 @@ async def test_group_decisions_and_direct_reply_policies(
     runtime.message.group_or_user_id = session
     plugin.active_reply_counters[f"bot:{session}"] = active
 
+    trigger = runtime.engine.get_trigger(event, "bot", session, runtime.message)
+    if expected_decision is None:
+        assert trigger is None
+        return
+    assert trigger == (expected_decision == 3)
     result = await runtime.engine.evaluate_decision(
-        event, "bot", "Bot", session, runtime.message
+        event,
+        "bot",
+        "Bot",
+        session,
+        [runtime.message],
+        [],
+        force_reply=trigger,
     )
-
     assert result == (expected_decision == 3, None, None, None)
     assert plugin.call_llm.call_llm_decision.await_count == (expected_decision == 0)
     if expected_decision is None:
@@ -146,3 +148,32 @@ async def test_group_decisions_and_direct_reply_policies(
             reply_decision=expected_decision,
             use_rag=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_continuation_does_not_repeat_idle_probability(runtime, monkeypatch):
+    runtime.plugin.bot_map["bot"]["decision_conf"]["proactive_probability"] = 50
+    draw = Mock(return_value=100)
+    monkeypatch.setattr("core.conversation.decision_engine.random.randint", draw)
+    assert (
+        runtime.engine.get_trigger(runtime.event, "bot", "100", runtime.message) is None
+    )
+    draw.assert_called_once()
+    draw.reset_mock()
+    assert (
+        runtime.engine.get_trigger(
+            runtime.event, "bot", "100", runtime.message, continuation=True
+        )
+        is False
+    )
+    draw.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_decision_is_not_recorded_as_no_reply(runtime):
+    runtime.plugin.call_llm.call_llm_decision.return_value = None
+    with pytest.raises(RuntimeError, match="retries"):
+        await runtime.engine.evaluate_decision(
+            runtime.event, "bot", "Bot", "100", [runtime.message], []
+        )
+    runtime.plugin.db.update_message_decision.assert_not_awaited()

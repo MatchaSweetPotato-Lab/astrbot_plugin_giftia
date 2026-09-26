@@ -148,9 +148,10 @@
                             <label>接话决策</label>
                             <select id="history-decision">
                                 <option value="">全部</option>
-                                <option value="1">决策通过(已回复)</option>
+                                <option value="1">决策通过</option>
                                 <option value="0">决策拒绝(忽略)</option>
                                 <option value="3">强制/唤醒直接回复</option>
+                                <option value="4">并入本轮回复</option>
                                 <option value="2">未审查</option>
                             </select>
                         </div>
@@ -1549,7 +1550,7 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group" style="flex: 1;">
-                            <label>主动接话分析窗口 (条) <span class="info-tooltip" data-tooltip="触发回复或激活后，持续对后续群聊消息进行意图分析的条数"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                            <label>主动接话分析窗口 (轮) <span class="info-tooltip" data-tooltip="触发回复或激活后，允许唤醒后续消息批次的决策轮数；当前处理期间积累的消息会继续处理"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                             <input type="number" id="bot-form-dec-window" min="0" value="10">
                         </div>
                         <div class="form-group" style="flex: 1;">
