@@ -286,7 +286,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.bot_map = {"Giftia": {"nickname": "小吉", "name": "Giftia"}}
         self.plugin.active_reply_counters = {}
         self.plugin.replying_status = {}
-        self.plugin.parse_locks = {"Giftia:10001": asyncio.Lock()}
+        self.plugin.parse_locks = {"Giftia:adapter_1:GroupMessage:10001": asyncio.Lock()}
         self.plugin.data_cache.add_message = AsyncMock()
         self.plugin.data_cache.get_bot_status = AsyncMock()
         self.plugin.data_cache.update_bot_custom_status = AsyncMock()

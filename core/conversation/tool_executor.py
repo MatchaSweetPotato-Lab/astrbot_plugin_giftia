@@ -47,6 +47,16 @@ class ToolExecutor:
                     other_data.append("# 查询到的定时任务\n这个群没有设置定时任务")
                 else:
                     other_data.append("# 查询到的定时任务\n" + "\n".join(tasks))
+                if str(group_id) == str(group_or_user_id):
+                    # Preserve verified ownership when replacing a queried task.
+                    for task in self.plugin.task_manager.get_session_jobs_data(
+                        bot_name, group_or_user_id
+                    ):
+                        creator_id = str(task.get("user_id") or "")
+                        if creator_id:
+                            llm_result.task_creator_names.setdefault(
+                                creator_id, task.get("user_name") or creator_id
+                            )
 
         # 2. 处理 RAG 检索
         if llm_result.search_memories and self.plugin.embedding_conf.get(

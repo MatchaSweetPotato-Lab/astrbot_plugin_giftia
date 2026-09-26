@@ -55,7 +55,7 @@ class ChatHistoryApi:
             # Query data
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, nickname, user_id, message_id,
-                       content, media_ids, role, reply_decision, use_rag, is_recalled, created_at
+                       content, media_ids, role, reply_decision, use_rag, is_recalled, created_at, processing_status
                 FROM chat_history
                 {where_clause}
                 ORDER BY created_at DESC
@@ -80,6 +80,7 @@ class ChatHistoryApi:
                             else [],
                             "role": r["role"],
                             "reply_decision": r["reply_decision"],
+                            "processing_status": r["processing_status"],
                             "use_rag": r["use_rag"],
                             "is_recalled": r["is_recalled"],
                             "created_at": r["created_at"],
@@ -203,7 +204,9 @@ class ChatHistoryApi:
                 f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}"
             )
 
-            return json_response({"status": "success", "message": "清空当前会话消息成功"})
+            return json_response(
+                {"status": "success", "message": "清空当前会话消息成功"}
+            )
         except Exception as e:
             logger.error(f"[Giftia API] delete_chat_history error: {e}")
             return error_response(f"清空当前会话消息失败: {str(e)}")
@@ -234,7 +237,9 @@ class ChatHistoryApi:
         """获取聊天记录自动清理配置。"""
         try:
             raw_cfg = await self.giftia.db.get_kv_data("auto_clean_chat_history_config")
-            cfg = self.giftia.tools_func.normalize_auto_clean_chat_history_config(raw_cfg)
+            cfg = self.giftia.tools_func.normalize_auto_clean_chat_history_config(
+                raw_cfg
+            )
             return json_response({"status": "success", "config": cfg})
         except Exception as e:
             logger.error(f"[Giftia API] get_auto_clean_chat_history_config error: {e}")
@@ -248,7 +253,13 @@ class ChatHistoryApi:
             await self.giftia.db.upsert_kv_data(
                 "auto_clean_chat_history_config", json.dumps(cfg)
             )
-            return json_response({"status": "success", "config": cfg, "message": "已保存聊天记录自动清理配置"})
+            return json_response(
+                {
+                    "status": "success",
+                    "config": cfg,
+                    "message": "已保存聊天记录自动清理配置",
+                }
+            )
         except Exception as e:
             logger.error(f"[Giftia API] set_auto_clean_chat_history_config error: {e}")
             return error_response(f"保存聊天记录自动清理配置失败: {str(e)}")

@@ -82,7 +82,6 @@
             }
         }
     },
-
     "sticker_config": {
         "description": "表情包配置",
         "type": "object",
@@ -129,7 +128,10 @@
             "render_mode": {
                 "description": "渲染模式",
                 "type": "string",
-                "options": ["文本响应", "图片响应"],
+                "options": [
+                    "文本响应",
+                    "图片响应"
+                ],
                 "default": "文本响应",
                 "hint": "查看状态和画像指令的响应形式。图片响应使用 AstrBot t2i；可在插件管理页的报告模板页签分别编辑 HTML 模板，渲染失败时回退为文本。"
             }
@@ -216,49 +218,33 @@
         }
     },
     "concurrent_config": {
-        "description": "并发配置",
+        "description": "会话批处理",
         "type": "object",
-        "hint": "",
+        "hint": "每个会话串行处理消息批次；冷却期间积累消息，到期自动处理。保留原配置存储键以沿用已有时间设置。",
         "items": {
-            "concurrent_strategy": {
-                "description": "并发策略",
-                "type": "string",
-                "options": [
-                    "stall",
-                    "discard"
-                ],
-                "default": "discard",
-                "hint": "stall：挂起超过限制数量的后续消息。discard：丢弃超过限制数量的后续消息。仅影响前置决策和正式回复，不影响图片等媒体转述，也不影响消息记录。"
-            },
-            "concurrent_limit": {
-                "description": "并发限制",
-                "type": "int",
-                "default": 2,
-                "hint": "并发限制，超过并发限制将根据策略处理后续消息。节流冷却完后，AI可能还未完成所有回复，可以通过此项防止任务堆积。"
-            },
-            "user_throttle_time": {
-                "description": "用户节流时间",
-                "type": "int",
-                "default": 10,
-                "hint": "开始决策处理后的冷却时间"
-            },
             "group_throttle_time": {
-                "description": "群组节流时间",
+                "description": "会话决策最小间隔",
                 "type": "int",
                 "default": 5,
-                "hint": "开始决策处理后的冷却时间"
+                "hint": "同一会话两次决策开始时间的最小间隔（秒），适用于群聊和私聊。期间消息合并保留，不丢弃。"
             },
             "user_debounce_time": {
-                "description": "用户防抖",
+                "description": "会话消息防抖",
                 "type": "int",
                 "default": 3,
-                "hint": "用户防抖时间（秒）"
+                "hint": "会话内连续消息的合并等待时间（秒），跨用户一起聚合。0 表示不等待。"
             },
             "user_max_debounce_time": {
-                "description": "用户防抖时间上限",
+                "description": "会话最大合并等待",
                 "type": "int",
                 "default": 30,
-                "hint": "用户防抖时间上限（秒），超过这个时间直接开始处理"
+                "hint": "从首条待处理消息准备完成起计算的最大防抖等待（秒）。不缩短决策冷却，也不打断正在执行的回复。"
+            },
+            "batch_max_messages": {
+                "description": "每批待处理消息上限",
+                "type": "int",
+                "default": 50,
+                "hint": "每轮决策或回复最多处理多少条新消息。超出部分保留到后续批次，不受历史消息条数限制；最小为 1。"
             }
         }
     },

@@ -496,11 +496,11 @@ class XmlParse:
                     text = child.get_text(strip=True)
                     if task_time and text:
                         result.schedule_tasks.append(
-                            (
-                                group_or_user_id,
-                                task_time,
-                                text,
-                            )
+                            {
+                                "time_expr": task_time,
+                                "content": text,
+                                "user_id": self._attr_str(child, "user_id", ""),
+                            }
                         )
                     else:
                         logger.error(
@@ -531,6 +531,7 @@ class XmlParse:
                                 "action": "create",
                                 "content": text,
                                 "expires_at": expires_at,
+                                "user_id": self._attr_str(child, "user_id", ""),
                             }
                         )
                     elif action in ("complete", "cancel") and task_id:

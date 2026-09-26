@@ -216,7 +216,9 @@ next_run_time: {next_run}"""
             task_id_prefix += "_"
         jobs = self.scheduler.get_jobs()
         return [
-            f"任务ID：{job.id} | 任务名称：{job.name} | 任务内容：{job.kwargs.get('remind_message', '')}"
+            f"任务ID：{job.id} | 任务名称：{job.name} | "
+            f"创建者：{job.kwargs.get('user_name', '')}({job.kwargs.get('user_id', '')}) | "
+            f"任务内容：{job.kwargs.get('remind_message', '')}"
             for job in jobs
             if str(job.id).startswith(task_id_prefix)
         ]

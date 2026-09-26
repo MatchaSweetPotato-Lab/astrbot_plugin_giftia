@@ -76,26 +76,16 @@ class Giftia(Star):
         self.msg_number = msg_history.get("msg_number", 300)
         self.block_command_messages = msg_history.get("block_command_messages", False)
 
-        # 并发策略
-        self.concurrent_config = self.conf.get("concurrent_config", {})
-        self.concurrent_strategy = self.concurrent_config.get(
-            "concurrent_strategy", "discard"
+        # Retain the persisted section and timing keys when upgrading existing installs.
+        session_config = self.conf.get("concurrent_config", {})
+        self.decision_interval = max(0, session_config.get("group_throttle_time", 5))
+        self.session_debounce_time = max(0, session_config.get("user_debounce_time", 3))
+        self.session_max_debounce_time = max(
+            0, session_config.get("user_max_debounce_time", 30)
         )
-        self.concurrent_limit = self.concurrent_config.get("concurrent_limit", 2)
-        # 节流配置
-        self.user_throttle_time = self.concurrent_config.get("user_throttle_time", 10)
-        self.group_throttle_time = self.concurrent_config.get("group_throttle_time", 5)
-        self.throttle_map: dict[str, float] = {}
-        # 接话分析窗口计数器 bot_name:group_or_user_id -> remaining_messages
+        self.batch_max_messages = max(1, session_config.get("batch_max_messages", 50))
+        # Analysis windows are consumed once per decision batch.
         self.active_reply_counters: dict[str, int] = {}
-        # 防抖字典
-        self.user_debounce_time = self.concurrent_config.get("user_debounce_time", 3)
-        self.user_max_debounce_time = self.concurrent_config.get(
-            "user_max_debounce_time", 12
-        )
-        self.debounce_map: dict[str, float] = {}
-        self.debounce_start_map: dict[str, float] = {}
-        self.debounce_at_map: dict[str, bool] = {}
         # 表情包配置
         self.sticker_config = self.conf.get("sticker_config", {})
         self.use_meme_manager = self.sticker_config.get("use_meme_manager", False)
@@ -135,10 +125,6 @@ class Giftia(Star):
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
-        # 并发锁
-        self.group_locks = defaultdict(lambda: asyncio.Semaphore(self.concurrent_limit))
-        # 用户并发锁
-        self.user_locks = defaultdict(asyncio.Lock)
         # 消息解析锁
         self.parse_locks = defaultdict(asyncio.Lock)
         # 表情包并发锁
@@ -873,6 +859,17 @@ class Giftia(Star):
                 task.cancel()
         await asyncio.gather(*self.running_tasks.values(), return_exceptions=True)
         self.running_tasks.clear()
+        # Workers cancelled before their first execution cannot run their finally block.
+        if hasattr(self, "chat_manager"):
+            for (bot_name, _), state in self.chat_manager.sessions.items():
+                unfinished = [*state.current, *state.pending]
+                if unfinished:
+                    event = unfinished[0].event
+                    session_id = event.get_group_id() or event.get_sender_id()
+                    await self.chat_manager._set_batch_status(
+                        bot_name, session_id, unfinished, "interrupted"
+                    )
+            self.chat_manager.sessions.clear()
 
         await self.http_manager.close_session()
         await self.db.close()

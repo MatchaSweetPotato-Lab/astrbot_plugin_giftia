@@ -1,5 +1,3 @@
-import re
-
 from ..tts.constants import (
     LANGUAGE_NAMES,
     MINIMAX_EMOTIONS,
@@ -100,6 +98,7 @@ def build_xml_instructions(
     # 1. 基础消息格式与输出规范 (永远启用)
     prompt_lines = [
         "# 交互规范与输出格式 (XML 格式)",
+        "`<reply_messages>` 是本轮待回应的消息集合，可能来自多人；结合历史上下文选择需要回应的话题，不要求逐条答复。若后续补充表明无需回复，可以只更新状态并保持沉默。按每条消息的 user_id 区分发言人。",
         "你的回复包含多个并列的 XML 格式标签。以下是基本消息标签的说明：",
         "",
         "## 基础标签",
@@ -185,7 +184,7 @@ def build_xml_instructions(
     if is_enabled(FeatureKey.SCHEDULE_TASK):
         interactive_lines.append(
             "- **定时任务**:\n"
-            '  * **添加任务**: `<schedule_task time="cron表达式或ISO8601时间">提醒内容</schedule_task>`。注意：添加前需要检查上下文，避免重复添加相同的提醒。\n'
+            '  * **添加任务**: `<schedule_task user_id="创建者ID" time="cron表达式或ISO8601时间">提醒内容</schedule_task>`。user_id 为任务创建者的用户 ID，必填。\n'
             '  * **删除任务**: `<delete_task task_id="任务ID"/>`。如果要修改/合并定时提醒，必须先删除旧任务，再添加新任务。\n'
             '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
         )
@@ -200,7 +199,7 @@ def build_xml_instructions(
     if is_enabled(FeatureKey.TASK_BOARD):
         interactive_lines.append(
             "- **短期任务看板**:\n"
-            '  * **创建任务**: `<task_board action="create">一句自然语言任务</task_board>`。用于记录短期待办，例如“下次看到 123456 时提醒他交作业”。任务数量达到会话上限时系统会拒绝创建。\n'
+            '  * **创建任务**: `<task_board action="create" user_id="创建者ID">一句自然语言任务</task_board>`。user_id 为任务创建者的用户 ID，必填。\n'
             '  * **完成任务**: `<task_board action="complete" task_id="任务ID">完成原因</task_board>`。只有在你已经实际完成任务要求，或用户明确确认该任务已完成时才使用。\n'
             '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
         )
@@ -368,7 +367,7 @@ def get_image_caption_prompt(
     if question and question.strip():
         question_block = (
             f"\n\n# 额外关注的问题\n"
-            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f'请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 "caption" 字段中**：\n'
             f"{question.strip()}"
         )
     fp_block = f"\n\n[Image Fingerprint: {fingerprint}]" if fingerprint else ""
@@ -403,7 +402,7 @@ def get_audio_caption_prompt(
     if question and question.strip():
         question_block = (
             f"\n\n# 额外关注的问题\n"
-            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f'请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 "caption" 字段中**：\n'
             f"{question.strip()}"
         )
     fp_block = f"\n\n[Audio Fingerprint: {fingerprint}]" if fingerprint else ""
@@ -438,7 +437,7 @@ def get_video_caption_prompt(
     if question and question.strip():
         question_block = (
             f"\n\n# 额外关注的问题\n"
-            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+            f'请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 "caption" 字段中**：\n'
             f"{question.strip()}"
         )
     fp_block = f"\n\n[Video Fingerprint: {fingerprint}]" if fingerprint else ""
@@ -469,9 +468,7 @@ def get_sticker_analysis_prompt(
     fingerprint: str = "",
 ) -> str:
     """生成表情包分析提示词"""
-    categories_str = (
-        "\n".join(f"- {c}" for c in categories) if categories else "- 无"
-    )
+    categories_str = "\n".join(f"- {c}" for c in categories) if categories else "- 无"
     fp_block = f"\n\n[Sticker Fingerprint: {fingerprint}]" if fingerprint else ""
 
     return f"""# 任务目标
@@ -530,12 +527,18 @@ def get_sticker_analysis_prompt(
 def get_decision_rules(use_meme_manager: bool = False) -> str:
     """根据是否开启 meme_manager 动态生成决策模型提示词规范"""
     meme_tags_rule = (
-        "\n- **表情包意图预测 (meme_tags)**：若判定需要回复（reply=\"true\"），请根据当前话题氛围与预期回复语气，预测 1~3 个可能使用的表情包情绪/场景标签（如 `傲娇, 生气`、`吃瓜, 看戏`、`开心, 卖萌`），多个标签用逗号分隔；若无需表情包则留空。"
+        '\n- **表情包意图预测 (meme_tags)**：若判定需要回复（reply="true"），请根据当前话题氛围与预期回复语气，预测 1~3 个可能使用的表情包情绪/场景标签（如 `傲娇, 生气`、`吃瓜, 看戏`、`开心, 卖萌`），多个标签用逗号分隔；若无需表情包则留空。'
         if use_meme_manager
         else ""
     )
     tag_attr = ' meme_tags="string"' if use_meme_manager else ""
-    return f"""## 状态与检索判定 (use_rag)
+    return f"""## 批量消息决策
+- `<pending_messages>` 是本轮待处理消息，可能来自多人；结合 `<recent_messages>` 判断是否需要参与其中的话题。
+- 对整批输出一次决策，允许只回应部分话题，也允许整体不回复；不要求逐条作答。
+- 历史消息只提供背景。特别注意自身刚刚的发言是否已覆盖待处理内容，避免重复回复。
+- 每条消息的 user_id 标识实际发言人，单个用户画像不代表整批消息的所有者。
+
+## 状态与检索判定 (use_rag)
 - **决策时效**：状态仅供参考，请根据当前最新消息流自主做出在线/回复决策。
 - **RAG 触发条件**：在以下情况下，必须将 `use_rag` 设为 `true`：
   - 提及过往大事件、约定或询问过去的承诺。

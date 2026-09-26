@@ -1,12 +1,13 @@
 from contextlib import contextmanager
 from pathlib import Path
 
+from xxhash import xxh3_64_hexdigest
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.utils import media_utils
-from xxhash import xxh3_64_hexdigest
 
 from ..utils.event_utils import resolve_bot_name
 from ..utils.qq_official_action import is_qq_official as is_qq_official_platform
@@ -20,7 +21,6 @@ from ..utils.token_utils import extract_tokens_robust
 from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
     DEFAULT_AUDIO_CAPTION_PROMPT,
-    DEFAULT_DECISION_RULES,
     DEFAULT_IMAGE_CAPTION_PROMPT,
     DEFAULT_STICKER_ANALYSIS_PROMPT,
     DEFAULT_VIDEO_CAPTION_PROMPT,
@@ -131,9 +131,7 @@ class CallLLM:
         """调用LLM进行决策"""
         decision_rules = get_decision_rules(use_meme_manager=use_meme_manager)
         if system_prompt:
-            actual_system_prompt = (
-                system_prompt.strip() + "\n\n" + decision_rules
-            )
+            actual_system_prompt = system_prompt.strip() + "\n\n" + decision_rules
         else:
             actual_system_prompt = decision_rules
 
@@ -212,6 +210,7 @@ class CallLLM:
 
         for provider_id in provider_ids:
             for i in range(self.network_conf["reply_retry_times"]):
+                native_attempt_started = False
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
@@ -338,6 +337,7 @@ class CallLLM:
                     logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
 
                     if use_source_tools and not force_xml_tools:
+                        native_attempt_started = True
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
@@ -358,7 +358,6 @@ class CallLLM:
                             stream=True,
                         )
                     parsed_result = None
-                    is_parsed = False
                     status_val = "parse_failed"
 
                     if llm_resp.completion_text:
@@ -366,7 +365,6 @@ class CallLLM:
                             llm_resp.completion_text, group_or_user_id
                         )
                         if parsed_result is not None:
-                            is_parsed = True
                             status_val = "success"
                             parsed_result.native_tools_called = list(
                                 llm_resp.tools_call_name or []
@@ -376,7 +374,6 @@ class CallLLM:
                         status_val = "parse_failed"
                     else:
                         # Succeeded but both completion and reasoning are empty.
-                        is_parsed = True
                         status_val = "success"
                         parsed_result = XmlLlmResult(
                             native_tools_called=list(llm_resp.tools_call_name or [])
@@ -408,6 +405,11 @@ class CallLLM:
                             )
                         return parsed_result
 
+                    if native_attempt_started:
+                        logger.error(
+                            "Native tool reply failed to parse; refusing to replay possible side effects"
+                        )
+                        return None
                     if llm_resp.reasoning_content:
                         logger.warning(
                             f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
@@ -435,7 +437,7 @@ class CallLLM:
                             "error": "EmptyModelOutputError",
                         },
                     )
-                    return XmlLlmResult()
+                    return None if native_attempt_started else XmlLlmResult()
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}，provider_id: {provider_id}")
                     bot_name = resolve_bot_name(self.plugin, event)
@@ -447,6 +449,11 @@ class CallLLM:
                         llm_resp=None,
                         extra_info={"status": "api_failed", "error": str(e)},
                     )
+                    if native_attempt_started:
+                        logger.error(
+                            "Native tool reply failed; refusing to replay possible side effects"
+                        )
+                        return None
                     continue
         return None
 

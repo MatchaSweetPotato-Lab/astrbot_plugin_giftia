@@ -1,4 +1,3 @@
-import re
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -76,7 +75,7 @@ def _apply_call_names_to_messages(
             copied_messages.append(replace(msg, nickname=user_id_to_call_name[uid]))
         else:
             copied_messages.append(msg)
-            
+
     return copied_messages
 
 
@@ -84,7 +83,7 @@ def build_decision_prompt(
     user_id: str,
     group_data: str,
     recent_messages: list[MessageData],
-    current_message: MessageData,
+    pending_messages: list[MessageData],
     bot_status: Status,
     user_relation: tuple[int, str] | None = None,
     user_profile: str | dict | None = None,
@@ -96,7 +95,17 @@ def build_decision_prompt(
     media_captions: list[MediaCaption] | None = None,
     slang_entries: list[dict] | None = None,
 ) -> str:
-    # 1. Get original platform nickname for the current user
+    pending_ids = {msg.message_id for msg in pending_messages if msg.message_id}
+    recent_messages = [
+        msg
+        for msg in recent_messages
+        if not msg.message_id or msg.message_id not in pending_ids
+    ]
+    current_message = next(
+        (msg for msg in reversed(pending_messages) if str(msg.user_id) == str(user_id)),
+        None,
+    )
+    # Resolve the routing user's nickname without attributing the batch to them.
     curr_nickname = ""
     if current_message and str(current_message.user_id) == str(user_id):
         curr_nickname = current_message.nickname
@@ -110,8 +119,7 @@ def build_decision_prompt(
     all_messages = []
     if recent_messages:
         all_messages.extend(recent_messages)
-    if current_message:
-        all_messages.append(current_message)
+    all_messages.extend(pending_messages)
 
     processed_messages, _ = process_media_captions_for_prompt(
         messages=all_messages,
@@ -131,9 +139,7 @@ def build_decision_prompt(
     copied_recent = (
         processed_messages[: len(recent_messages)] if recent_messages else []
     )
-    copied_current = (
-        processed_messages[len(recent_messages) :][0] if current_message else None
-    )
+    copied_pending = processed_messages[len(recent_messages) :]
 
     user_prompt = []
     # Keep session data and manually maintained rules in the stable prefix.
@@ -154,15 +160,15 @@ def build_decision_prompt(
     decision_messages = []
     if copied_recent:
         decision_messages.extend(copied_recent)
-    if copied_current:
-        decision_messages.append(copied_current)
+    decision_messages.extend(copied_pending)
     forwarded_messages_block = build_forwarded_messages_block(decision_messages)
     if forwarded_messages_block:
         user_prompt.append(forwarded_messages_block)
     # 近期消息
     if copied_recent:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in copied_recent
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit)
+            for msg in copied_recent
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
@@ -187,10 +193,12 @@ def build_decision_prompt(
     )
     if slang_block:
         user_prompt.append(slang_block)
-    if copied_current:
-        user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
+    if copied_pending:
+        pending_text = "\n".join(
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit)
+            for msg in copied_pending
         )
+        user_prompt.append(f"<pending_messages>\n{pending_text}\n</pending_messages>")
     # 当前时间戳置底，避免破坏前缀缓存
     user_prompt.append(
         f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"
@@ -221,9 +229,7 @@ def process_media_captions_for_prompt(
         if msg.media_id_list:
             hash_counts.update(msg.media_id_list)
         if msg.content:
-            content_hash_counts.update(
-                extract_media_ids(msg.content)
-            )
+            content_hash_counts.update(extract_media_ids(msg.content))
 
     # 建立 hash_val -> MediaCaption 映射
     caption_map = {}
@@ -289,7 +295,10 @@ def process_media_captions_for_prompt(
             if (
                 caption
                 and caption.hash_val not in inline_hashes
-                and (getattr(caption, "is_captioned", True) or getattr(caption, "caption", ""))
+                and (
+                    getattr(caption, "is_captioned", True)
+                    or getattr(caption, "caption", "")
+                )
             ):
                 remaining_captions.append(caption)
 
@@ -304,7 +313,7 @@ def build_reply_prompt(
     group_data: str = "",
     user_id: str = "",
     nickname: str = "",
-    current_message: MessageData | None = None,
+    reply_messages: list[MessageData] | None = None,
     remind_message: str | None = None,
     tool_results: list[dict[str, str]] | None = None,
     long_memories: list[MemoryItem] | None = None,
@@ -320,12 +329,14 @@ def build_reply_prompt(
     message_truncate_limit: int = 1500,
     slang_entries: list[dict] | None = None,
 ) -> str:
-    # 合并近期消息与当前消息进行统一的频次与内联处理
-    all_messages = []
-    if recent_messages:
-        all_messages.extend(recent_messages)
-    if current_message:
-        all_messages.append(current_message)
+    reply_messages = reply_messages or []
+    reply_ids = {msg.message_id for msg in reply_messages if msg.message_id}
+    recent_messages = [
+        msg
+        for msg in recent_messages
+        if not msg.message_id or msg.message_id not in reply_ids
+    ]
+    all_messages = [*recent_messages, *reply_messages]
 
     processed_messages, remaining_captions = process_media_captions_for_prompt(
         messages=all_messages,
@@ -345,9 +356,7 @@ def build_reply_prompt(
     copied_recent = (
         processed_messages[: len(recent_messages)] if recent_messages else []
     )
-    copied_current = (
-        processed_messages[len(recent_messages) :][0] if current_message else None
-    )
+    copied_reply = processed_messages[len(recent_messages) :]
 
     user_prompt = []
 
@@ -391,7 +400,8 @@ def build_reply_prompt(
     # 近期消息
     if copied_recent:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in copied_recent
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit)
+            for msg in copied_recent
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
@@ -430,10 +440,12 @@ def build_reply_prompt(
     )
     if slang_block:
         user_prompt.append(slang_block)
-    if copied_current:
-        user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
+    if copied_reply:
+        reply_text = "\n".join(
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit)
+            for msg in copied_reply
         )
+        user_prompt.append(f"<reply_messages>\n{reply_text}\n</reply_messages>")
     # 当前时间戳置底，避免破坏前缀缓存
     user_prompt.append(
         f"<time>{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M (UTC%z, %A)')}</time>"

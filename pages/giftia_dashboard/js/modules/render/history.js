@@ -53,13 +53,25 @@ export function renderChatHistory(items, lastSummarizedId = 0) {
     container.innerHTML = items.map(item => {
         let decisionBadge = "";
         if (item.reply_decision === 1) {
-            decisionBadge = `<span class="badge badge-success">通过 (已回复)</span>`;
+            decisionBadge = `<span class="badge badge-success">决策通过</span>`;
         } else if (item.reply_decision === 0) {
             decisionBadge = `<span class="badge badge-danger">忽略</span>`;
         } else if (item.reply_decision === 3) {
             decisionBadge = `<span class="badge badge-info">唤醒直接回复</span>`;
+        } else if (item.reply_decision === 4) {
+            decisionBadge = `<span class="badge badge-info">并入本轮回复</span>`;
         } else {
             decisionBadge = `<span class="badge badge-secondary">未审查</span>`;
+        }
+
+        const processingLabels = {
+            pending: '待处理', processing: '处理中', handled: '处理完成',
+            skipped: '已跳过', failed: '处理失败', partial_failed: '部分执行后失败',
+            interrupted: '处理中断',
+        };
+        const processingLabel = processingLabels[item.processing_status];
+        if (processingLabel) {
+            decisionBadge += ` <span class="badge badge-secondary">${processingLabel}</span>`;
         }
 
         const ragBadge = item.use_rag === 1

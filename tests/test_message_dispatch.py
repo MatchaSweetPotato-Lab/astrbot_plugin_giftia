@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from core.conversation.chat_manager import ChatManager
-from core.utils.schemas import XmlLlmResult
+from core.utils.schemas import MessageData, XmlLlmResult
 
 
 @pytest.fixture
@@ -26,12 +26,20 @@ def runtime():
             check_and_trigger_passive_memory=AsyncMock(),
         ),
         db=SimpleNamespace(
-            get_kv_data=AsyncMock(return_value=None), upsert_kv_data=AsyncMock()
+            get_kv_data=AsyncMock(return_value=None),
+            upsert_kv_data=AsyncMock(),
+            chat_history_repo=SimpleNamespace(update_processing_status=AsyncMock()),
         ),
-        data_cache=SimpleNamespace(add_message=AsyncMock()),
+        data_cache=SimpleNamespace(
+            add_message=AsyncMock(),
+            get_recent_message=AsyncMock(return_value=[]),
+            is_bot_muted=Mock(return_value=False),
+        ),
         get_caption_config=lambda bot: {"defer_caption_enabled": False},
         message_parser=SimpleNamespace(
-            parse_user_message=AsyncMock(return_value=(Mock(), [], [])),
+            parse_user_message=AsyncMock(
+                return_value=(MessageData(message_id="m1", content="hello"), [], [])
+            ),
         ),
     )
     event = SimpleNamespace(
@@ -50,6 +58,7 @@ def runtime():
     )
     manager = ChatManager(plugin)
     manager.decision_engine.check_whitelists = Mock(return_value=True)
+    manager.decision_engine.get_trigger = Mock(return_value=False)
     manager.decision_engine.evaluate_decision = AsyncMock(
         return_value=(True, None, [], None)
     )
@@ -69,7 +78,7 @@ async def test_later_handler_runs_while_message_processing_is_pending(runtime, p
         if phase == "parse":
             started.set()
             await release.wait()
-        return Mock(), [], []
+        return MessageData(message_id="m1", content="hello"), [], []
 
     async def decide(**kwargs):
         if phase == "decision":
@@ -96,14 +105,17 @@ async def test_later_handler_runs_while_message_processing_is_pending(runtime, p
         await asyncio.wait_for(dispatch(), timeout=1)
         await asyncio.wait_for(started.wait(), timeout=1)
         later_handler.assert_awaited_once_with(event)
-        assert len(plugin.running_tasks) == 1
-        assert not next(iter(plugin.running_tasks.values())).done()
+        assert any(not task.done() for task in plugin.running_tasks.values())
         event.should_call_llm.assert_called_once_with(True)
         event.stop_event.assert_not_called()
         assert event._has_send_oper is False
     finally:
         release.set()
-        await asyncio.gather(*plugin.running_tasks.values(), return_exceptions=True)
+        while plugin.running_tasks:
+            await asyncio.gather(
+                *list(plugin.running_tasks.values()), return_exceptions=True
+            )
+            await asyncio.sleep(0)
 
     assert plugin.running_tasks == {}
     manager.action_dispatcher.dispatch_actions.assert_awaited_once()
@@ -217,10 +229,18 @@ async def test_terminate_cancels_passive_memory_before_closing_resources(runtime
 
     await manager.handle_message(event)
     await asyncio.wait_for(started.wait(), timeout=1)
+    plugin.chat_manager = manager
+    await manager._enqueue_message(
+        event, "bot", "100", MessageData(message_id="not-started", content="hello")
+    )
     await asyncio.wait_for(namespace["terminate"](plugin), timeout=1)
 
     assert plugin.running_tasks == {}
     assert plugin._terminated is True
+    plugin.db.chat_history_repo.update_processing_status.assert_awaited_with(
+        "bot", "100", ["not-started"], "interrupted"
+    )
+    assert not manager.sessions
     plugin.db.close.assert_awaited_once()
     await manager.handle_message(event)
     assert plugin.running_tasks == {}

@@ -1,7 +1,5 @@
-import asyncio
 import random
 import re
-import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -67,26 +65,26 @@ class DecisionEngine:
             event.unified_msg_origin, []
         )
 
-    def can_execute(self, key: str, throttle_time: float) -> bool:
-        """节流检查"""
-        now = time.time()
-        last_time = self.plugin.throttle_map.get(key, 0)
-        if now - last_time >= throttle_time:
-            self.plugin.throttle_map[key] = now
-            return True
-        return False
-
-    async def evaluate_decision(
+    def get_trigger(
         self,
         event: AstrMessageEvent,
         bot_name: str,
-        nickname: str,
         group_or_user_id: str,
         current_message: MessageData,
-    ) -> tuple[bool, list[str] | None, list[dict] | None, str | None]:
-        """
-        进行接话决策。
-        返回: (should_reply, relevant_memories, pending_recall_memories, meme_tags)
+        *,
+        continuation: bool = False,
+    ) -> bool | None:
+        """Choose admission once, without waiting or calling a model.
+
+        Args:
+            event: Incoming event, retained for routing and mention policy.
+            bot_name: Bot configuration name.
+            group_or_user_id: Stored conversation identifier.
+            current_message: Parsed incoming message.
+            continuation: Whether a session already has an active processing task.
+
+        Returns:
+            True for a direct reply, False for a model decision, or None when idle.
         """
         bot_conf = self.plugin.bot_map[bot_name]
         decision_conf = bot_conf.get("decision_conf", {})
@@ -108,7 +106,7 @@ class DecisionEngine:
             logger.info(
                 f"[Giftia] Bot {bot_name} 在群 {group_id} 处于禁言静默状态（{rem_str}），跳过回复决策"
             )
-            return False, None, None, None
+            return None
 
         is_just_at = any(
             isinstance(c, At) and str(c.qq) == event.get_self_id()
@@ -125,26 +123,12 @@ class DecisionEngine:
             # the message as an @ mention, so every allowed message is evaluated.
             is_just_at = False
 
-        debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
-
-        # 预先处理防抖状态（如果是防抖的一部分，将 is_just_at 状态积累）
-        if self.plugin.user_debounce_time > 0:
-            if debounce_key in self.plugin.debounce_start_map:
-                self.plugin.debounce_at_map[debounce_key] = (
-                    self.plugin.debounce_at_map.get(debounce_key, False) or is_just_at
-                )
-                is_just_at = self.plugin.debounce_at_map[debounce_key]
-            else:
-                self.plugin.debounce_at_map[debounce_key] = is_just_at
-
         fmt_key = f"{bot_name}:{group_or_user_id}"
         active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
         is_active_window = active_counter > 0
 
         # 是否针对当前消息强制直接回复（不走前置决策）
         should_force_reply = False
-        # 是否需要递减接话分析窗口的标志
-        decrement_counter = False
 
         if is_just_at:
             if is_private:
@@ -187,7 +171,7 @@ class DecisionEngine:
                 logger.debug(
                     "Skipping unmentioned message: no decision provider configured"
                 )
-                return False, None, None, None
+                return None
             # 活跃窗口与主动接话概率检查
             proactive_prob = decision_conf.get("proactive_probability", 0)
             is_proactive_hit = False
@@ -196,8 +180,8 @@ class DecisionEngine:
 
             if should_decide_private:
                 is_proactive_hit = True
-            elif is_active_window:
-                decrement_counter = True
+            elif is_active_window or continuation:
+                pass
             else:
                 is_proactive_hit = (
                     proactive_prob > 0 and random.randint(1, 100) <= proactive_prob
@@ -244,11 +228,16 @@ class DecisionEngine:
                         if is_keyword_hit:
                             break
 
-            if not is_active_window and not is_proactive_hit and not is_keyword_hit:
+            if (
+                not continuation
+                and not is_active_window
+                and not is_proactive_hit
+                and not is_keyword_hit
+            ):
                 logger.debug(
                     "没有at机器人且不满足接话分析窗口、主动概率或关键词触发，跳过处理"
                 )
-                return False, None, None, None
+                return None
 
         # 跳过空消息
         if (
@@ -257,279 +246,199 @@ class DecisionEngine:
             and not current_message.forward_messages
         ):
             logger.debug("消息为空，跳过处理")
-            return False, None, None, None
+            return None
 
         # 跳过已唤醒的消息
-        if event._has_send_oper:
+        if getattr(event, "_has_send_oper", False):
             logger.debug(f"{bot_name} 跳过已唤醒的消息: {current_message.content}")
-            return False, None, None, None
+            return None
 
-        # 防抖延迟等待
-        if self.plugin.user_debounce_time > 0:
-            current_time = time.time()
+        return should_force_reply
 
-            if debounce_key not in self.plugin.debounce_start_map:
-                self.plugin.debounce_start_map[debounce_key] = current_time
+    async def evaluate_decision(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        pending_messages: list[MessageData],
+        recent_messages: list[MessageData],
+        *,
+        force_reply: bool = False,
+    ) -> tuple[bool, list[str] | None, list[dict] | None, str | None]:
+        """Evaluate a frozen batch; admission and scheduling belong to the caller.
 
-            time_since_start = (
-                current_time - self.plugin.debounce_start_map[debounce_key]
+        Args:
+            event: Routing event for this batch.
+            bot_name: Bot configuration name.
+            nickname: Bot display name.
+            group_or_user_id: Stored conversation identifier.
+            pending_messages: Every message being decided in this round.
+            recent_messages: Frozen history, excluding messages queued for later.
+            force_reply: Whether a batch member requests a direct reply.
+
+        Returns:
+            Reply choice, recalled texts, recalled records, and optional meme tags.
+
+        Raises:
+            RuntimeError: All model attempts failed; this is not a silent decision.
+            ValueError: No decision provider is configured.
+        """
+        bot_conf = self.plugin.bot_map[bot_name]
+        decision_conf = bot_conf.get("decision_conf", {})
+        if force_reply:
+            for message in pending_messages:
+                await self.plugin.db.update_message_decision(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    message_id=message.message_id,
+                    reply_decision=3,
+                    use_rag=2,
+                )
+            return True, None, None, None
+
+        relevant_memories = None
+        # 获取决策所需上下文（小模型采用轻量级条数）
+        bot_status = await self.plugin.data_cache.get_bot_status(
+            bot_name=bot_name,
+            group_id=group_or_user_id,
+        )
+        group_profile = await self.plugin.data_cache.get_group_profile(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+        )
+        user_profile = await self.plugin.data_cache.get_user_profile_record(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=event.get_sender_id(),
+        )
+        user_relation = await self.plugin.data_cache.get_user_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=event.get_sender_id(),
+        )
+        active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            recent_messages=[*recent_messages, *pending_messages],
+            current_user_id=event.get_sender_id(),
+            self_id=event.get_self_id(),
+            limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
+        )
+        short_tasks = []
+        short_task_limit = self.plugin.tools_config.get("task_board_max_active", 3)
+        if hasattr(self.plugin, "task_board"):
+            short_tasks = await self.plugin.task_board.get_active_tasks(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
             )
+            short_task_limit = self.plugin.task_board.max_active_tasks()
 
-            if time_since_start >= self.plugin.user_max_debounce_time:
-                logger.debug(
-                    f"{bot_name} 消息 {debounce_key} 达到最大防抖时间，强制执行"
+        # 读取已有缓存的媒体转述（仅读缓存，非阻塞），用于轻量内联
+        caption_config = self.plugin.get_caption_config(bot_conf)
+        all_for_caption = []
+        if recent_messages:
+            all_for_caption.extend(recent_messages)
+        all_for_caption.extend(pending_messages)
+
+        media_captions = await self.media_captioner.get_cached_media_captions(
+            bot_name=bot_name,
+            recent_messages=all_for_caption,
+            caption_config=caption_config,
+            group_or_user_id=group_or_user_id,
+        )
+
+        user_prompt = build_decision_prompt(
+            user_id=event.get_sender_id(),
+            group_data=str(
+                await event.get_group(event.get_group_id())
+                if event.get_group_id()
+                else ""
+            ),
+            recent_messages=recent_messages,
+            pending_messages=pending_messages,
+            bot_status=bot_status,
+            group_profile=group_profile,
+            user_profile=user_profile,
+            user_relation=user_relation,
+            active_user_briefs=active_user_briefs,
+            short_tasks=short_tasks,
+            short_task_limit=short_task_limit,
+            message_truncate_limit=getattr(
+                self.plugin, "reply_message_truncate_limit", 1500
+            ),
+            media_captions=media_captions,
+            slang_entries=await self.plugin.db.slang_repo.get_entries(
+                bot_name, group_or_user_id
+            ),
+        )
+
+        provider_ids = decision_conf.get("provider_ids")
+        if not provider_ids:
+            old_provider_id = decision_conf.get("provider_id")
+            if old_provider_id:
+                provider_ids = [old_provider_id] + decision_conf.get(
+                    "fallback_provider_ids", []
                 )
-                self.plugin.debounce_start_map.pop(debounce_key, None)
-                self.plugin.debounce_at_map.pop(debounce_key, None)
-                self.plugin.debounce_map[debounce_key] = current_time
             else:
-                self.plugin.debounce_map[debounce_key] = current_time
-                await asyncio.sleep(self.plugin.user_debounce_time)
-                if self.plugin.debounce_map.get(debounce_key) != current_time:
-                    logger.debug(f"{bot_name} 消息 {debounce_key} 触发防抖，跳过处理")
-                    return False, None, None, None
-                else:
-                    self.plugin.debounce_start_map.pop(debounce_key, None)
-                    self.plugin.debounce_at_map.pop(debounce_key, None)
+                logger.error(f"{bot_name} 未配置决策模型ID")
+                raise ValueError("No decision provider configured")
+        provider_ids = [p for p in provider_ids if p]
+        if not provider_ids:
+            logger.error(f"{bot_name} 未配置决策模型ID")
+            raise ValueError("No decision provider configured")
 
-        logger.debug(f"{bot_name} 处理消息: {current_message.content}")
-        reply_key = f"{bot_name}:{group_or_user_id}"
+        # Consume one analysis round per batch, never once per sender.
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        self.plugin.active_reply_counters[fmt_key] = max(
+            0, self.plugin.active_reply_counters.get(fmt_key, 0) - 1
+        )
 
-        # 节流拦截更新
-        if should_force_reply:
-            now = time.time()
-            if self.plugin.user_throttle_time > 0:
-                user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
-                self.plugin.throttle_map[user_throttle_key] = now
-            if self.plugin.group_throttle_time > 0:
-                group_throttle_key = f"{bot_name}:{event.get_group_id()}"
-                self.plugin.throttle_map[group_throttle_key] = now
+        # 调用 LLM 决策（纯文本化调用，不传递多模态原始 URL）
+        result = await self.plugin.call_llm.call_llm_decision(
+            provider_ids=provider_ids,
+            system_prompt=decision_conf.get("decision_prompt"),
+            user_prompt=user_prompt,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            use_meme_manager=getattr(self.plugin, "use_meme_manager", False),
+        )
 
-        # 强制回复直接跳过后续 LLM 决策，更新决策表为 3 (直接回复)
-        if should_force_reply:
-            if is_private and self.plugin.replying_status.get(reply_key, 0) > 0:
-                logger.debug(
-                    f"{bot_name} 消息 {reply_key} 正在回复中，私聊防并发单线程拦截"
-                )
-                return False, None, None, None
+        if result is None or result.reply_decision not in (0, 1):
+            raise RuntimeError("Decision providers exhausted their retries")
 
+        for message in pending_messages:
             await self.plugin.db.update_message_decision(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
-                message_id=current_message.message_id,
-                reply_decision=3,
-                use_rag=2,
+                message_id=message.message_id,
+                reply_decision=result.reply_decision,
+                use_rag=result.use_rag,
             )
-            return True, None, None, None
 
-        # 非强制回复消息进行 LLM 决策
-        if self.plugin.replying_status.get(reply_key, 0) > 0:
-            logger.debug(f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策")
+        if result.reply_decision == 0 or result.reply_decision == 2:
+            logger.info(f"{bot_name} LLM决策判定：不回复")
             return False, None, None, None
 
-        # 节流判断
-        if not is_private:
-            user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
-            if self.plugin.user_throttle_time > 0 and not self.can_execute(
-                user_throttle_key, self.plugin.user_throttle_time
-            ):
-                logger.info(f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理")
-                return False, None, None, None
+        logger.info(f"{bot_name} LLM决策判定：回复")
 
-            group_throttle_key = f"{bot_name}:{event.get_group_id()}"
-            if self.plugin.group_throttle_time > 0 and not self.can_execute(
-                group_throttle_key, self.plugin.group_throttle_time
-            ):
-                logger.info(f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理")
-                return False, None, None, None
+        # 重置接话活跃分析窗口
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        window_size = decision_conf.get("reply_active_window", 10)
+        self.plugin.active_reply_counters[fmt_key] = window_size
+        logger.info(f"{bot_name} LLM决策判定回复，重置接话分析窗口计数为 {window_size}")
 
-        # 并发锁判断
-        fmt_user_lock = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
-        user_lock = self.plugin.user_locks[fmt_user_lock]
-        if user_lock.locked():
-            logger.info(f"{bot_name} 用户{fmt_user_lock}正在决策中，跳过处理")
-            return False, None, None, None
+        # 如果命中 RAG，执行记忆搜索
+        if result.use_rag == 1 and self.plugin.embedding_conf.get("enabled", False):
+            memory_results = await search_memories_with_rerank(
+                self.plugin,
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                query=result.rag_query,
+                recent_messages=recent_messages,
+                log_context="决策 RAG 记忆召回",
+            )
+            relevant_memories = [m["text"] for m in memory_results]
+            return True, relevant_memories, memory_results, result.meme_tags
 
-        fmt_lock = f"{bot_name}:{group_or_user_id}"
-        lock = self.plugin.group_locks[fmt_lock]
-        if self.plugin.concurrent_strategy == "discard" and lock.locked():
-            logger.info(f"{bot_name} 消息群组{fmt_lock}并发数已达上限，跳过处理")
-            return False, None, None, None
-
-        relevant_memories = None
-
-        async with user_lock:
-            async with lock:
-                # 双重检查
-                if self.plugin.replying_status.get(reply_key, 0) > 0:
-                    logger.debug(
-                        f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策 (队列拦截)"
-                    )
-                    return False, None, None, None
-
-                # 获取决策所需上下文（小模型采用轻量级条数）
-                recent_messages = await self.plugin.data_cache.get_recent_message(
-                    bot_name=bot_name,
-                    group_id=group_or_user_id,
-                    limit=12,
-                )
-                bot_status = await self.plugin.data_cache.get_bot_status(
-                    bot_name=bot_name,
-                    group_id=group_or_user_id,
-                )
-                group_profile = await self.plugin.data_cache.get_group_profile(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                )
-                user_profile = await self.plugin.data_cache.get_user_profile_record(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    user_id=event.get_sender_id(),
-                )
-                user_relation = await self.plugin.data_cache.get_user_relation(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    user_id=event.get_sender_id(),
-                )
-                active_user_briefs = (
-                    await self.plugin.data_cache.build_active_user_briefs(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        recent_messages=recent_messages,
-                        current_user_id=event.get_sender_id(),
-                        self_id=event.get_self_id(),
-                        limit=self.plugin.tools_config.get(
-                            "active_user_brief_limit", 10
-                        ),
-                    )
-                )
-                short_tasks = []
-                short_task_limit = self.plugin.tools_config.get(
-                    "task_board_max_active", 3
-                )
-                if hasattr(self.plugin, "task_board"):
-                    short_tasks = await self.plugin.task_board.get_active_tasks(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                    )
-                    short_task_limit = self.plugin.task_board.max_active_tasks()
-
-                # 读取已有缓存的媒体转述（仅读缓存，非阻塞），用于轻量内联
-                caption_config = self.plugin.get_caption_config(bot_conf)
-                all_for_caption = []
-                if recent_messages:
-                    all_for_caption.extend(recent_messages)
-                if current_message:
-                    all_for_caption.append(current_message)
-
-                media_captions = await self.media_captioner.get_cached_media_captions(
-                    bot_name=bot_name,
-                    recent_messages=all_for_caption,
-                    caption_config=caption_config,
-                    group_or_user_id=group_or_user_id,
-                )
-
-                user_prompt = build_decision_prompt(
-                    user_id=event.get_sender_id(),
-                    group_data=str(
-                        await event.get_group(event.get_group_id())
-                        if event.get_group_id()
-                        else ""
-                    ),
-                    recent_messages=recent_messages,
-                    current_message=current_message,
-                    bot_status=bot_status,
-                    group_profile=group_profile,
-                    user_profile=user_profile,
-                    user_relation=user_relation,
-                    active_user_briefs=active_user_briefs,
-                    short_tasks=short_tasks,
-                    short_task_limit=short_task_limit,
-                    message_truncate_limit=getattr(
-                        self.plugin, "reply_message_truncate_limit", 1500
-                    ),
-                    media_captions=media_captions,
-                    slang_entries=await self.plugin.db.slang_repo.get_entries(
-                        bot_name, group_or_user_id
-                    ),
-                )
-
-                provider_ids = decision_conf.get("provider_ids")
-                if not provider_ids:
-                    old_provider_id = decision_conf.get("provider_id")
-                    if old_provider_id:
-                        provider_ids = [old_provider_id] + decision_conf.get(
-                            "fallback_provider_ids", []
-                        )
-                    else:
-                        logger.error(f"{bot_name} 未配置决策模型ID")
-                        return False, None, None, None
-                provider_ids = [p for p in provider_ids if p]
-                if not provider_ids:
-                    logger.error(f"{bot_name} 未配置决策模型ID")
-                    return False, None, None, None
-
-                # 递减分析窗口
-                if decrement_counter:
-                    fmt_key = f"{bot_name}:{group_or_user_id}"
-                    self.plugin.active_reply_counters[fmt_key] = max(
-                        0, self.plugin.active_reply_counters.get(fmt_key, 0) - 1
-                    )
-                    logger.debug(
-                        f"{bot_name} 消耗接话分析窗口次数，当前群组剩余分析次数: {self.plugin.active_reply_counters[fmt_key]}"
-                    )
-
-                # 调用 LLM 决策（纯文本化调用，不传递多模态原始 URL）
-                result = await self.plugin.call_llm.call_llm_decision(
-                    provider_ids=provider_ids,
-                    system_prompt=decision_conf.get("decision_prompt"),
-                    user_prompt=user_prompt,
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    use_meme_manager=getattr(self.plugin, "use_meme_manager", False),
-                )
-
-                if result is None:
-                    logger.error(f"{bot_name} LLM决策失败，默认判定为不回复")
-                    return False, None, None, None
-
-                # 更新消息决策表
-                if result.reply_decision != 2 or result.use_rag != 2:
-                    await self.plugin.db.update_message_decision(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        message_id=current_message.message_id,
-                        reply_decision=result.reply_decision,
-                        use_rag=result.use_rag,
-                    )
-
-                if result.reply_decision == 0 or result.reply_decision == 2:
-                    logger.info(f"{bot_name} LLM决策判定：不回复")
-                    return False, None, None, None
-
-                logger.info(f"{bot_name} LLM决策判定：回复")
-
-                # 重置接话活跃分析窗口
-                fmt_key = f"{bot_name}:{group_or_user_id}"
-                window_size = decision_conf.get("reply_active_window", 10)
-                self.plugin.active_reply_counters[fmt_key] = window_size
-                logger.info(
-                    f"{bot_name} LLM决策判定回复，重置接话分析窗口计数为 {window_size}"
-                )
-
-                # 如果命中 RAG，执行记忆搜索
-                if result.use_rag == 1 and self.plugin.embedding_conf.get(
-                    "enabled", False
-                ):
-                    memory_results = await search_memories_with_rerank(
-                        self.plugin,
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        query=result.rag_query,
-                        recent_messages=recent_messages,
-                        log_context="决策 RAG 记忆召回",
-                    )
-                    relevant_memories = [m["text"] for m in memory_results]
-                    return True, relevant_memories, memory_results, result.meme_tags
-
-                return True, relevant_memories, None, result.meme_tags
+        return True, relevant_memories, None, result.meme_tags

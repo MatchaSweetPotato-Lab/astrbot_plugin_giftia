@@ -1,6 +1,6 @@
 import asyncio
 import random
-from datetime import datetime
+from copy import deepcopy
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -109,7 +109,7 @@ class ReplyPipeline:
         self,
         bot_name: str,
         group_or_user_id: str,
-        current_message: MessageData | None,
+        reply_messages: list[MessageData],
         remind_message: str | None,
         recent_messages: list[MessageData],
     ) -> list[dict]:
@@ -120,8 +120,12 @@ class ReplyPipeline:
             return []
 
         query = ""
-        if current_message and current_message.content:
-            query = current_message.content.strip()
+        if reply_messages:
+            query = "\n".join(
+                f"{msg.nickname} ({msg.user_id}): {msg.content}"
+                for msg in reply_messages
+                if msg.content
+            ).strip()
         elif remind_message:
             query = remind_message.strip()
         if not query:
@@ -143,7 +147,7 @@ class ReplyPipeline:
         bot_name: str,
         nickname: str,
         group_or_user_id: str,
-        current_message: MessageData | None = None,
+        reply_messages: list[MessageData] | None = None,
         remind_message: str | None = None,
         relevant_memories: list[str] | None = None,
         pending_recall_memories: list[dict] | None = None,
@@ -152,44 +156,44 @@ class ReplyPipeline:
         times: int = 0,
         sent_messages: list[str] | None = None,
         meme_tags: str | None = None,
+        recent_messages: list[MessageData] | None = None,
+        task_creator_names: dict[str, str] | None = None,
     ):
         """
         集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
         """
+        reply_messages = reply_messages or []
         is_first_turn = sent_messages is None
         if sent_messages is None:
             sent_messages = []
         if pending_recall_memories is None:
             pending_recall_memories = []
         bot_conf = self.plugin.bot_map[bot_name]
-        iso_string = datetime.now().isoformat()
         max_loop = self.plugin.tools_config.get("max_loop", 10)
 
         if times >= max_loop:
-            logger.warning(
-                f"{bot_name} 达到最大工具调用次数 ({max_loop})，强制退出循环"
-            )
-            # 记录系统指令提示到数据库
-            await self.plugin.data_cache.add_message(
-                bot_name,
-                group_or_user_id,
-                MessageData(
-                    nickname=nickname,
-                    user_id=event.get_self_id(),
-                    group_or_user_id=group_or_user_id,
-                    time=iso_string,
-                    message_id="",
-                    content=f"系统提示：当前已经达到最大工具调用次数 {max_loop}，请立即停止调用工具，并以现有信息作为最终结果进行回复。",
-                    is_recalled=False,
-                    media_id_list=[],
-                    role="operation_log",
-                ),
-            )
+            raise RuntimeError("Reply exceeded the maximum number of tool turns")
 
-        # 1. 获取近期消息上下文并处理延迟转述
-        recent_messages = await self.plugin.data_cache.get_recent_message(
-            bot_name, group_or_user_id, self.plugin.msg_number
-        )
+        # User input stays frozen for the entire logical reply. Later tool
+        # turns may only append bot output and operation logs from this session.
+        if recent_messages is None:
+            recent_messages = deepcopy(
+                await self.plugin.data_cache.get_recent_message(
+                    bot_name, group_or_user_id, self.plugin.msg_number
+                )
+            )
+        elif not is_first_turn:
+            latest = await self.plugin.data_cache.get_recent_message(
+                bot_name, group_or_user_id, self.plugin.msg_number
+            )
+            seen_ids = {msg.message_id for msg in recent_messages}
+            for msg in latest:
+                if (
+                    str(msg.user_id) == str(event.get_self_id())
+                    or msg.role == "operation_log"
+                ) and msg.message_id not in seen_ids:
+                    recent_messages.append(deepcopy(msg))
+                    seen_ids.add(msg.message_id)
         if is_first_turn:
             self_id = str(event.get_self_id())
             for msg in recent_messages:
@@ -199,7 +203,7 @@ class ReplyPipeline:
         caption_config = self.plugin.get_caption_config(bot_conf)
         media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
-            recent_messages=recent_messages,
+            recent_messages=[*recent_messages, *reply_messages],
             caption_config=caption_config,
             group_or_user_id=group_or_user_id,
         )
@@ -211,7 +215,7 @@ class ReplyPipeline:
             current_recall_memories = await self._search_current_recall_memories(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
-                current_message=current_message,
+                reply_messages=reply_messages,
                 remind_message=remind_message,
                 recent_messages=recent_messages,
             )
@@ -255,7 +259,7 @@ class ReplyPipeline:
         active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
-            recent_messages=recent_messages,
+            recent_messages=[*recent_messages, *reply_messages],
             current_user_id=event.get_sender_id(),
             self_id=event.get_self_id(),
             limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
@@ -268,6 +272,30 @@ class ReplyPipeline:
                 group_or_user_id=group_or_user_id,
             )
             short_task_limit = self.plugin.task_board.max_active_tasks()
+
+        if is_first_turn:
+            # Freeze trusted creator identities with the input, including the
+            # original owners of reminders whose messages have left history.
+            task_creator_names = dict(task_creator_names or {})
+            for task in short_tasks:
+                if task.creator_user_id:
+                    task_creator_names[str(task.creator_user_id)] = (
+                        task.creator_nickname or str(task.creator_user_id)
+                    )
+            for msg in [*recent_messages, *reply_messages]:
+                if msg.user_id and not msg.is_recalled and msg.role == "message":
+                    task_creator_names[str(msg.user_id)] = (
+                        msg.nickname
+                        or task_creator_names.get(str(msg.user_id))
+                        or str(msg.user_id)
+                    )
+            # These identities are also present in the prompt's routing context.
+            sender_id = str(event.get_sender_id() or "")
+            if sender_id:
+                task_creator_names.setdefault(
+                    sender_id, event.get_sender_name() or sender_id
+                )
+            task_creator_names[str(event.get_self_id())] = nickname
 
         # 读取长期记忆
         long_memories = []
@@ -316,7 +344,7 @@ class ReplyPipeline:
         user_prompt = build_reply_prompt(
             recent_messages=recent_messages,
             media_captions=media_captions,
-            current_message=current_message,
+            reply_messages=reply_messages,
             remind_message=remind_message,
             group_data=str(
                 await event.get_group(event.get_group_id())
@@ -374,11 +402,11 @@ class ReplyPipeline:
                 )
             else:
                 logger.error(f"{bot_name} 未配置回复模型ID")
-                return
+                raise ValueError("No reply provider configured")
         provider_ids = [p for p in provider_ids if p]
         if not provider_ids:
             logger.error(f"{bot_name} 未配置回复模型ID")
-            return
+            raise ValueError("No reply provider configured")
 
         provider_selection_mode = llm_reply_conf.get(
             "provider_selection_mode", "fallback"
@@ -411,8 +439,7 @@ class ReplyPipeline:
         )
 
         if not llm_result:
-            logger.error(f"{bot_name} LLM回复失败")
-            return
+            raise RuntimeError("Reply providers exhausted their retries")
 
         # Anti-drooling optimization for low-intelligence models:
         # Filter out messages that have already been sent in the current XML tool calling loop.
@@ -426,12 +453,13 @@ class ReplyPipeline:
             and not llm_result.msg_chains
             and not self._has_non_message_work(llm_result)
         ):
-            await self.plugin.db.update_message_reply_decision(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                message_id=current_message.message_id if current_message else "",
-                reply_decision=0,
-            )
+            for message in reply_messages:
+                await self.plugin.db.update_message_reply_decision(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    message_id=message.message_id,
+                    reply_decision=0,
+                )
 
         # 6. 更新机器人状态
         if llm_result.status:
@@ -456,6 +484,7 @@ class ReplyPipeline:
             )
 
         # 8. 产生 LLM 回复结果供 Dispatcher 处理
+        llm_result.task_creator_names = dict(task_creator_names or {})
         yield llm_result
 
         # 初始化参数用于潜在的下一次递归
@@ -478,6 +507,7 @@ class ReplyPipeline:
         # 10. 判断是否需要继续循环迭代
         if (
             len(llm_result.tools_to_call) > 0
+            or len(llm_result.xml_tool_results) > 0
             or len(llm_result.search_memories) > 0
             or len(llm_result.all_tasks) > 0
             or len(llm_result.search_histories) > 0
@@ -489,7 +519,7 @@ class ReplyPipeline:
                 bot_name=bot_name,
                 nickname=nickname,
                 group_or_user_id=group_or_user_id,
-                current_message=current_message,
+                reply_messages=reply_messages,
                 relevant_memories=relevant_memories,
                 pending_recall_memories=pending_recall_memories,
                 tool_results=tool_results,
@@ -498,5 +528,7 @@ class ReplyPipeline:
                 other_data=other_data,
                 sent_messages=sent_messages,
                 meme_tags=meme_tags,
+                recent_messages=recent_messages,
+                task_creator_names=llm_result.task_creator_names,
             ):
                 yield chunk

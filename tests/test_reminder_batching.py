@@ -111,7 +111,8 @@ async def test_simultaneous_reminders_share_one_reply_and_keep_each_creator(runt
     prompt = runtime.calls[0]["remind_message"]
     assert "Alice(200): Drink water" in prompt
     assert "Bob(201): Attend meeting" in prompt
-    assert "整合成一条消息" in prompt
+    assert "请完成以下 2 个任务" in prompt
+    assert runtime.calls[0]["task_creator_names"] == {"200": "Alice", "201": "Bob"}
     runtime.manager.action_dispatcher.dispatch_actions.assert_awaited_once()
     runtime.plugin.passive_memory_manager.mark_silence_summary_armed.assert_awaited_once()
     assert runtime.plugin.replying_status["bot:100"] == 0
