@@ -3,9 +3,6 @@ import aiosqlite
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
-from .profile_store import ProfileStoreMixin
-from .schema import initialize_database
-
 from ..utils.schemas import (
     MediaCaption,
     MemoryItem,
@@ -14,17 +11,18 @@ from ..utils.schemas import (
     Status,
     Sticker,
 )
-
+from .profile_store import ProfileStoreMixin
+from .repositories.bot_status import BotStatusRepository
 from .repositories.chat_history import ChatHistoryRepository
 from .repositories.forwarded_messages import ForwardedMessagesRepository
+from .repositories.kv_store import KVStoreRepository
 from .repositories.media_captions import MediaCaptionsRepository
+from .repositories.memories import MemoriesRepository
 from .repositories.short_tasks import ShortTasksRepository
 from .repositories.slang import SlangRepository
-from .repositories.bot_status import BotStatusRepository
-from .repositories.memories import MemoriesRepository
-from .repositories.kv_store import KVStoreRepository
 from .repositories.stickers import StickersRepository
 from .repositories.token_usage import TokenUsageRepository
+from .schema import initialize_database
 
 
 class Database(ProfileStoreMixin):
@@ -36,7 +34,9 @@ class Database(ProfileStoreMixin):
 
         # Instantiate repositories
         self.chat_history_repo = ChatHistoryRepository(conn)
-        self.forwarded_messages_repo = ForwardedMessagesRepository(conn, self.chat_history_repo)
+        self.forwarded_messages_repo = ForwardedMessagesRepository(
+            conn, self.chat_history_repo
+        )
         self.media_captions_repo = MediaCaptionsRepository(conn)
         self.short_tasks_repo = ShortTasksRepository(conn)
         self.slang_repo = SlangRepository(conn)
@@ -61,39 +61,64 @@ class Database(ProfileStoreMixin):
     async def insert_message(self, bot_name: str, message: MessageData):
         return await self.chat_history_repo.insert_message(bot_name, message)
 
-    async def get_messages(self, group_or_user_id: str, bot_name: str, limit: int = 100) -> list[MessageData]:
-        return await self.chat_history_repo.get_messages(group_or_user_id, bot_name, limit)
+    async def get_messages(
+        self, group_or_user_id: str, bot_name: str, limit: int = 100
+    ) -> list[MessageData]:
+        return await self.chat_history_repo.get_messages(
+            group_or_user_id, bot_name, limit
+        )
 
     async def get_max_message_id(self, bot_name: str, group_or_user_id: str) -> int:
-        return await self.chat_history_repo.get_max_message_id(bot_name, group_or_user_id)
+        return await self.chat_history_repo.get_max_message_id(
+            bot_name, group_or_user_id
+        )
 
     async def get_messages_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
     ) -> list[MessageData]:
-        return await self.chat_history_repo.get_messages_by_id_range(bot_name, group_or_user_id, start_id, end_id)
+        return await self.chat_history_repo.get_messages_by_id_range(
+            bot_name, group_or_user_id, start_id, end_id
+        )
 
     async def get_user_messages_after_id(
-        self, bot_name: str, group_or_user_id: str, user_id: str, after_id: int, limit: int = 200
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        after_id: int,
+        limit: int = 200,
     ) -> list[MessageData]:
-        return await self.chat_history_repo.get_user_messages_after_id(bot_name, group_or_user_id, user_id, after_id, limit)
+        return await self.chat_history_repo.get_user_messages_after_id(
+            bot_name, group_or_user_id, user_id, after_id, limit
+        )
 
     async def get_message_count_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
     ) -> int:
-        return await self.chat_history_repo.get_message_count_by_id_range(bot_name, group_or_user_id, start_id, end_id)
+        return await self.chat_history_repo.get_message_count_by_id_range(
+            bot_name, group_or_user_id, start_id, end_id
+        )
 
-    async def get_boundary_message_id(self, bot_name: str, group_or_user_id: str, offset: int) -> int:
-        return await self.chat_history_repo.get_boundary_message_id(bot_name, group_or_user_id, offset)
+    async def get_boundary_message_id(
+        self, bot_name: str, group_or_user_id: str, offset: int
+    ) -> int:
+        return await self.chat_history_repo.get_boundary_message_id(
+            bot_name, group_or_user_id, offset
+        )
 
     async def get_message_by_id(
         self, message_id: str, group_or_user_id: str, bot_name: str
     ) -> MessageData | None:
-        return await self.chat_history_repo.get_message_by_id(message_id, group_or_user_id, bot_name)
+        return await self.chat_history_repo.get_message_by_id(
+            message_id, group_or_user_id, bot_name
+        )
 
     async def get_database_id_by_message_id(
         self, message_id: str, group_or_user_id: str, bot_name: str
     ) -> int | None:
-        return await self.chat_history_repo.get_database_id_by_message_id(message_id, group_or_user_id, bot_name)
+        return await self.chat_history_repo.get_database_id_by_message_id(
+            message_id, group_or_user_id, bot_name
+        )
 
     async def search_messages(
         self,
@@ -107,16 +132,27 @@ class Database(ProfileStoreMixin):
         limit: int = 100,
     ) -> list[MessageData]:
         return await self.chat_history_repo.search_messages(
-            group_or_user_id, bot_name, user_id, keyword, start_time, end_time, sort_order, limit
+            group_or_user_id,
+            bot_name,
+            user_id,
+            keyword,
+            start_time,
+            end_time,
+            sort_order,
+            limit,
         )
 
     async def get_message_context(
         self, message_id: str, group_or_user_id: str, bot_name: str, limit: int = 30
     ) -> list[MessageData]:
-        return await self.chat_history_repo.get_message_context(message_id, group_or_user_id, bot_name, limit)
+        return await self.chat_history_repo.get_message_context(
+            message_id, group_or_user_id, bot_name, limit
+        )
 
     async def delete_chat_history(self, bot_name: str, group_or_user_id: str):
-        return await self.chat_history_repo.delete_chat_history(bot_name, group_or_user_id)
+        return await self.chat_history_repo.delete_chat_history(
+            bot_name, group_or_user_id
+        )
 
     async def auto_clean_chat_history(
         self,
@@ -130,9 +166,13 @@ class Database(ProfileStoreMixin):
             min_keep_per_session=min_keep_per_session,
         )
 
-
     async def update_message_decision(
-        self, bot_name: str, group_or_user_id: str, message_id: str, reply_decision: int, use_rag: int
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_id: str,
+        reply_decision: int,
+        use_rag: int,
     ):
         return await self.chat_history_repo.update_message_decision(
             bot_name, group_or_user_id, message_id, reply_decision, use_rag
@@ -146,9 +186,15 @@ class Database(ProfileStoreMixin):
         )
 
     async def update_message_recall(
-        self, bot_name: str, group_or_user_id: str, message_ids: list[str], is_recalled: int
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        message_ids: list[str],
+        is_recalled: int,
     ):
-        return await self.chat_history_repo.update_message_recall(bot_name, group_or_user_id, message_ids, is_recalled)
+        return await self.chat_history_repo.update_message_recall(
+            bot_name, group_or_user_id, message_ids, is_recalled
+        )
 
     async def delete_message(
         self,
@@ -175,18 +221,29 @@ class Database(ProfileStoreMixin):
             group_or_user_id, bot_name, forward_id, limit
         )
 
-    async def get_forward_summary(self, bot_name: str, group_or_user_id: str, forward_id: str) -> str | None:
-        return await self.forwarded_messages_repo.get_forward_summary(bot_name, group_or_user_id, forward_id)
+    async def get_forward_summary(
+        self, bot_name: str, group_or_user_id: str, forward_id: str
+    ) -> str | None:
+        return await self.forwarded_messages_repo.get_forward_summary(
+            bot_name, group_or_user_id, forward_id
+        )
 
-    async def update_forward_summary(self, bot_name: str, group_or_user_id: str, forward_id: str, summary: str):
-        return await self.forwarded_messages_repo.update_forward_summary(bot_name, group_or_user_id, forward_id, summary)
+    async def update_forward_summary(
+        self, bot_name: str, group_or_user_id: str, forward_id: str, summary: str
+    ):
+        return await self.forwarded_messages_repo.update_forward_summary(
+            bot_name, group_or_user_id, forward_id, summary
+        )
 
-    async def increment_forward_query_times(self, bot_name: str, group_or_user_id: str, forward_id: str):
-        return await self.forwarded_messages_repo.increment_forward_query_times(bot_name, group_or_user_id, forward_id)
+    async def increment_forward_query_times(
+        self, bot_name: str, group_or_user_id: str, forward_id: str
+    ):
+        return await self.forwarded_messages_repo.increment_forward_query_times(
+            bot_name, group_or_user_id, forward_id
+        )
 
     async def clean_old_forwards(self, max_age_hours: int = 24) -> int:
         return await self.forwarded_messages_repo.clean_old_forwards(max_age_hours)
-
 
     # =========================================================================
     # Media Captions Delegations
@@ -197,7 +254,9 @@ class Database(ProfileStoreMixin):
     async def get_media_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
         return await self.media_captions_repo.get_media_caption_by_hash(hash_val)
 
-    async def get_media_caption_by_filename(self, file_name: str) -> MediaCaption | None:
+    async def get_media_caption_by_filename(
+        self, file_name: str
+    ) -> MediaCaption | None:
         return await self.media_captions_repo.get_media_caption_by_filename(file_name)
 
     async def update_media_caption(self, media_caption: MediaCaption):
@@ -225,36 +284,79 @@ class Database(ProfileStoreMixin):
             task, max_active_tasks
         )
 
-    async def expire_short_tasks(self, bot_name: str | None = None, group_or_user_id: str | None = None) -> int:
-        return await self.short_tasks_repo.expire_short_tasks(bot_name, group_or_user_id)
+    async def expire_short_tasks(
+        self, bot_name: str | None = None, group_or_user_id: str | None = None
+    ) -> int:
+        return await self.short_tasks_repo.expire_short_tasks(
+            bot_name, group_or_user_id
+        )
 
     async def get_short_tasks(
-        self, bot_name: str, group_or_user_id: str, statuses: list[str] | None = None, limit: int | None = None
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        statuses: list[str] | None = None,
+        limit: int | None = None,
     ) -> list[ShortTask]:
-        return await self.short_tasks_repo.get_short_tasks(bot_name, group_or_user_id, statuses, limit)
+        return await self.short_tasks_repo.get_short_tasks(
+            bot_name, group_or_user_id, statuses, limit
+        )
 
-    async def get_short_task(self, task_id: str, bot_name: str, group_or_user_id: str) -> ShortTask | None:
-        return await self.short_tasks_repo.get_short_task(task_id, bot_name, group_or_user_id)
+    async def get_short_task(
+        self, task_id: str, bot_name: str, group_or_user_id: str
+    ) -> ShortTask | None:
+        return await self.short_tasks_repo.get_short_task(
+            task_id, bot_name, group_or_user_id
+        )
 
-    async def count_active_short_tasks(self, bot_name: str, group_or_user_id: str) -> int:
-        return await self.short_tasks_repo.count_active_short_tasks(bot_name, group_or_user_id)
+    async def count_active_short_tasks(
+        self, bot_name: str, group_or_user_id: str
+    ) -> int:
+        return await self.short_tasks_repo.count_active_short_tasks(
+            bot_name, group_or_user_id
+        )
 
     async def update_short_task_status(
-        self, task_id: str, bot_name: str, group_or_user_id: str, status: str, closed_by_user_id: str = "", close_reason: str = ""
+        self,
+        task_id: str,
+        bot_name: str,
+        group_or_user_id: str,
+        status: str,
+        closed_by_user_id: str = "",
+        close_reason: str = "",
     ) -> bool:
         return await self.short_tasks_repo.update_short_task_status(
             task_id, bot_name, group_or_user_id, status, closed_by_user_id, close_reason
         )
 
     async def update_short_task(
-        self, task_id: str, bot_name: str, group_or_user_id: str, content: str, status: str, expires_at: str, closed_by_user_id: str = "", close_reason: str = ""
+        self,
+        task_id: str,
+        bot_name: str,
+        group_or_user_id: str,
+        content: str,
+        status: str,
+        expires_at: str,
+        closed_by_user_id: str = "",
+        close_reason: str = "",
     ) -> bool:
         return await self.short_tasks_repo.update_short_task(
-            task_id, bot_name, group_or_user_id, content, status, expires_at, closed_by_user_id, close_reason
+            task_id,
+            bot_name,
+            group_or_user_id,
+            content,
+            status,
+            expires_at,
+            closed_by_user_id,
+            close_reason,
         )
 
-    async def delete_short_task(self, task_id: str, bot_name: str, group_or_user_id: str) -> bool:
-        return await self.short_tasks_repo.delete_short_task(task_id, bot_name, group_or_user_id)
+    async def delete_short_task(
+        self, task_id: str, bot_name: str, group_or_user_id: str
+    ) -> bool:
+        return await self.short_tasks_repo.delete_short_task(
+            task_id, bot_name, group_or_user_id
+        )
 
     async def clear_short_tasks(
         self,
@@ -267,7 +369,9 @@ class Database(ProfileStoreMixin):
         )
 
     async def get_short_task_stats(self, bot_name: str, group_or_user_id: str) -> dict:
-        return await self.short_tasks_repo.get_short_task_stats(bot_name, group_or_user_id)
+        return await self.short_tasks_repo.get_short_task_stats(
+            bot_name, group_or_user_id
+        )
 
     # =========================================================================
     # Bot Status Delegations
@@ -275,8 +379,12 @@ class Database(ProfileStoreMixin):
     async def get_bot_status(self, group_or_user_id: str, bot_name: str) -> Status:
         return await self.bot_status_repo.get_bot_status(group_or_user_id, bot_name)
 
-    async def upsert_bot_status(self, group_or_user_id: str, bot_name: str, status: Status):
-        return await self.bot_status_repo.upsert_bot_status(group_or_user_id, bot_name, status)
+    async def upsert_bot_status(
+        self, group_or_user_id: str, bot_name: str, status: Status
+    ):
+        return await self.bot_status_repo.upsert_bot_status(
+            group_or_user_id, bot_name, status
+        )
 
     async def delete_bot_status(self, group_or_user_id: str, bot_name: str):
         return await self.bot_status_repo.delete_bot_status(group_or_user_id, bot_name)
@@ -284,13 +392,21 @@ class Database(ProfileStoreMixin):
     # =========================================================================
     # Memories Delegations
     # =========================================================================
-    async def insert_memory(self, bot_name: str, group_or_user_id: str, memory: MemoryItem):
-        return await self.memories_repo.insert_memory(bot_name, group_or_user_id, memory)
+    async def insert_memory(
+        self, bot_name: str, group_or_user_id: str, memory: MemoryItem
+    ):
+        return await self.memories_repo.insert_memory(
+            bot_name, group_or_user_id, memory
+        )
 
-    async def get_memories(self, group_or_user_id: str, bot_name: str, limit: int = 10) -> list[MemoryItem]:
+    async def get_memories(
+        self, group_or_user_id: str, bot_name: str, limit: int = 10
+    ) -> list[MemoryItem]:
         return await self.memories_repo.get_memories(group_or_user_id, bot_name, limit)
 
-    async def record_memory_hits(self, memory_ids: list[str], hit_at: str | None = None):
+    async def record_memory_hits(
+        self, memory_ids: list[str], hit_at: str | None = None
+    ):
         return await self.memories_repo.record_memory_hits(memory_ids, hit_at)
 
     async def delete_memory(self, memory_id: str):
@@ -315,9 +431,17 @@ class Database(ProfileStoreMixin):
     # Stickers Delegations
     # =========================================================================
     async def insert_sticker(
-        self, sticker_id: str, name: str, category: str, tags: list[str], description: str, filename: str = ""
+        self,
+        sticker_id: str,
+        name: str,
+        category: str,
+        tags: list[str],
+        description: str,
+        filename: str = "",
     ):
-        return await self.stickers_repo.insert_sticker(sticker_id, name, category, tags, description, filename)
+        return await self.stickers_repo.insert_sticker(
+            sticker_id, name, category, tags, description, filename
+        )
 
     async def get_sticker(self) -> list[Sticker]:
         return await self.stickers_repo.get_sticker()
@@ -335,9 +459,16 @@ class Database(ProfileStoreMixin):
         return await self.stickers_repo.get_sticker_bot(bot_name)
 
     async def update_sticker(
-        self, sticker_id: str, name: str, category: str, tags: list[str], description: str
+        self,
+        sticker_id: str,
+        name: str,
+        category: str,
+        tags: list[str],
+        description: str,
     ) -> bool:
-        return await self.stickers_repo.update_sticker(sticker_id, name, category, tags, description)
+        return await self.stickers_repo.update_sticker(
+            sticker_id, name, category, tags, description
+        )
 
     async def get_sticker_by_id(self, sticker_id: str) -> Sticker | None:
         return await self.stickers_repo.get_sticker_by_id(sticker_id)
@@ -383,42 +514,81 @@ class Database(ProfileStoreMixin):
     async def delete_sticker_tag(self, tag: str) -> int:
         return await self.stickers_repo.delete_tag(tag)
 
-    async def batch_update_sticker_category(self, sticker_ids: list[str], category: str) -> int:
+    async def batch_update_sticker_category(
+        self, sticker_ids: list[str], category: str
+    ) -> int:
         return await self.stickers_repo.batch_update_category(sticker_ids, category)
 
-    async def batch_add_sticker_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
+    async def batch_add_sticker_tags(
+        self, sticker_ids: list[str], tags: list[str]
+    ) -> int:
         return await self.stickers_repo.batch_add_tags(sticker_ids, tags)
 
-    async def batch_remove_sticker_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
+    async def batch_remove_sticker_tags(
+        self, sticker_ids: list[str], tags: list[str]
+    ) -> int:
         return await self.stickers_repo.batch_remove_tags(sticker_ids, tags)
 
     # =========================================================================
     # Token Usage Delegations
     # =========================================================================
     async def log_token_usage(
-        self, bot_name: str, group_or_user_id: str, type: str, provider_id: str, model_name: str,
-        prompt_tokens: int, completion_tokens: int, total_tokens: int, extra_info: dict | None = None
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        type: str,
+        provider_id: str,
+        model_name: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        extra_info: dict | None = None,
     ):
         return await self.token_usage_repo.log_token_usage(
-            bot_name, group_or_user_id, type, provider_id, model_name,
-            prompt_tokens, completion_tokens, total_tokens, extra_info
+            bot_name,
+            group_or_user_id,
+            type,
+            provider_id,
+            model_name,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            extra_info,
         )
 
-    async def get_token_stats(self, bot_name: str = None, group_or_user_id: str = None, time_range: str = None) -> dict:
-        return await self.token_usage_repo.get_token_stats(bot_name, group_or_user_id, time_range)
+    async def get_token_stats(
+        self, bot_name: str = None, group_or_user_id: str = None, time_range: str = None
+    ) -> dict:
+        return await self.token_usage_repo.get_token_stats(
+            bot_name, group_or_user_id, time_range
+        )
 
     async def get_token_logs(
-        self, page: int = 1, page_size: int = 20, type: str = None, bot_name: str = None, group_or_user_id: str = None, time_range: str = None
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        type: str = None,
+        bot_name: str = None,
+        group_or_user_id: str = None,
+        time_range: str = None,
     ) -> tuple[list[dict], int]:
-        return await self.token_usage_repo.get_token_logs(page, page_size, type, bot_name, group_or_user_id, time_range)
+        return await self.token_usage_repo.get_token_logs(
+            page, page_size, type, bot_name, group_or_user_id, time_range
+        )
 
     async def squash_token_logs(self) -> int:
         return await self.token_usage_repo.squash_token_logs()
 
     async def clear_token_logs(
-        self, before_days: int = None, bot_name: str = None, group_or_user_id: str = None, time_range: str = None
+        self,
+        before_days: int = None,
+        bot_name: str = None,
+        group_or_user_id: str = None,
+        time_range: str = None,
     ) -> int:
-        return await self.token_usage_repo.clear_token_logs(before_days, bot_name, group_or_user_id, time_range)
+        return await self.token_usage_repo.clear_token_logs(
+            before_days, bot_name, group_or_user_id, time_range
+        )
 
     # =========================================================================
     # Misc Maintenance (Retained in main database class)

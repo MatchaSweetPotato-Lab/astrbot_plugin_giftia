@@ -1,7 +1,6 @@
 import os
 import platform
 import subprocess
-import sys
 from pathlib import Path
 
 from astrbot.api import logger
@@ -26,13 +25,17 @@ def check_avx2_support() -> bool:
     if system == "linux":
         try:
             if os.path.exists("/proc/cpuinfo"):
-                with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+                with open("/proc/cpuinfo", encoding="utf-8", errors="ignore") as f:
                     for line in f:
-                        if line.strip().startswith("flags") or line.strip().startswith("Features"):
+                        if line.strip().startswith("flags") or line.strip().startswith(
+                            "Features"
+                        ):
                             flags = set(line.strip().split(":")[1].lower().split())
                             return "avx2" in flags
         except Exception as e:
-            logger.warning(f"[Giftia Compat] 读取 /proc/cpuinfo 检测 AVX2 失败，已放行: {e}")
+            logger.warning(
+                f"[Giftia Compat] 读取 /proc/cpuinfo 检测 AVX2 失败，已放行: {e}"
+            )
 
     elif system == "darwin":
         try:
@@ -64,7 +67,9 @@ def check_avx2_support() -> bool:
     return True
 
 
-def ensure_avx2_supported(config: dict | None = None, data_dir: Path | str | None = None):
+def ensure_avx2_supported(
+    config: dict | None = None, data_dir: Path | str | None = None
+):
     """
     确保宿主 CPU 支持 AVX2 指令集（仅在 x86 架构下生效）。
     支持通过 memory_config.ignore_avx2_check 强制跳过，或通过数据目录标记持久化跳过检测。

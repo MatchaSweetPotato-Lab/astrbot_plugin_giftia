@@ -232,13 +232,19 @@ next_run_time: {next_run}"""
         items = []
         for job in jobs:
             # 跳过系统级/全局任务
-            if str(job.id).startswith("system_") or (job.kwargs and job.kwargs.get("system_job", False)):
+            if str(job.id).startswith("system_") or (
+                job.kwargs and job.kwargs.get("system_job", False)
+            ):
                 continue
 
             is_match = False
             if str(job.id).startswith(prefix):
                 is_match = True
-            elif job.kwargs and job.kwargs.get("bot_name") == bot_name and job.kwargs.get("group_or_user_id") == group_or_user_id:
+            elif (
+                job.kwargs
+                and job.kwargs.get("bot_name") == bot_name
+                and job.kwargs.get("group_or_user_id") == group_or_user_id
+            ):
                 is_match = True
 
             if is_match:
@@ -250,17 +256,23 @@ next_run_time: {next_run}"""
                     time_expr = parts[1]
 
                 next_run = str(job.next_run_time) if job.next_run_time else "None"
-                items.append({
-                    "task_id": str(job.id),
-                    "bot_name": bot_name,
-                    "group_or_user_id": group_or_user_id,
-                    "func_name": func_name,
-                    "time_expr": time_expr,
-                    "remind_message": job.kwargs.get("remind_message", "") if job.kwargs else "",
-                    "user_id": job.kwargs.get("user_id", "") if job.kwargs else "",
-                    "user_name": job.kwargs.get("user_name", "") if job.kwargs else "",
-                    "next_run_time": next_run,
-                })
+                items.append(
+                    {
+                        "task_id": str(job.id),
+                        "bot_name": bot_name,
+                        "group_or_user_id": group_or_user_id,
+                        "func_name": func_name,
+                        "time_expr": time_expr,
+                        "remind_message": job.kwargs.get("remind_message", "")
+                        if job.kwargs
+                        else "",
+                        "user_id": job.kwargs.get("user_id", "") if job.kwargs else "",
+                        "user_name": job.kwargs.get("user_name", "")
+                        if job.kwargs
+                        else "",
+                        "next_run_time": next_run,
+                    }
+                )
         return items
 
     def remove_session_jobs(self, bot_name: str, group_or_user_id: str) -> int:
@@ -274,7 +286,9 @@ next_run_time: {next_run}"""
                 self.scheduler.remove_job(item["task_id"])
                 count += 1
             except Exception as e:
-                logger.warning(f"从 APScheduler 移除会话任务 {item['task_id']} 失败: {e}")
+                logger.warning(
+                    f"从 APScheduler 移除会话任务 {item['task_id']} 失败: {e}"
+                )
         return count
 
     def start(self):

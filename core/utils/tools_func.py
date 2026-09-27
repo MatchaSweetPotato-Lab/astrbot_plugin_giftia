@@ -34,7 +34,6 @@ class ToolsFunc:
         "min_keep_per_session": 20,
     }
 
-
     def __init__(
         self,
         config: AstrBotConfig,
@@ -64,9 +63,7 @@ class ToolsFunc:
         self.task_manager.register_func(
             "auto_clean_media_cache", self.auto_clean_media_cache
         )
-        self.task_manager.register_func(
-            "auto_clean_memories", self.auto_clean_memories
-        )
+        self.task_manager.register_func("auto_clean_memories", self.auto_clean_memories)
         self.task_manager.register_func(
             "auto_clean_token_usage", self.auto_clean_token_usage
         )
@@ -125,22 +122,23 @@ class ToolsFunc:
 
     def update_auto_cleanup_jobs(self):
         """统一管理所有的自动清理定时任务"""
+
         async def _update():
             # 1. 读取各任务配置
             media_cfg = await self._get_media_clean_cfg()
-            
+
             raw_memory_cfg = await self.db.get_kv_data("auto_clean_memory_config")
             memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
-            
+
             token_cfg = await self._get_token_clean_cfg()
-                
+
             media_enabled = bool(media_cfg.get("enabled", False))
             memory_enabled = bool(memory_cfg.get("enabled", False))
             token_enabled = bool(token_cfg.get("enabled", True))
-            
+
             # 是否需要注册统一清理 (只要有任意一个清理开启)
             any_enabled = media_enabled or memory_enabled or token_enabled
-            
+
             if any_enabled:
                 self.task_manager.add_job(
                     task_id="system_auto_cleanup_unified",
@@ -150,9 +148,13 @@ class ToolsFunc:
             else:
                 if self.task_manager.get_job_info("system_auto_cleanup_unified"):
                     self.task_manager.remove_job("system_auto_cleanup_unified")
-                
+
             # 物理清理/移除原有的三个历史分散定时任务（仅在存在时清理，避免 scheduler 打印警告日志）
-            for old_task in ["system_auto_clean_media_cache", "system_auto_clean_memories", "system_auto_clean_token_usage"]:
+            for old_task in [
+                "system_auto_clean_media_cache",
+                "system_auto_clean_memories",
+                "system_auto_clean_token_usage",
+            ]:
                 if self.task_manager.get_job_info(old_task):
                     self.task_manager.remove_job(old_task)
 
@@ -197,7 +199,9 @@ class ToolsFunc:
         cfg = dict(cls.DEFAULT_AUTO_CLEAN_MEMORY_CONFIG)
         cfg.update(raw_cfg)
 
-        def clean_int(key: str, default: int, min_value: int, max_value: int | None = None):
+        def clean_int(
+            key: str, default: int, min_value: int, max_value: int | None = None
+        ):
             try:
                 value = int(cfg.get(key, default))
             except (TypeError, ValueError):
@@ -261,7 +265,9 @@ class ToolsFunc:
 
         cfg["enabled"] = cls._clean_bool(cfg.get("enabled"), False)
         try:
-            cfg["max_count_per_session"] = max(0, int(cfg.get("max_count_per_session", 1000)))
+            cfg["max_count_per_session"] = max(
+                0, int(cfg.get("max_count_per_session", 1000))
+            )
         except (TypeError, ValueError):
             cfg["max_count_per_session"] = 1000
 
@@ -271,12 +277,13 @@ class ToolsFunc:
             cfg["max_age_days"] = 30
 
         try:
-            cfg["min_keep_per_session"] = max(1, int(cfg.get("min_keep_per_session", 20)))
+            cfg["min_keep_per_session"] = max(
+                1, int(cfg.get("min_keep_per_session", 20))
+            )
         except (TypeError, ValueError):
             cfg["min_keep_per_session"] = 20
 
         return cfg
-
 
     def update_auto_clean_memory_job(self):
         """兼容层：统一自动清理更新"""
@@ -291,7 +298,11 @@ class ToolsFunc:
             config = self.normalize_auto_clean_aliases_config(config)
 
         if not config.get("enabled", True):
-            return {"status": "skipped", "message": "过期外号自动清理未启用", "deleted_count": 0}
+            return {
+                "status": "skipped",
+                "message": "过期外号自动清理未启用",
+                "deleted_count": 0,
+            }
 
         deleted_count = await self.db.delete_expired_user_aliases(
             min_age_days=config["min_age_days"],
@@ -310,7 +321,11 @@ class ToolsFunc:
             config = self.normalize_auto_clean_chat_history_config(config)
 
         if not config.get("enabled", False):
-            return {"status": "skipped", "message": "聊天记录自动清理未启用", "deleted_count": 0}
+            return {
+                "status": "skipped",
+                "message": "聊天记录自动清理未启用",
+                "deleted_count": 0,
+            }
 
         deleted_count = await self.db.auto_clean_chat_history(
             max_count_per_session=config["max_count_per_session"],
@@ -324,10 +339,10 @@ class ToolsFunc:
     async def auto_cleanup_unified(self):
         """统一自动清理任务，按顺序线性执行各项已启用的清理子任务。"""
         logger.info("[Giftia] 开始执行统一自动清理流程...")
-        
+
         # 1. 媒体缓存清理
         media_cfg = await self._get_media_clean_cfg()
-            
+
         if media_cfg.get("enabled", False):
             logger.info("[Giftia] 1/6 正在清理媒体缓存...")
             try:
@@ -336,11 +351,11 @@ class ToolsFunc:
                 logger.error(f"[Giftia] 媒体缓存自动清理执行异常: {e}")
         else:
             logger.info("[Giftia] 1/6 自动清理媒体缓存未启用，跳过")
-            
+
         # 2. 长期记忆清理
         raw_memory_cfg = await self.db.get_kv_data("auto_clean_memory_config")
         memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
-        
+
         if memory_cfg.get("enabled", False):
             logger.info("[Giftia] 2/6 正在清理长期记忆...")
             try:
@@ -376,18 +391,19 @@ class ToolsFunc:
         else:
             logger.info("[Giftia] 4/6 自动清理聊天记录未启用，跳过")
 
-
         # 5. 合并转发记录清理（超过 24h 默认自动清理，无需 UI 配置）
         logger.info("[Giftia] 5/6 正在清理合并转发记录...")
         try:
             deleted_forwards = await self.db.clean_old_forwards(max_age_hours=24)
-            logger.info(f"[Giftia] 合并转发记录清理完成，已清理 {deleted_forwards} 条超过 24h 的记录")
+            logger.info(
+                f"[Giftia] 合并转发记录清理完成，已清理 {deleted_forwards} 条超过 24h 的记录"
+            )
         except Exception as e:
             logger.error(f"[Giftia] 合并转发自动清理执行异常: {e}")
 
         # 6. Token 消耗日志清理
         token_cfg = await self._get_token_clean_cfg()
-            
+
         if token_cfg.get("enabled", True):
             logger.info("[Giftia] 6/6 正在清理 Token 消耗日志...")
             try:
@@ -397,9 +413,7 @@ class ToolsFunc:
         else:
             logger.info("[Giftia] 6/6 自动清理 Token 消耗日志未启用，跳过")
 
-            
         logger.info("[Giftia] 统一自动清理流程执行结束。")
-
 
     def _build_auto_clean_memory_query(self, cfg: dict) -> tuple[str, list]:
         max_importance = min(int(cfg.get("max_importance", 3)), 7)
@@ -409,12 +423,12 @@ class ToolsFunc:
         include_never_hit = bool(cfg.get("include_never_hit", True))
         max_delete_per_run = max(1, min(200, int(cfg.get("max_delete_per_run", 20))))
 
-        created_cutoff = (
-            datetime.now() - timedelta(days=min_age_days)
-        ).strftime("%Y-%m-%d %H:%M:%S")
-        hit_cutoff = (
-            datetime.now() - timedelta(days=last_hit_before_days)
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        created_cutoff = (datetime.now() - timedelta(days=min_age_days)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        hit_cutoff = (datetime.now() - timedelta(days=last_hit_before_days)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         conditions = [
             "COALESCE(importance, 5) <= ?",
@@ -437,7 +451,7 @@ class ToolsFunc:
             SELECT memory_id, bot_name, group_or_user_id, text, importance,
                    hit_count, last_hit_at, created_at
             FROM memories
-            WHERE {' AND '.join(conditions)}
+            WHERE {" AND ".join(conditions)}
             ORDER BY COALESCE(importance, 5) ASC,
                      COALESCE(hit_count, 0) ASC,
                      datetime(created_at) ASC
@@ -670,14 +684,16 @@ class ToolsFunc:
         try:
             if config is None:
                 config = await self._get_token_clean_cfg()
-            
+
             # 1. 先将昨日及以前的数据拍扁汇总归档
             await self.db.squash_token_logs()
-            
+
             # 2. 清理超过保留天数的历史归档
             days = int(config.get("days", 365))
             cleaned_count = await self.db.clear_token_logs(before_days=days)
-            logger.info(f"[Giftia] Token 消耗日志自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
+            logger.info(
+                f"[Giftia] Token 消耗日志自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)"
+            )
             return {"status": "success", "count": cleaned_count, "days": days}
         except Exception as e:
             logger.error(f"[Giftia] 自动清理 Token 记录失败: {e}")

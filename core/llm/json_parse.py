@@ -1,11 +1,10 @@
 import ast
 import json
-import logging
 import re
 
-from ..utils.schemas import MediaCaption
+from astrbot.api import logger
 
-logger = logging.getLogger("astrbot")
+from ..utils.schemas import MediaCaption
 
 
 def _clean_json_comments_and_trailing_commas(s: str) -> str:
@@ -56,9 +55,13 @@ def _robust_json_loads(s: str) -> dict | list | None:
         # 避免破坏如 {'caption': 'null'} 或 {'text': 'it is true'} 等字面量内容
         ast_str = re.sub(
             r"([\"'])(?:\\[\s\S]|(?!\1)[\s\S])*?\1|(?<!\w)(true|false|null)(?!\w)",
-            lambda match: match.group(0)
-            if match.group(1)
-            else {"true": "True", "false": "False", "null": "None"}[match.group(2).lower()],
+            lambda match: (
+                match.group(0)
+                if match.group(1)
+                else {"true": "True", "false": "False", "null": "None"}[
+                    match.group(2).lower()
+                ]
+            ),
             s,
             flags=re.IGNORECASE,
         )
@@ -78,7 +81,9 @@ def parse_markdown_json(text: str) -> dict | list | None:
     clean_text = text.strip()
 
     # 1. 尝试从 ```json [ ... ] ``` 或 ``` { ... } ``` 代码块中提取
-    codeblock_match = re.search(r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", clean_text, re.DOTALL)
+    codeblock_match = re.search(
+        r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", clean_text, re.DOTALL
+    )
     if codeblock_match:
         json_str = codeblock_match.group(1).strip()
         res = _robust_json_loads(json_str)
@@ -123,7 +128,10 @@ def decode_media_caption_json(
         return None
 
     caption_text = str(
-        data.get("caption") or data.get("image_description") or data.get("description") or ""
+        data.get("caption")
+        or data.get("image_description")
+        or data.get("description")
+        or ""
     ).strip()
     text_content = str(data.get("text") or "").strip()
     genre_val = str(data.get("genre") or "").strip()
@@ -137,7 +145,9 @@ def decode_media_caption_json(
             parts = [p for p in [genre_val, character_val, source_val] if p]
             caption_text = f"识别结果：{' - '.join(parts)}"
         else:
-            logger.warning(f"媒体转述主字段 caption 为空且无任何有效识别内容, 原始数据: {json_str[:500]}")
+            logger.warning(
+                f"媒体转述主字段 caption 为空且无任何有效识别内容, 原始数据: {json_str[:500]}"
+            )
             return None
 
     return MediaCaption(
@@ -158,7 +168,10 @@ def decode_media_audio_json(json_str: str) -> MediaCaption | None:
         return None
 
     caption_text = str(
-        data.get("caption") or data.get("audio_description") or data.get("description") or ""
+        data.get("caption")
+        or data.get("audio_description")
+        or data.get("description")
+        or ""
     ).strip()
     text_content = str(data.get("text") or "").strip()
     genre_val = str(data.get("genre") or "").strip()
@@ -172,7 +185,9 @@ def decode_media_audio_json(json_str: str) -> MediaCaption | None:
             parts = [p for p in [genre_val, character_val, source_val] if p]
             caption_text = f"音频识别：{' - '.join(parts)}"
         else:
-            logger.warning(f"音频转述主字段 caption 为空且无任何有效识别内容, 原始数据: {json_str[:500]}")
+            logger.warning(
+                f"音频转述主字段 caption 为空且无任何有效识别内容, 原始数据: {json_str[:500]}"
+            )
             return None
 
     return MediaCaption(

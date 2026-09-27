@@ -11,7 +11,11 @@ class ProfileStoreMixin:
         record = await self.get_user_profile_record(bot_name, group_or_user_id, user_id)
         if not record:
             return None
-        parts = [f"{k}：{v}" for k, v in record.items() if v and k not in ("aliases", "relation", "title")]
+        parts = [
+            f"{k}：{v}"
+            for k, v in record.items()
+            if v and k not in ("aliases", "relation", "title")
+        ]
         return "\n".join(parts) if parts else None
 
     async def get_user_aliases(
@@ -24,14 +28,14 @@ class ProfileStoreMixin:
     ) -> list[dict]:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
         params: list = [bot_name, group_or_user_id, user_id]
-        
+
         count_clause = "AND ua.alias_count >= 3" if not ignore_count_filter else ""
-        
+
         limit_clause = ""
         if limit is not None:
             limit_clause = "LIMIT ?"
             params.append(max(1, int(limit or 6)))
-            
+
         async with self.conn.execute(
             f"""
             SELECT ua.alias, ua.alias_count, ua.first_seen_at, ua.last_seen_at
@@ -456,7 +460,7 @@ class ProfileStoreMixin:
             if stripped:
                 await self.conn.execute(
                     """
-                    DELETE FROM user_aliases 
+                    DELETE FROM user_aliases
                     WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
                         AND LOWER(TRIM(alias)) = LOWER(?)
                     """,
@@ -566,7 +570,6 @@ class ProfileStoreMixin:
         )
         await self.conn.commit()
 
-
     async def upsert_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str, relation: int
     ):
@@ -659,7 +662,9 @@ class ProfileStoreMixin:
         ) as cursor:
             row = await cursor.fetchone()
         if row and (row["relation"] is not None or row["title"] is not None):
-            return row["relation"] if row["relation"] is not None else 0, row["title"] or ""
+            return row["relation"] if row["relation"] is not None else 0, row[
+                "title"
+            ] or ""
 
         async with self.conn.execute(
             """

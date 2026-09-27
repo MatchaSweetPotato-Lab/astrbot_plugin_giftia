@@ -365,4 +365,3 @@ class EmojiManager:
         )
         self.stickers[sticker_id] = sticker
         return sticker
-

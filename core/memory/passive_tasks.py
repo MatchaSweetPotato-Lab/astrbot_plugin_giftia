@@ -46,7 +46,9 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                         prompt=user_prompt,
                     )
                     if llm_resp and self.plugin:
-                        prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(llm_resp)
+                        prompt_tokens, completion_tokens, total_tokens = (
+                            extract_tokens_robust(llm_resp)
+                        )
                         model_name = provider_id
                         await self.plugin.db.log_token_usage(
                             bot_name=bot_name,
@@ -90,15 +92,16 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         )
         user_prompt = self._build_memory_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
-            "长期记忆提炼", sys_prompt, user_prompt,
-            bot_name=bot_name, group_or_user_id=group_or_user_id,
+            "长期记忆提炼",
+            sys_prompt,
+            user_prompt,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False
 
-        logger.info(
-            f"[Giftia Passive Memory] 长期记忆提炼返回内容:\n{completion_text}"
-        )
+        logger.info(f"[Giftia Passive Memory] 长期记忆提炼返回内容:\n{completion_text}")
 
         memory_matches = re.finditer(
             r"<memory([^>]*)>(.*?)</memory>",
@@ -106,13 +109,12 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             re.DOTALL,
         )
         for match in memory_matches:
-            attrs = {
-                key: value
-                for key, value in re.findall(
+            attrs = dict(
+                re.findall(
                     r'([a-zA-Z_][\w-]*)=["\']([^"\']*)["\']',
                     match.group(1) or "",
                 )
-            }
+            )
             users_attr = attrs.get("users", "")
             importance = normalize_memory_importance(attrs.get("importance"), 5)
             text = match.group(2).strip()
@@ -169,8 +171,11 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         logger.debug(f"[Giftia Passive Memory] 关系画像维护系统提示词:\n{sys_prompt}")
         user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
-            "关系画像维护", sys_prompt, user_prompt,
-            bot_name=bot_name, group_or_user_id=group_or_user_id,
+            "关系画像维护",
+            sys_prompt,
+            user_prompt,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False
@@ -226,9 +231,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                         min(RELATION_DELTA_LIMIT, int(delta_str)),
                     )
                     if delta != 0:
-                        relation_updates.append(
-                            (delta, update_match.group(2).strip())
-                        )
+                        relation_updates.append((delta, update_match.group(2).strip()))
                 return ""
 
             profile_content = re.sub(
@@ -273,11 +276,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 if aliases:
                     profile_fields["aliases"] = "，".join(aliases)
 
-            if (
-                not profile_fields
-                and title is None
-                and not relation_updates
-            ):
+            if not profile_fields and title is None and not relation_updates:
                 continue
 
             if profile_fields or title is not None:
@@ -321,7 +320,9 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         sys_prompt = self._format_prompt_template(
             self._get_long_profile_summary_prompt(), nickname=nickname, self_id=self_id
         )
-        logger.debug(f"[Giftia Passive Memory] 用户画像维护({user_id})系统提示词:\n{sys_prompt}")
+        logger.debug(
+            f"[Giftia Passive Memory] 用户画像维护({user_id})系统提示词:\n{sys_prompt}"
+        )
         user_prompt = await self._build_long_profile_user_prompt(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -333,8 +334,11 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             sample_limit=sample_limit,
         )
         completion_text = await self._call_summary_llm(
-            f"用户画像维护({user_id})", sys_prompt, user_prompt,
-            bot_name=bot_name, group_or_user_id=group_or_user_id,
+            f"用户画像维护({user_id})",
+            sys_prompt,
+            user_prompt,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False
@@ -354,9 +358,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 f"[Giftia Passive Memory] 已更新用户 {user_id} 用户画像字段: {', '.join(sorted(profile_fields))}"
             )
         else:
-            logger.debug(
-                f"[Giftia Passive Memory] 用户 {user_id} 用户画像无可更新字段"
-            )
+            logger.debug(f"[Giftia Passive Memory] 用户 {user_id} 用户画像无可更新字段")
         return True
 
     async def _maybe_run_long_profile_summary_for_user(
@@ -374,8 +376,12 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             return None
 
         today = datetime.now().date().isoformat()
-        base_key = f"passive_memory:long_profile:{bot_name}:{group_or_user_id}:{user_id}"
-        last_run_date = await self.plugin.db.get_kv_data(f"{base_key}:last_run_date", "")
+        base_key = (
+            f"passive_memory:long_profile:{bot_name}:{group_or_user_id}:{user_id}"
+        )
+        last_run_date = await self.plugin.db.get_kv_data(
+            f"{base_key}:last_run_date", ""
+        )
         if last_run_date == today:
             return None
 
@@ -406,7 +412,9 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 return None
 
             sample_messages = [
-                msg for msg in fetched_messages if self._is_long_profile_sample_message(msg)
+                msg
+                for msg in fetched_messages
+                if self._is_long_profile_sample_message(msg)
             ]
             if not sample_messages:
                 return None
@@ -429,7 +437,9 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             ):
                 return None
 
-            latest_fetched_id = max(getattr(msg, "db_id", 0) for msg in fetched_messages)
+            latest_fetched_id = max(
+                getattr(msg, "db_id", 0) for msg in fetched_messages
+            )
             if latest_fetched_id <= last_analyzed_id:
                 return None
 

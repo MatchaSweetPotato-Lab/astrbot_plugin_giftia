@@ -13,7 +13,11 @@ class TaskBoardManager:
         self.plugin = plugin
 
     def is_enabled(self, bot_conf: dict | str = None) -> bool:
-        bot_dict = self.plugin.get_bot_config(bot_conf) if hasattr(self.plugin, "get_bot_config") else {}
+        bot_dict = (
+            self.plugin.get_bot_config(bot_conf)
+            if hasattr(self.plugin, "get_bot_config")
+            else {}
+        )
         enabled_features = bot_dict.get("enabled_interactive_features")
         if enabled_features is None:
             return True
@@ -28,7 +32,9 @@ class TaskBoardManager:
 
     def default_expire_hours(self) -> int:
         try:
-            value = int(self.plugin.tools_config.get("task_board_default_expire_hours", 24))
+            value = int(
+                self.plugin.tools_config.get("task_board_default_expire_hours", 24)
+            )
         except (TypeError, ValueError):
             value = 24
         return max(1, value)
@@ -260,9 +266,7 @@ class TaskBoardManager:
         )
         return True, f"成功清空 {deleted_count} 条短期任务", deleted_count
 
-    async def get_dashboard_summary(
-        self, bot_name: str, group_or_user_id: str
-    ) -> dict:
+    async def get_dashboard_summary(self, bot_name: str, group_or_user_id: str) -> dict:
         if not self.is_enabled():
             return {
                 "enabled": False,

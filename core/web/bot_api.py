@@ -18,35 +18,59 @@ class BotApi:
     def __init__(self, giftia):
         self.giftia = giftia
 
-    def _extract_providers_from_config(self, context, llm_providers: list[dict], tts_providers: list[dict]) -> None:
-
+    def _extract_providers_from_config(
+        self, context, llm_providers: list[dict], tts_providers: list[dict]
+    ) -> None:
         """从 AstrBot 基础配置 JSON/Config 中解析已注册的 LLM 与 TTS 供应商。"""
         cfg = getattr(context, "config", None) or getattr(context, "_config", None)
         if not cfg and hasattr(context, "astrbot_config_mgr"):
             acm = getattr(context, "astrbot_config_mgr")
-            cfg = getattr(acm, "default_conf", None) or getattr(acm, "conf", None) or getattr(acm, "config", None)
+            cfg = (
+                getattr(acm, "default_conf", None)
+                or getattr(acm, "conf", None)
+                or getattr(acm, "config", None)
+            )
 
         if not cfg:
             return
 
-        getter = cfg.get if hasattr(cfg, "get") and callable(cfg.get) else (lambda k, d=None: getattr(cfg, k, d))
+        getter = (
+            cfg.get
+            if hasattr(cfg, "get") and callable(cfg.get)
+            else (lambda k, d=None: getattr(cfg, k, d))
+        )
 
         # 专有语音/TTS 供应商配置项
-        for tts_key in ["speech_providers", "tts_providers", "text_to_speech_providers", "speech"]:
+        for tts_key in [
+            "speech_providers",
+            "tts_providers",
+            "text_to_speech_providers",
+            "speech",
+        ]:
             t_list = getter(tts_key, [])
-            items = t_list if isinstance(t_list, list) else (list(t_list.values()) if isinstance(t_list, dict) else [])
+            items = (
+                t_list
+                if isinstance(t_list, list)
+                else (list(t_list.values()) if isinstance(t_list, dict) else [])
+            )
             for item in items:
                 if isinstance(item, dict):
                     p_id = str(item.get("id") or item.get("name") or "").strip()
                     p_type = str(item.get("type") or "").strip()
                     p_name = str(item.get("name") or p_id).strip()
                     if p_id and not any(x["id"] == p_id for x in tts_providers):
-                        tts_providers.append({"id": p_id, "name": p_name or p_id, "type": p_type})
+                        tts_providers.append(
+                            {"id": p_id, "name": p_name or p_id, "type": p_type}
+                        )
 
         # 通用大模型/提供商配置项 ("providers")
         for prov_key in ["providers", "provider", "model_providers"]:
             p_list = getter(prov_key, [])
-            items = p_list if isinstance(p_list, list) else (list(p_list.values()) if isinstance(p_list, dict) else [])
+            items = (
+                p_list
+                if isinstance(p_list, list)
+                else (list(p_list.values()) if isinstance(p_list, dict) else [])
+            )
             for item in items:
                 if isinstance(item, dict):
                     p_id = str(item.get("id") or item.get("name") or "").strip()
@@ -54,40 +78,72 @@ class BotApi:
                     p_name = str(item.get("name") or p_id).strip()
                     if p_id:
                         info = {"id": p_id, "name": p_name or p_id, "type": p_type}
-                        if any(k in p_type.lower() for k in ["tts", "speech", "voice", "fishaudio", "gsv", "cosy"]):
+                        if any(
+                            k in p_type.lower()
+                            for k in [
+                                "tts",
+                                "speech",
+                                "voice",
+                                "fishaudio",
+                                "gsv",
+                                "cosy",
+                            ]
+                        ):
                             if not any(x["id"] == p_id for x in tts_providers):
                                 tts_providers.append(info)
                         else:
-                            if not any(k in p_type.lower() for k in ["asr", "embedding", "embed", "rerank"]):
+                            if not any(
+                                k in p_type.lower()
+                                for k in ["asr", "embedding", "embed", "rerank"]
+                            ):
                                 if not any(x["id"] == p_id for x in llm_providers):
                                     llm_providers.append(info)
 
-    def _extract_providers_from_runtime(self, context, llm_providers: list[dict], tts_providers: list[dict]) -> None:
+    def _extract_providers_from_runtime(
+        self, context, llm_providers: list[dict], tts_providers: list[dict]
+    ) -> None:
         """从 ProviderManager 运行时实例回退解析已加载的提供商。"""
         pm = getattr(context, "provider_manager", None)
         all_prov_sources = []
         if pm:
-            for attr_name in ["providers", "_providers", "provider_insts", "llm_providers"]:
+            for attr_name in [
+                "providers",
+                "_providers",
+                "provider_insts",
+                "llm_providers",
+            ]:
                 provs = getattr(pm, attr_name, None)
                 if isinstance(provs, dict):
                     all_prov_sources.extend(list(provs.values()))
                 elif isinstance(provs, (list, tuple)):
                     all_prov_sources.extend(list(provs))
 
-            for meth_name in ["get_providers", "get_using_providers", "get_all_providers"]:
+            for meth_name in [
+                "get_providers",
+                "get_using_providers",
+                "get_all_providers",
+            ]:
                 if hasattr(pm, meth_name) and callable(getattr(pm, meth_name)):
                     try:
                         res = getattr(pm, meth_name)()
                         if res:
-                            all_prov_sources.extend(list(res.values()) if isinstance(res, dict) else list(res))
+                            all_prov_sources.extend(
+                                list(res.values())
+                                if isinstance(res, dict)
+                                else list(res)
+                            )
                     except Exception:
                         pass
 
-        if hasattr(context, "get_all_providers") and callable(context.get_all_providers):
+        if hasattr(context, "get_all_providers") and callable(
+            context.get_all_providers
+        ):
             try:
                 res = context.get_all_providers()
                 if res:
-                    all_prov_sources.extend(list(res.values()) if isinstance(res, dict) else list(res))
+                    all_prov_sources.extend(
+                        list(res.values()) if isinstance(res, dict) else list(res)
+                    )
             except Exception:
                 pass
 
@@ -109,19 +165,31 @@ class BotApi:
                 except Exception:
                     pass
                 if not p_id:
-                    p_id = str(getattr(item, "id", "") or getattr(item, "provider_id", "") or "").strip()
+                    p_id = str(
+                        getattr(item, "id", "")
+                        or getattr(item, "provider_id", "")
+                        or ""
+                    ).strip()
                 if not p_type:
-                    p_type = str(getattr(item, "type", "") or type(item).__name__).strip()
+                    p_type = str(
+                        getattr(item, "type", "") or type(item).__name__
+                    ).strip()
                 if not p_name:
                     p_name = str(getattr(item, "name", "") or p_id).strip()
 
             if p_id:
                 info = {"id": p_id, "name": p_name or p_id, "type": p_type}
-                if any(k in p_type.lower() for k in ["tts", "speech", "voice", "fishaudio", "gsv", "cosy"]):
+                if any(
+                    k in p_type.lower()
+                    for k in ["tts", "speech", "voice", "fishaudio", "gsv", "cosy"]
+                ):
                     if not any(x["id"] == p_id for x in tts_providers):
                         tts_providers.append(info)
                 else:
-                    if not any(k in p_type.lower() for k in ["asr", "embedding", "embed", "rerank"]):
+                    if not any(
+                        k in p_type.lower()
+                        for k in ["asr", "embedding", "embed", "rerank"]
+                    ):
                         if not any(x["id"] == p_id for x in llm_providers):
                             llm_providers.append(info)
 
@@ -139,9 +207,15 @@ class BotApi:
             pm_plat = getattr(context, "platform_manager", None)
             if pm_plat:
                 # 1. 从运行中的适配器实例提取 (支持 inst.meta() 与 inst.metadata)
-                insts = getattr(pm_plat, "get_insts", lambda: [])() or getattr(pm_plat, "platform_insts", []) or []
+                insts = (
+                    getattr(pm_plat, "get_insts", lambda: [])()
+                    or getattr(pm_plat, "platform_insts", [])
+                    or []
+                )
                 for inst in insts:
-                    meta_raw = getattr(inst, "meta", None) or getattr(inst, "metadata", None)
+                    meta_raw = getattr(inst, "meta", None) or getattr(
+                        inst, "metadata", None
+                    )
                     if callable(meta_raw):
                         try:
                             meta = meta_raw()
@@ -160,12 +234,18 @@ class BotApi:
                         a_id = str(self._get_meta_attr(meta, "id") or "").strip()
                         if a_id and not any(x["id"] == a_id for x in adapters):
                             name_val = str(self._get_meta_attr(meta, "name") or a_id)
-                            plat_name = str(self._get_meta_attr(meta, "platform_name") or self._get_meta_attr(meta, "type") or "")
-                            adapters.append({
-                                "id": a_id,
-                                "name": name_val,
-                                "platform_name": plat_name,
-                            })
+                            plat_name = str(
+                                self._get_meta_attr(meta, "platform_name")
+                                or self._get_meta_attr(meta, "type")
+                                or ""
+                            )
+                            adapters.append(
+                                {
+                                    "id": a_id,
+                                    "name": name_val,
+                                    "platform_name": plat_name,
+                                }
+                            )
 
                 # 2. 回退检查：从 platforms_config 中补充提取在配置中启用或存在的平台
                 platforms_config = getattr(pm_plat, "platforms_config", None) or []
@@ -174,18 +254,21 @@ class BotApi:
                         a_id = str(p_cfg.get("id", "") or "").strip()
                         if a_id and not any(x["id"] == a_id for x in adapters):
                             name_val = str(p_cfg.get("name") or a_id)
-                            plat_name = str(p_cfg.get("platform_name") or p_cfg.get("type", ""))
-                            adapters.append({
-                                "id": a_id,
-                                "name": name_val,
-                                "platform_name": plat_name,
-                            })
+                            plat_name = str(
+                                p_cfg.get("platform_name") or p_cfg.get("type", "")
+                            )
+                            adapters.append(
+                                {
+                                    "id": a_id,
+                                    "name": name_val,
+                                    "platform_name": plat_name,
+                                }
+                            )
         except Exception as e:
             logger.warning(f"[Giftia BotApi] Fetching adapters failed: {e}")
         return adapters
 
     def _get_available_metadata(self) -> dict:
-
         """汇总可用的 LLM 提供商、TTS 提供商、消息适配器列表、人格列表和内置交互功能。"""
         llm_providers = []
         tts_providers = []
@@ -206,23 +289,32 @@ class BotApi:
                     for p in v3_list:
                         if isinstance(p, dict):
                             p_name = str(p.get("name") or "").strip()
-                            if p_name and not any(x["name"] == p_name for x in personas):
-                                personas.append({
-                                    "name": p_name,
-                                    "prompt": str(p.get("prompt") or ""),
-                                    "tools": p.get("tools"),
-                                })
+                            if p_name and not any(
+                                x["name"] == p_name for x in personas
+                            ):
+                                personas.append(
+                                    {
+                                        "name": p_name,
+                                        "prompt": str(p.get("prompt") or ""),
+                                        "tools": p.get("tools"),
+                                    }
+                                )
                 except Exception as e:
                     logger.warning(f"[Giftia BotApi] Fetching personas failed: {e}")
 
         if not any(x["name"] == "default" for x in personas):
-            personas.insert(0, {
-                "name": "default",
-                "prompt": "You are a helpful and friendly assistant.",
-                "tools": None,
-            })
+            personas.insert(
+                0,
+                {
+                    "name": "default",
+                    "prompt": "You are a helpful and friendly assistant.",
+                    "tools": None,
+                },
+            )
 
-        logger.info(f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters, {len(personas)} personas")
+        logger.info(
+            f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters, {len(personas)} personas"
+        )
         return {
             "llm_providers": llm_providers,
             "tts_providers": tts_providers,
@@ -230,7 +322,6 @@ class BotApi:
             "personas": personas,
             "interactive_features": INTERACTIVE_FEATURES_METADATA,
         }
-
 
     async def get_bots(self):
         """Get all bot configurations and system metadata."""
@@ -242,13 +333,15 @@ class BotApi:
             bots = giftia.bot_config_manager.load_bots()
             metadata = self._get_available_metadata()
 
-            return json_response({
-                "status": "success",
-                "data": {
-                    "bots": bots,
-                    "metadata": metadata,
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "metadata": metadata,
+                    },
                 }
-            })
+            )
         except Exception as e:
             logger.error(f"[Giftia API] get_bots error: {e}", exc_info=True)
             return error_response(f"获取机器人列表失败: {str(e)}")
@@ -318,7 +411,13 @@ class BotApi:
 
             if manager.save_bots(new_bots):
                 giftia.sync_bot_maps()
-                return json_response({"status": "success", "message": "机器人配置保存成功", "bot": normalized_bot})
+                return json_response(
+                    {
+                        "status": "success",
+                        "message": "机器人配置保存成功",
+                        "bot": normalized_bot,
+                    }
+                )
             else:
                 return error_response("保存机器人配置到文件失败")
         except Exception as e:
@@ -346,7 +445,9 @@ class BotApi:
 
             if manager.save_bots(new_bots):
                 giftia.sync_bot_maps()
-                return json_response({"status": "success", "message": f"机器人 '{bot_name}' 已成功删除"})
+                return json_response(
+                    {"status": "success", "message": f"机器人 '{bot_name}' 已成功删除"}
+                )
             else:
                 return error_response("保存配置失败")
         except Exception as e:
@@ -380,7 +481,13 @@ class BotApi:
 
             if manager.save_bots(existing_bots):
                 giftia.sync_bot_maps()
-                return json_response({"status": "success", "message": f"机器人 '{bot_name}' 状态已更新", "enabled": enabled})
+                return json_response(
+                    {
+                        "status": "success",
+                        "message": f"机器人 '{bot_name}' 状态已更新",
+                        "enabled": enabled,
+                    }
+                )
             else:
                 return error_response("保存配置失败")
         except Exception as e:
@@ -408,8 +515,16 @@ class BotApi:
 
                 if files_dict and hasattr(files_dict, "items"):
                     for key, file_item in files_dict.items():
-                        filename = getattr(file_item, "filename", "") or getattr(file_item, "name", "") or "voice.wav"
-                        file_bytes = getattr(file_item, "body", None) or getattr(file_item, "content", None) or getattr(file_item, "read", lambda: None)()
+                        filename = (
+                            getattr(file_item, "filename", "")
+                            or getattr(file_item, "name", "")
+                            or "voice.wav"
+                        )
+                        file_bytes = (
+                            getattr(file_item, "body", None)
+                            or getattr(file_item, "content", None)
+                            or getattr(file_item, "read", lambda: None)()
+                        )
                         if file_bytes:
                             break
 
@@ -420,6 +535,7 @@ class BotApi:
                     b64_content = str(body.get("content") or "")
                     if b64_content:
                         import base64
+
                         if "," in b64_content:
                             b64_content = b64_content.split(",", 1)[1]
                         file_bytes = base64.b64decode(b64_content)
@@ -428,35 +544,49 @@ class BotApi:
                 return error_response("未接收到有效的语音文件内容")
 
             ext = os.path.splitext(filename)[1] or ".wav"
-            data_dir = str(giftia.bot_config_manager.data_dir) if (giftia and hasattr(giftia, "bot_config_manager")) else "."
+            data_dir = (
+                str(giftia.bot_config_manager.data_dir)
+                if (giftia and hasattr(giftia, "bot_config_manager"))
+                else "."
+            )
             voices_dir = os.path.join(data_dir, "voices")
             os.makedirs(voices_dir, exist_ok=True)
 
-            clean_name = os.path.basename(filename) or f"voice_{uuid.uuid4().hex[:8]}{ext}"
+            clean_name = (
+                os.path.basename(filename) or f"voice_{uuid.uuid4().hex[:8]}{ext}"
+            )
             save_path = os.path.join(voices_dir, clean_name)
 
             with open(save_path, "wb") as f:
                 f.write(file_bytes)
 
             rel_path = os.path.relpath(save_path, data_dir)
-            return json_response({
-                "status": "success",
-                "message": "语音文件上传成功",
-                "data": {
-                    "abs_path": save_path,
-                    "rel_path": rel_path.replace("\\", "/"),
-                    "filename": clean_name,
+            return json_response(
+                {
+                    "status": "success",
+                    "message": "语音文件上传成功",
+                    "data": {
+                        "abs_path": save_path,
+                        "rel_path": rel_path.replace("\\", "/"),
+                        "filename": clean_name,
+                    },
                 }
-            })
+            )
         except Exception as e:
-            logger.error(f"[Giftia API] upload_signature_voice error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] upload_signature_voice error: {e}", exc_info=True
+            )
             return error_response(f"上传语音文件失败: {str(e)}")
 
     async def list_signature_voices(self):
         """List all uploaded voice files in data/voices directory."""
         try:
             giftia = getattr(self, "giftia", None)
-            data_dir = str(giftia.bot_config_manager.data_dir) if (giftia and hasattr(giftia, "bot_config_manager")) else "."
+            data_dir = (
+                str(giftia.bot_config_manager.data_dir)
+                if (giftia and hasattr(giftia, "bot_config_manager"))
+                else "."
+            )
             voices_dir = os.path.join(data_dir, "voices")
             os.makedirs(voices_dir, exist_ok=True)
 
@@ -467,16 +597,20 @@ class BotApi:
                 if ext in valid_exts:
                     full_path = os.path.join(voices_dir, f)
                     rel_path = os.path.relpath(full_path, data_dir).replace("\\", "/")
-                    files.append({
-                        "filename": f,
-                        "rel_path": rel_path,
-                        "size": os.path.getsize(full_path),
-                    })
+                    files.append(
+                        {
+                            "filename": f,
+                            "rel_path": rel_path,
+                            "size": os.path.getsize(full_path),
+                        }
+                    )
 
             files.sort(key=lambda x: x["filename"])
             return json_response({"status": "success", "data": files})
         except Exception as e:
-            logger.error(f"[Giftia API] list_signature_voices error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] list_signature_voices error: {e}", exc_info=True
+            )
             return error_response(f"获取语音列表失败: {str(e)}")
 
     def _resolve_voice_file_path(self, rel_path: str) -> str | None:
@@ -485,12 +619,18 @@ class BotApi:
             return None
 
         giftia = getattr(self, "giftia", None)
-        data_dir = str(giftia.bot_config_manager.data_dir) if (giftia and hasattr(giftia, "bot_config_manager")) else "."
+        data_dir = (
+            str(giftia.bot_config_manager.data_dir)
+            if (giftia and hasattr(giftia, "bot_config_manager"))
+            else "."
+        )
         voices_dir = os.path.abspath(os.path.join(data_dir, "voices"))
 
         cleaned_rel = rel_path.strip().lstrip("/\\")
         # 若传入路径带有 "voices/" 前缀，先截取掉前缀以归一化
-        if cleaned_rel.lower().startswith("voices/") or cleaned_rel.lower().startswith("voices\\"):
+        if cleaned_rel.lower().startswith("voices/") or cleaned_rel.lower().startswith(
+            "voices\\"
+        ):
             cleaned_rel = cleaned_rel[7:].lstrip("/\\")
 
         # 1. 统一以 voices_dir 作为唯一基准目录调用 safe_path_join 解析
@@ -507,7 +647,6 @@ class BotApi:
 
         return None
 
-
     async def get_voice_file_b64(self):
         """Get Base64 data URL for a voice audio file for instant browser playback."""
         try:
@@ -520,19 +659,23 @@ class BotApi:
             if not full_path:
                 return error_response(f"语音文件不存在或目录受限: {rel_path}")
 
-            b64_str, mime_type = read_file_to_base64(full_path, fallback_mime="audio/wav")
+            b64_str, mime_type = read_file_to_base64(
+                full_path, fallback_mime="audio/wav"
+            )
             data_url = f"data:{mime_type};base64,{b64_str}"
 
-            return json_response({
-                "status": "success",
-                "base64": b64_str,
-                "content_type": mime_type,
-                "data": {
-                    "b64": data_url,
+            return json_response(
+                {
+                    "status": "success",
                     "base64": b64_str,
                     "content_type": mime_type,
+                    "data": {
+                        "b64": data_url,
+                        "base64": b64_str,
+                        "content_type": mime_type,
+                    },
                 }
-            })
+            )
         except Exception as e:
             logger.error(f"[Giftia API] get_voice_file_b64 error: {e}", exc_info=True)
             return error_response(f"获取语音文件失败: {str(e)}")
@@ -550,7 +693,14 @@ class BotApi:
                 return error_response(f"语音文件不存在或目录受限: {rel_path}")
 
             os.remove(full_path)
-            return json_response({"status": "success", "message": f"语音文件 '{os.path.basename(full_path)}' 已成功删除"})
+            return json_response(
+                {
+                    "status": "success",
+                    "message": f"语音文件 '{os.path.basename(full_path)}' 已成功删除",
+                }
+            )
         except Exception as e:
-            logger.error(f"[Giftia API] delete_signature_voice error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] delete_signature_voice error: {e}", exc_info=True
+            )
             return error_response(f"删除语音文件失败: {str(e)}")

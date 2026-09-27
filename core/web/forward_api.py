@@ -1,14 +1,10 @@
 import json
-import re
 from datetime import datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 from ..utils.schemas import FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
-
-
-
 
 
 def _safe_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -46,12 +42,12 @@ class ForwardApi:
         if status == "unsummarized":
             return "COALESCE(is_summarized, 0) = 0", []
         if status == "unresolved":
-            return '(content LIKE ? OR content LIKE ?)', [
+            return "(content LIKE ? OR content LIKE ?)", [
                 '%"unresolved": true%',
                 '%"unresolved":true%',
             ]
         if status == "truncated":
-            return '(content LIKE ? OR content LIKE ?)', [
+            return "(content LIKE ? OR content LIKE ?)", [
                 '%"truncated": true%',
                 '%"truncated":true%',
             ]
@@ -119,9 +115,7 @@ class ForwardApi:
                     "content": content,
                     "preview": _shorten(content, 180),
                     "media_ids": sorted(set(FORWARD_MEDIA_PATTERN.findall(content))),
-                    "nested_ids": sorted(
-                        set(FORWARD_NESTED_PATTERN.findall(content))
-                    ),
+                    "nested_ids": sorted(set(FORWARD_NESTED_PATTERN.findall(content))),
                 }
             )
         return items
@@ -200,7 +194,9 @@ class ForwardApi:
                 search=search,
             )
 
-            count_sql = f"SELECT COUNT(*) as total FROM forwarded_message {where_clause}"
+            count_sql = (
+                f"SELECT COUNT(*) as total FROM forwarded_message {where_clause}"
+            )
             async with self.giftia.db.conn.execute(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
@@ -246,7 +242,9 @@ class ForwardApi:
             forward_id = request.query.get("forward_id")
 
             if not bot_name or not group_or_user_id or not forward_id:
-                return error_response("缺少 bot_name、group_or_user_id 或 forward_id 参数")
+                return error_response(
+                    "缺少 bot_name、group_or_user_id 或 forward_id 参数"
+                )
 
             async with self.giftia.db.conn.execute(
                 """

@@ -1,4 +1,5 @@
 import json
+
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
@@ -34,11 +35,11 @@ class TokenApi:
                 body = await request.json()
             except Exception:
                 pass
-            
+
             before_days = body.get("before_days") if body else None
             if before_days is not None:
                 before_days = int(before_days)
-            
+
             bot_name = body.get("bot_name") if body else None
             group_or_user_id = body.get("group_or_user_id") if body else None
             time_range = body.get("time_range") if body else None
@@ -49,10 +50,12 @@ class TokenApi:
                 group_or_user_id=group_or_user_id,
                 time_range=time_range,
             )
-            return json_response({
-                "status": "success",
-                "message": f"成功清除了 {cleaned_count} 条 Token 消耗日志记录",
-            })
+            return json_response(
+                {
+                    "status": "success",
+                    "message": f"成功清除了 {cleaned_count} 条 Token 消耗日志记录",
+                }
+            )
         except Exception as e:
             logger.error(f"[Giftia API] clear_token_logs error: {e}")
             return error_response(f"清除 Token 消耗日志失败: {str(e)}")
@@ -61,11 +64,7 @@ class TokenApi:
         """获取自动清理 Token 配置"""
         try:
             raw_cfg = await self.giftia.db.get_kv_data("auto_clean_token_config")
-            cfg = (
-                json.loads(raw_cfg)
-                if raw_cfg
-                else {"enabled": True, "days": 365}
-            )
+            cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": True, "days": 365}
             return json_response({"status": "success", "config": cfg})
         except Exception as e:
             logger.error(f"[Giftia API] get_auto_clean_token_config error: {e}")
@@ -86,7 +85,9 @@ class TokenApi:
             # 更新调度器任务
             self.giftia.tools_func.update_auto_clean_token_job()
 
-            return json_response({"status": "success", "message": "自动清理配置更新成功"})
+            return json_response(
+                {"status": "success", "message": "自动清理配置更新成功"}
+            )
         except Exception as e:
             logger.error(f"[Giftia API] set_auto_clean_token_config error: {e}")
             return error_response(f"更新自动清理配置失败: {str(e)}")

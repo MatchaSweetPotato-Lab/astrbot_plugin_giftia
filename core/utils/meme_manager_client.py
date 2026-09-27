@@ -60,18 +60,28 @@ class MemeManagerClient:
             pass
 
         try:
-            candidates.append(Path(get_astrbot_data_path()) / "plugin_data" / "meme_manager")
+            candidates.append(
+                Path(get_astrbot_data_path()) / "plugin_data" / "meme_manager"
+            )
             candidates.append(Path(get_astrbot_data_path()) / "memes_data")
         except Exception:
             pass
 
         # 尝试相对于运行路径及插件目录
         cwd = Path.cwd()
-        candidates.extend([
-            cwd / "data" / "plugin_data" / "meme_manager",
-            cwd / "data" / "plugins" / "astrbot_plugin_meme_manager" / "data" / "plugin_data" / "meme_manager",
-            cwd / "data" / "memes_data",
-        ])
+        candidates.extend(
+            [
+                cwd / "data" / "plugin_data" / "meme_manager",
+                cwd
+                / "data"
+                / "plugins"
+                / "astrbot_plugin_meme_manager"
+                / "data"
+                / "plugin_data"
+                / "meme_manager",
+                cwd / "data" / "memes_data",
+            ]
+        )
 
         for path in candidates:
             if (path / "memes.db").is_file():
@@ -115,7 +125,9 @@ class MemeManagerClient:
         if count <= 0:
             return []
 
-        query_str = query if isinstance(query, str) else ", ".join([str(t) for t in query if t])
+        query_str = (
+            query if isinstance(query, str) else ", ".join([str(t) for t in query if t])
+        )
 
         # 1. 优先调用 meme_manager 实例的统一接口
         mm_star = self._get_meme_manager_star()
@@ -130,10 +142,14 @@ class MemeManagerClient:
                 if res:
                     return res
             except Exception as e:
-                logger.debug(f"[Giftia] 调用 meme_manager get_candidate_memes 失败，降级本地查询: {e}")
+                logger.debug(
+                    f"[Giftia] 调用 meme_manager get_candidate_memes 失败，降级本地查询: {e}"
+                )
 
         # 2. 本地回退（主要用于独立测试环境或 meme_manager 实例尚未就绪）
-        raw_tags = [t.strip().lower() for t in re.split(r"[,，\s]+", query_str) if t.strip()]
+        raw_tags = [
+            t.strip().lower() for t in re.split(r"[,，\s]+", query_str) if t.strip()
+        ]
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
@@ -156,7 +172,9 @@ class MemeManagerClient:
                 continue
             emotions_str = str(row["emotions"] or "")
             desc_str = str(row["description"] or "")
-            emotions_list = [e.strip().lower() for e in emotions_str.split(",") if e.strip()]
+            emotions_list = [
+                e.strip().lower() for e in emotions_str.split(",") if e.strip()
+            ]
 
             score = 0
             if raw_tags:
@@ -169,14 +187,16 @@ class MemeManagerClient:
                     elif tag in desc_str.lower():
                         score += int(tag_weight * 0.5)
 
-            candidates.append({
-                "id": int(row["id"]),
-                "filename": fn,
-                "emotions": emotions_str,
-                "description": desc_str,
-                "send_mode": str(row["send_mode"] or "sticker"),
-                "score": score,
-            })
+            candidates.append(
+                {
+                    "id": int(row["id"]),
+                    "filename": fn,
+                    "emotions": emotions_str,
+                    "description": desc_str,
+                    "send_mode": str(row["send_mode"] or "sticker"),
+                    "score": score,
+                }
+            )
 
         random.shuffle(candidates)
         candidates.sort(key=lambda x: x["score"], reverse=True)
@@ -259,5 +279,7 @@ class MemeManagerClient:
         for c in candidates:
             desc = c.get("description") or c.get("emotions") or "表情包"
             emotions_str = c.get("emotions") or "无"
-            result_lines.append(f"[{desc}](sticker_id: mm_{c['id']}) - 标签: {emotions_str}")
+            result_lines.append(
+                f"[{desc}](sticker_id: mm_{c['id']}) - 标签: {emotions_str}"
+            )
         return "\n".join(result_lines)

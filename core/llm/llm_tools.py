@@ -202,8 +202,8 @@ class SearchUserProfileTool(FunctionTool):
         if title:
             lines.append(f"- 关系头衔：{title}")
 
-        for field, label in USER_PROFILE_FIELDS:
-            value = normalize_profile_value(item.get(field))
+        for profile_field, label in USER_PROFILE_FIELDS:
+            value = normalize_profile_value(item.get(profile_field))
             if value:
                 lines.append(f"- {label}：{value}")
 

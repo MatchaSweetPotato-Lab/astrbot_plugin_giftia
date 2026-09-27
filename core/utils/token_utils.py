@@ -21,18 +21,32 @@ def extract_tokens_robust(llm_resp) -> tuple[int, int, int]:
             input_other = getattr(usage, "input_other", 0) or 0
             input_cached = getattr(usage, "input_cached", 0) or 0
             prompt_tokens = input_other + input_cached
-            
+
         if hasattr(usage, "output"):
             completion_tokens = getattr(usage, "output") or 0
         if hasattr(usage, "total"):
             total_tokens = getattr(usage, "total") or 0
-        
+
         # If the values are still 0, maybe usage was a dictionary or some other object
         if prompt_tokens == 0 and completion_tokens == 0:
             if isinstance(usage, dict):
-                prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("input") or 0
-                completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("output") or 0
-                total_tokens = usage.get("total_tokens") or usage.get("total") or (prompt_tokens + completion_tokens)
+                prompt_tokens = (
+                    usage.get("prompt_tokens")
+                    or usage.get("input_tokens")
+                    or usage.get("input")
+                    or 0
+                )
+                completion_tokens = (
+                    usage.get("completion_tokens")
+                    or usage.get("output_tokens")
+                    or usage.get("output")
+                    or 0
+                )
+                total_tokens = (
+                    usage.get("total_tokens")
+                    or usage.get("total")
+                    or (prompt_tokens + completion_tokens)
+                )
 
     # 2. Secondary fallback: check raw_completion
     if prompt_tokens == 0 and completion_tokens == 0:
@@ -43,7 +57,7 @@ def extract_tokens_robust(llm_resp) -> tuple[int, int, int]:
                 raw_usage = raw.get("usage")
             elif hasattr(raw, "usage"):
                 raw_usage = getattr(raw, "usage")
-            
+
             if raw_usage:
                 if isinstance(raw_usage, dict):
                     prompt_tokens = (
@@ -60,7 +74,11 @@ def extract_tokens_robust(llm_resp) -> tuple[int, int, int]:
                         or raw_usage.get("output")
                         or 0
                     )
-                    total_tokens = raw_usage.get("total_tokens") or raw_usage.get("total") or (prompt_tokens + completion_tokens)
+                    total_tokens = (
+                        raw_usage.get("total_tokens")
+                        or raw_usage.get("total")
+                        or (prompt_tokens + completion_tokens)
+                    )
                 else:
                     prompt_tokens = (
                         getattr(raw_usage, "prompt_tokens", 0)
@@ -76,6 +94,10 @@ def extract_tokens_robust(llm_resp) -> tuple[int, int, int]:
                         or getattr(raw_usage, "output", 0)
                         or 0
                     )
-                    total_tokens = getattr(raw_usage, "total_tokens", 0) or getattr(raw_usage, "total", 0) or (prompt_tokens + completion_tokens)
+                    total_tokens = (
+                        getattr(raw_usage, "total_tokens", 0)
+                        or getattr(raw_usage, "total", 0)
+                        or (prompt_tokens + completion_tokens)
+                    )
 
     return prompt_tokens, completion_tokens, total_tokens

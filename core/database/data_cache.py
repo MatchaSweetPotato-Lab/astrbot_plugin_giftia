@@ -129,7 +129,9 @@ class DataCache:
             if keywords:
                 for kw in keywords:
                     if kw and kw in msg_data.content:
-                        logger.info(f"[Giftia Safety Intercept] 拦截到敏感词: {kw}，已进行消息屏蔽处理")
+                        logger.info(
+                            f"[Giftia Safety Intercept] 拦截到敏感词: {kw}，已进行消息屏蔽处理"
+                        )
                         msg_data.content = "【该消息触发了安全拦截，已被屏蔽】"
                         break
 
@@ -165,7 +167,9 @@ class DataCache:
                     return
 
         # Record this write
-        self._recent_adds.append((now, bot_name, group_id, msg_data.message_id, msg_data.content))
+        self._recent_adds.append(
+            (now, bot_name, group_id, msg_data.message_id, msg_data.content)
+        )
 
         if not msg_data.message_id:
             import uuid
@@ -274,7 +278,9 @@ class DataCache:
         messages = self.recent_messages.get(fmt_key)
         if messages:
             for msg in messages:
-                if (getattr(msg, "db_id", None) and msg.db_id == message_db_id) or (message_id and msg.message_id == message_id):
+                if (getattr(msg, "db_id", None) and msg.db_id == message_db_id) or (
+                    message_id and msg.message_id == message_id
+                ):
                     messages.remove(msg)
                     break
         return True
@@ -713,7 +719,13 @@ class DataCache:
 
             has_content = any(
                 brief.get(key)
-                for key in ("relation", "title", "call_name", "aliases", "avatar_description")
+                for key in (
+                    "relation",
+                    "title",
+                    "call_name",
+                    "aliases",
+                    "avatar_description",
+                )
             )
             if has_content:
                 briefs.append(brief)
@@ -950,7 +962,9 @@ class DataCache:
         )
         return memory_id
 
-    async def record_memory_hits(self, memories: Iterable[dict | object] | None) -> None:
+    async def record_memory_hits(
+        self, memories: Iterable[dict | object] | None
+    ) -> None:
         """记录长期记忆的有效召回命中。"""
         if not memories:
             return

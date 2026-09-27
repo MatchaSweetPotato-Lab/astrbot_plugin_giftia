@@ -1,7 +1,8 @@
 from datetime import datetime
-import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import MemoryItem, normalize_memory_importance
+from .base import BaseRepository
+
 
 class MemoriesRepository(BaseRepository):
     async def insert_memory(
@@ -66,7 +67,9 @@ class MemoriesRepository(BaseRepository):
             for row in rows
         ]
 
-    async def record_memory_hits(self, memory_ids: list[str], hit_at: str | None = None):
+    async def record_memory_hits(
+        self, memory_ids: list[str], hit_at: str | None = None
+    ):
         """记录长期记忆被有效召回的次数与最近命中时间。"""
         clean_ids = []
         seen = set()

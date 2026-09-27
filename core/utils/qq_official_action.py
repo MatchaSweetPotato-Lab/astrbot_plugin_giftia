@@ -1,14 +1,14 @@
-import aiohttp
 import asyncio
-import copy
 import datetime
 import random
 import re
-from typing import Any, Tuple
+from typing import Any
+
+import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import At, File, Image, Plain, Record, Reply, Video
+from astrbot.api.message_components import At, Plain, Reply
 from astrbot.core.message.components import BaseMessageComponent
 
 QQ_OFFICIAL_PLATFORMS = {
@@ -66,7 +66,9 @@ class QQOfficialAction:
     4. 撤回消息 (DELETE /v2/groups/{group_openid}/messages/{message_id})
     """
 
-    def __init__(self, sticker_summaries: list[str] | None = None, max_cache_size: int = 2000):
+    def __init__(
+        self, sticker_summaries: list[str] | None = None, max_cache_size: int = 2000
+    ):
         self.sticker_summaries = sticker_summaries or ["图片"]
         self._msg_id_to_idx: dict[str, str] = {}
         self._max_cache_size = max_cache_size
@@ -79,7 +81,9 @@ class QQOfficialAction:
         m_idx = str(msg_idx).strip()
         if m_id and m_idx:
             if len(self._msg_id_to_idx) >= self._max_cache_size:
-                keys_to_remove = list(self._msg_id_to_idx.keys())[: self._max_cache_size // 2]
+                keys_to_remove = list(self._msg_id_to_idx.keys())[
+                    : self._max_cache_size // 2
+                ]
                 for k in keys_to_remove:
                     self._msg_id_to_idx.pop(k, None)
             self._msg_id_to_idx[m_id] = m_idx
@@ -92,7 +96,9 @@ class QQOfficialAction:
         r_id = str(ref_id).strip()
         if r_id in self._msg_id_to_idx:
             resolved = self._msg_id_to_idx[r_id]
-            logger.debug(f"[QQOfficial] 引用 ID 成功映射转换: {r_id[:25]}... -> {resolved}")
+            logger.debug(
+                f"[QQOfficial] 引用 ID 成功映射转换: {r_id[:25]}... -> {resolved}"
+            )
             return resolved
         return r_id
 
@@ -102,7 +108,9 @@ class QQOfficialAction:
         return is_qq_official(event)
 
     @staticmethod
-    def extract_msg_id_and_idx(event: AstrMessageEvent) -> tuple[str | None, str | None]:
+    def extract_msg_id_and_idx(
+        event: AstrMessageEvent,
+    ) -> tuple[str | None, str | None]:
         """
         从官方 QQ 事件中提取消息 ID (id) 与 消息索引 (msg_idx，从 message_scene.ext 数组中解析)
         """
@@ -120,7 +128,9 @@ class QQOfficialAction:
                 if raw_msg:
                     raw_data = getattr(raw_msg, "raw_data", None) or raw_msg
         if not raw_data:
-            raw_data = getattr(event, "raw_data", None) or getattr(event, "raw_message", None)
+            raw_data = getattr(event, "raw_data", None) or getattr(
+                event, "raw_message", None
+            )
 
         if isinstance(raw_data, dict) and not msg_id:
             msg_id = raw_data.get("id")
@@ -171,6 +181,7 @@ class QQOfficialAction:
             return False, None
         try:
             from botpy.http import Route
+
             route = Route(method, path)
             res = await request_func(route, json=json_data)
             return True, res if isinstance(res, dict) else {}
@@ -188,7 +199,9 @@ class QQOfficialAction:
         self, http_obj: Any, api: Any, method: str, path: str, json_data: dict | None
     ) -> tuple[bool, dict | None]:
         """通过 aiohttp ClientSession 发起 REST 请求兜底"""
-        session = getattr(http_obj, "_session", None) or getattr(http_obj, "session", None)
+        session = getattr(http_obj, "_session", None) or getattr(
+            http_obj, "session", None
+        )
         headers = (
             getattr(http_obj, "_headers", None)
             or getattr(http_obj, "headers", None)
@@ -197,7 +210,9 @@ class QQOfficialAction:
         )
         if hasattr(http_obj, "headers_get") and callable(http_obj.headers_get):
             get_h = http_obj.headers_get
-            raw_headers = await get_h() if asyncio.iscoroutinefunction(get_h) else get_h()
+            raw_headers = (
+                await get_h() if asyncio.iscoroutinefunction(get_h) else get_h()
+            )
             headers = raw_headers if isinstance(raw_headers, dict) else {}
 
         if not (session and hasattr(session, "request")):
@@ -208,9 +223,15 @@ class QQOfficialAction:
             or getattr(api, "base_url", None)
             or "https://api.sgroup.qq.com"
         )
-        url = path if path.startswith("http") else f"{str(base_url).rstrip('/')}/{path.lstrip('/')}"
+        url = (
+            path
+            if path.startswith("http")
+            else f"{str(base_url).rstrip('/')}/{path.lstrip('/')}"
+        )
         try:
-            async with session.request(method, url, headers=headers, json=json_data) as resp:
+            async with session.request(
+                method, url, headers=headers, json=json_data
+            ) as resp:
                 if resp.status == 204:
                     return True, {}
                 if resp.status in (200, 201, 202):
@@ -219,6 +240,7 @@ class QQOfficialAction:
                         return True, {}
                     try:
                         import json
+
                         return True, json.loads(text)
                     except Exception as err_json:
                         logger.warning(
@@ -233,7 +255,9 @@ class QQOfficialAction:
                     return True, None
         except Exception as e:
             if isinstance(e, aiohttp.ClientError):
-                logger.warning(f"[QQOfficial] HTTP REST 网络传输故障 [{method} {path}]: {e}")
+                logger.warning(
+                    f"[QQOfficial] HTTP REST 网络传输故障 [{method} {path}]: {e}"
+                )
             else:
                 logger.error(
                     f"[QQOfficial] HTTP REST 请求遭遇未预期异常 [{method} {path} | payload={json_data}]: {e}",
@@ -261,7 +285,9 @@ class QQOfficialAction:
 
         http_obj = getattr(api, "_http", None) or getattr(api, "http", None)
         if not http_obj and hasattr(event, "bot"):
-            http_obj = getattr(event.bot, "_http", None) or getattr(event.bot, "http", None)
+            http_obj = getattr(event.bot, "_http", None) or getattr(
+                event.bot, "http", None
+            )
         if not http_obj:
             http_obj = api
 
@@ -274,7 +300,9 @@ class QQOfficialAction:
                 else:
                     check()
             except Exception as e:
-                logger.debug(f"[QQOfficial] check_session 刷鉴权头异常 [{method} {path}]: {e}")
+                logger.debug(
+                    f"[QQOfficial] check_session 刷鉴权头异常 [{method} {path}]: {e}"
+                )
 
         # 1. 优先尝试使用 botpy.http.Route + http_obj.request
         ok, res = await self._request_via_botpy_route(http_obj, method, path, json_data)
@@ -282,7 +310,9 @@ class QQOfficialAction:
             return res
 
         # 2. 降级：从 http_obj 或 api 中获取 aiohttp ClientSession
-        ok, res = await self._request_via_aiohttp_session(http_obj, api, method, path, json_data)
+        ok, res = await self._request_via_aiohttp_session(
+            http_obj, api, method, path, json_data
+        )
         if ok:
             return res
 
@@ -309,7 +339,7 @@ class QQOfficialAction:
             if isinstance(component, Plain):
                 t = component.text
                 if t:
-                    if re.search(r'<(?:qqbot-at-user|at)\b', t):
+                    if re.search(r"<(?:qqbot-at-user|at)\b", t):
                         has_at = True
                     t = re.sub(
                         r'<at\s+(?:user_id|qq|id)=["\']?([^"\'\s/>]+)["\']?\s*/?>',
@@ -329,10 +359,14 @@ class QQOfficialAction:
                 if target_str:
                     text_parts.append(f'<qqbot-at-user id="{target_str}" />')
             elif isinstance(component, Reply):
-                reply_id = getattr(component, "id", None) or getattr(component, "message_id", None)
+                reply_id = getattr(component, "id", None) or getattr(
+                    component, "message_id", None
+                )
                 if reply_id:
                     chain_quote_id = str(reply_id).strip()
-                    logger.debug(f"[QQOfficial] 从消息链中成功提取 Reply 引用 ID: {chain_quote_id}")
+                    logger.debug(
+                        f"[QQOfficial] 从消息链中成功提取 Reply 引用 ID: {chain_quote_id}"
+                    )
             else:
                 other_components.append(component)
 
@@ -396,7 +430,11 @@ class QQOfficialAction:
 
             # 被动回复 msg_id
             passive_msg_id = getattr(event, "_giftia_reply_msg_id", None)
-            if not passive_msg_id and hasattr(event, "message_obj") and event.message_obj:
+            if (
+                not passive_msg_id
+                and hasattr(event, "message_obj")
+                and event.message_obj
+            ):
                 passive_msg_id = getattr(event.message_obj, "message_id", None)
             if passive_msg_id:
                 base_payload["msg_id"] = str(passive_msg_id)
@@ -485,9 +523,9 @@ class QQOfficialAction:
         err_list = []
         for msg_id in message_ids:
             try:
-                delete_group_msg = getattr(api, "delete_group_message", None) or getattr(
-                    api, "delete_message", None
-                )
+                delete_group_msg = getattr(
+                    api, "delete_group_message", None
+                ) or getattr(api, "delete_message", None)
                 if callable(delete_group_msg):
                     await delete_group_msg(
                         group_openid=str(group_id), message_id=str(msg_id)
@@ -611,6 +649,8 @@ class QQOfficialAction:
         """戳一戳（官方 QQ 暂不支持此操作）"""
         return "官方 QQ 平台暂不支持戳一戳操作"
 
-    async def group_leave(self, event: AstrMessageEvent, group_id: str | int) -> str | None:
+    async def group_leave(
+        self, event: AstrMessageEvent, group_id: str | int
+    ) -> str | None:
         """退群（官方 QQ 暂不支持此操作）"""
         return "官方 QQ 平台暂不支持退群操作"

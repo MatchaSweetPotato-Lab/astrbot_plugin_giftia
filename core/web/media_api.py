@@ -182,8 +182,12 @@ class MediaApi:
                             "text": r["text"],
                             "caption": r["caption"],
                             "is_captioned": bool(r["is_captioned"]),
-                            "duration": float(r["duration"]) if "duration" in r_keys and r["duration"] is not None else 0.0,
-                            "file_size": int(r["file_size"]) if "file_size" in r_keys and r["file_size"] is not None else 0,
+                            "duration": float(r["duration"])
+                            if "duration" in r_keys and r["duration"] is not None
+                            else 0.0,
+                            "file_size": int(r["file_size"])
+                            if "file_size" in r_keys and r["file_size"] is not None
+                            else 0,
                             "query_times": r["query_times"],
                             "created_at": r["created_at"],
                         }
@@ -235,8 +239,12 @@ class MediaApi:
                     "text": r["text"],
                     "caption": r["caption"],
                     "is_captioned": bool(r["is_captioned"]),
-                    "duration": float(r["duration"]) if "duration" in r_keys and r["duration"] is not None else 0.0,
-                    "file_size": int(r["file_size"]) if "file_size" in r_keys and r["file_size"] is not None else 0,
+                    "duration": float(r["duration"])
+                    if "duration" in r_keys and r["duration"] is not None
+                    else 0.0,
+                    "file_size": int(r["file_size"])
+                    if "file_size" in r_keys and r["file_size"] is not None
+                    else 0,
                     "query_times": r["query_times"],
                     "created_at": r["created_at"],
                 }
@@ -641,7 +649,9 @@ class MediaApi:
                             )
                         # Also delete thumbnail if exists
                         try:
-                            thumb_file = self._resolve_cache_file(hash_val, is_thumbnail=True)
+                            thumb_file = self._resolve_cache_file(
+                                hash_val, is_thumbnail=True
+                            )
                             if thumb_file and thumb_file.is_file():
                                 thumb_file.unlink()
                         except Exception as thumb_err:

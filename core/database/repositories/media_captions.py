@@ -1,7 +1,8 @@
 from datetime import datetime
-import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import MediaCaption
+from .base import BaseRepository
+
 
 class MediaCaptionsRepository(BaseRepository):
     async def insert_media_caption(
@@ -58,8 +59,16 @@ class MediaCaptionsRepository(BaseRepository):
         if row:
             await self.increment_media_query_times(row["hash_val"])
             row_keys = row.keys() if hasattr(row, "keys") else []
-            duration = float(row["duration"]) if "duration" in row_keys and row["duration"] is not None else 0.0
-            file_size = int(row["file_size"]) if "file_size" in row_keys and row["file_size"] is not None else 0
+            duration = (
+                float(row["duration"])
+                if "duration" in row_keys and row["duration"] is not None
+                else 0.0
+            )
+            file_size = (
+                int(row["file_size"])
+                if "file_size" in row_keys and row["file_size"] is not None
+                else 0
+            )
             caption = MediaCaption(
                 hash_val=row["hash_val"],
                 file_name=row["file_name"],
@@ -90,8 +99,16 @@ class MediaCaptionsRepository(BaseRepository):
         if row:
             await self.increment_media_query_times(row["hash_val"])
             row_keys = row.keys() if hasattr(row, "keys") else []
-            duration = float(row["duration"]) if "duration" in row_keys and row["duration"] is not None else 0.0
-            file_size = int(row["file_size"]) if "file_size" in row_keys and row["file_size"] is not None else 0
+            duration = (
+                float(row["duration"])
+                if "duration" in row_keys and row["duration"] is not None
+                else 0.0
+            )
+            file_size = (
+                int(row["file_size"])
+                if "file_size" in row_keys and row["file_size"] is not None
+                else 0
+            )
             caption = MediaCaption(
                 hash_val=row["hash_val"],
                 file_name=row["file_name"],

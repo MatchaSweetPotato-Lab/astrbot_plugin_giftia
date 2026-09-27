@@ -10,7 +10,6 @@ from ..utils.emoji_manager import resolve_sticker_path
 from ..utils.qq_official_action import is_qq_official
 from .web_helpers import optional_int
 
-
 # 单张表情包体积上限（字节）
 MAX_STICKER_BYTES = 10 * 1024 * 1024
 # 单次上传张数上限
@@ -252,7 +251,9 @@ class StickerApi:
 
             return json_response({"status": "success", "data": {"bots": bots}})
         except Exception as e:
-            logger.error(f"[Giftia API] get_sticker_gif_config error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] get_sticker_gif_config error: {e}", exc_info=True
+            )
             return error_response(f"获取 GIF 发送配置失败: {str(e)}")
 
     async def set_sticker_gif_config(self):
@@ -299,7 +300,9 @@ class StickerApi:
                 }
             )
         except Exception as e:
-            logger.error(f"[Giftia API] set_sticker_gif_config error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] set_sticker_gif_config error: {e}", exc_info=True
+            )
             return error_response(f"保存 GIF 发送配置失败: {str(e)}")
 
     # ── 列表与筛选项 ──────────────────────────────────────────────────────
@@ -309,7 +312,9 @@ class StickerApi:
         try:
             # 非法的分页参数回落到默认值，而不是让整个列表请求失败
             page = optional_int(request.query.get("page"), default=1, min_value=1) or 1
-            limit = optional_int(request.query.get("limit"), default=12, min_value=1) or 12
+            limit = (
+                optional_int(request.query.get("limit"), default=12, min_value=1) or 12
+            )
             limit = min(100, limit)
             category = (request.query.get("category") or "").strip()
             tag = (request.query.get("tag") or "").strip()
@@ -340,7 +345,9 @@ class StickerApi:
             for item in items:
                 sticker_id = item["sticker_id"]
                 item["bot_names"] = bot_map.get(sticker_id, [])
-                image_path = self._find_sticker_image(sticker_id, item.get("filename", ""))
+                image_path = self._find_sticker_image(
+                    sticker_id, item.get("filename", "")
+                )
                 item["has_file"] = image_path is not None
                 try:
                     item["file_size"] = image_path.stat().st_size if image_path else 0
@@ -574,9 +581,7 @@ class StickerApi:
             # 可选：同步归属（bot_names 为期望的完整归属列表）
             bot_names = body.get("bot_names")
             if isinstance(bot_names, list):
-                desired = {
-                    str(b).strip() for b in bot_names if str(b).strip()
-                }
+                desired = {str(b).strip() for b in bot_names if str(b).strip()}
                 current_map = await self.giftia.db.get_all_bot_sticker_map()
                 existing = set(current_map.get(sticker_id, []))
 
@@ -638,7 +643,9 @@ class StickerApi:
             if files_dict and hasattr(files_dict, "items"):
                 for _key, file_item in files_dict.items():
                     candidates = (
-                        file_item if isinstance(file_item, (list, tuple)) else [file_item]
+                        file_item
+                        if isinstance(file_item, (list, tuple))
+                        else [file_item]
                     )
                     for item in candidates:
                         filename = (
@@ -694,8 +701,14 @@ class StickerApi:
     async def _analyze_sticker_bytes(self, image_bytes: bytes, sticker_id: str):
         """调用视觉模型分析表情包，返回 (is_useful, Sticker|None, 错误信息)。"""
         call_llm = getattr(self.giftia, "call_llm", None)
-        if call_llm is None or not getattr(call_llm, "image_caption_provider_ids", None):
-            return False, None, "未配置图片转述模型 (image_caption_provider_ids)，无法使用 AI 分析"
+        if call_llm is None or not getattr(
+            call_llm, "image_caption_provider_ids", None
+        ):
+            return (
+                False,
+                None,
+                "未配置图片转述模型 (image_caption_provider_ids)，无法使用 AI 分析",
+            )
 
         try:
             import asyncio
@@ -834,9 +847,7 @@ class StickerApi:
             tags = self._normalize_tags(body.get("tags"))
             use_ai = bool(body.get("ai_analysis"))
             bind_bots = [
-                str(b).strip()
-                for b in (body.get("bind_bots") or [])
-                if str(b).strip()
+                str(b).strip() for b in (body.get("bind_bots") or []) if str(b).strip()
             ]
 
             try:
@@ -1157,7 +1168,9 @@ class StickerApi:
                 }
             )
         except Exception as e:
-            logger.error(f"[Giftia API] rename_sticker_category error: {e}", exc_info=True)
+            logger.error(
+                f"[Giftia API] rename_sticker_category error: {e}", exc_info=True
+            )
             return error_response(f"重命名分类失败: {str(e)}")
 
     async def rename_sticker_tag(self):

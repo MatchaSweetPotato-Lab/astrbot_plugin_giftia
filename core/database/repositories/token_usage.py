@@ -1,9 +1,11 @@
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-import aiosqlite
+
 from astrbot.api import logger
+
 from .base import BaseRepository
+
 
 class TokenUsageRepository(BaseRepository):
     async def log_token_usage(
@@ -19,7 +21,9 @@ class TokenUsageRepository(BaseRepository):
         extra_info: dict | None = None,
     ):
         try:
-            extra_info_str = json.dumps(extra_info, ensure_ascii=False) if extra_info else None
+            extra_info_str = (
+                json.dumps(extra_info, ensure_ascii=False) if extra_info else None
+            )
             await self.conn.execute(
                 """
                 INSERT INTO token_usage (
@@ -49,7 +53,11 @@ class TokenUsageRepository(BaseRepository):
         if not utc_str:
             return datetime.now().astimezone()
         try:
-            return datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc).astimezone()
+            return (
+                datetime.fromisoformat(utc_str)
+                .replace(tzinfo=timezone.utc)
+                .astimezone()
+            )
         except Exception as e:
             logger.error(f"[Database] Error parsing UTC string {utc_str}: {e}")
             return datetime.now().astimezone()
@@ -76,13 +84,17 @@ class TokenUsageRepository(BaseRepository):
         except Exception:
             return utc_str
 
-    def _get_time_range_thresholds(self, time_range: str) -> tuple[str | None, str | None]:
+    def _get_time_range_thresholds(
+        self, time_range: str
+    ) -> tuple[str | None, str | None]:
         """返回对应的时间阈值 (usage_threshold, daily_threshold)"""
         if not time_range:
             return None, None
         now = datetime.now()
         if time_range == "today":
-            today_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            today_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
             return today_str, tomorrow_str
         elif time_range == "week":
@@ -133,8 +145,12 @@ class TokenUsageRepository(BaseRepository):
                     conditions_daily.append("date >= ?")
                     params_daily.append(daily_thresh)
 
-            where_usage = f"WHERE {' AND '.join(conditions_usage)}" if conditions_usage else ""
-            where_daily = f"WHERE {' AND '.join(conditions_daily)}" if conditions_daily else ""
+            where_usage = (
+                f"WHERE {' AND '.join(conditions_usage)}" if conditions_usage else ""
+            )
+            where_daily = (
+                f"WHERE {' AND '.join(conditions_daily)}" if conditions_daily else ""
+            )
 
             # Query token_usage (今日明细). Keep provider_id in the grouping so
             # identically named models from different providers are not merged.
@@ -206,7 +222,9 @@ class TokenUsageRepository(BaseRepository):
             }
 
             group_map = defaultdict(lambda: {"tokens": 0, "tts_chars": 0})
-            model_map = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "tts_chars": 0})
+            model_map = defaultdict(
+                lambda: {"prompt": 0, "completion": 0, "total": 0, "tts_chars": 0}
+            )
 
             for key, val in merged.items():
                 group_id, provider_id, model_name, type_name = key
@@ -228,7 +246,9 @@ class TokenUsageRepository(BaseRepository):
 
                     group_map[group_id]["tokens"] += total
                     model_map[(norm_provider_id, norm_model_name)]["prompt"] += prompt
-                    model_map[(norm_provider_id, norm_model_name)]["completion"] += completion
+                    model_map[(norm_provider_id, norm_model_name)]["completion"] += (
+                        completion
+                    )
                     model_map[(norm_provider_id, norm_model_name)]["total"] += total
                 else:
                     summary["total_chars_tts"] += total
@@ -256,24 +276,28 @@ class TokenUsageRepository(BaseRepository):
 
             by_group = []
             for gid, gval in group_map.items():
-                by_group.append({
-                    "group_or_user_id": gid or "私聊/系统",
-                    "total_tokens": gval["tokens"],
-                    "total_chars_tts": gval["tts_chars"]
-                })
+                by_group.append(
+                    {
+                        "group_or_user_id": gid or "私聊/系统",
+                        "total_tokens": gval["tokens"],
+                        "total_chars_tts": gval["tts_chars"],
+                    }
+                )
             by_group.sort(key=lambda x: x["total_tokens"], reverse=True)
 
             by_model = []
             for (provider_id, model_name), mval in model_map.items():
                 if mval["total"] > 0:
-                    by_model.append({
-                        "provider_id": provider_id or None,
-                        "model_name": model_name or "未知",
-                        "prompt_tokens": mval["prompt"],
-                        "completion_tokens": mval["completion"],
-                        "total_tokens": mval["total"],
-                        "total_chars_tts": mval["tts_chars"]
-                    })
+                    by_model.append(
+                        {
+                            "provider_id": provider_id or None,
+                            "model_name": model_name or "未知",
+                            "prompt_tokens": mval["prompt"],
+                            "completion_tokens": mval["completion"],
+                            "total_tokens": mval["total"],
+                            "total_chars_tts": mval["tts_chars"],
+                        }
+                    )
             by_model.sort(key=lambda x: x["total_tokens"], reverse=True)
 
             # Calculate time series data
@@ -282,26 +306,34 @@ class TokenUsageRepository(BaseRepository):
             max_date_str = None
             if time_range == "today":
                 unit = "hour"
-            elif not time_range: # 全部时间
+            elif not time_range:  # 全部时间
                 # Find min and max dates
-                async with self.conn.execute("SELECT MIN(created_at), MAX(created_at) FROM token_usage") as cursor:
+                async with self.conn.execute(
+                    "SELECT MIN(created_at), MAX(created_at) FROM token_usage"
+                ) as cursor:
                     row = await cursor.fetchone()
                     if row and row[0]:
                         min_date_str = self._utc_str_to_local_str(row[0])
                         max_date_str = self._utc_str_to_local_str(row[1])
-                
-                async with self.conn.execute("SELECT MIN(date), MAX(date) FROM token_daily_stats") as cursor:
+
+                async with self.conn.execute(
+                    "SELECT MIN(date), MAX(date) FROM token_daily_stats"
+                ) as cursor:
                     row = await cursor.fetchone()
                     if row and row[0]:
                         if not min_date_str or row[0] < min_date_str.split(" ")[0]:
                             min_date_str = row[0] + " 00:00:00"
                         if not max_date_str or row[1] > max_date_str.split(" ")[0]:
                             max_date_str = row[1] + " 23:59:59"
-                
+
                 if min_date_str and max_date_str:
                     try:
-                        min_dt = datetime.strptime(min_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
-                        max_dt = datetime.strptime(max_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                        min_dt = datetime.strptime(
+                            min_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S"
+                        )
+                        max_dt = datetime.strptime(
+                            max_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S"
+                        )
                         if (max_dt - min_dt).days > 30:
                             unit = "month"
                     except Exception:
@@ -324,12 +356,17 @@ class TokenUsageRepository(BaseRepository):
                     days_count = 365
                 elif not time_range and min_date_str:
                     try:
-                        min_dt = datetime.strptime(min_date_str.split(" ")[0], "%Y-%m-%d")
+                        min_dt = datetime.strptime(
+                            min_date_str.split(" ")[0], "%Y-%m-%d"
+                        )
                         days_count = (now - min_dt).days + 1
                     except Exception:
                         pass
                 days_count = max(1, min(days_count, 365))
-                time_buckets = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days_count)]
+                time_buckets = [
+                    (now - timedelta(days=i)).strftime("%Y-%m-%d")
+                    for i in range(days_count)
+                ]
                 time_buckets.reverse()
             elif unit == "month":
                 start_year = now.year
@@ -340,9 +377,11 @@ class TokenUsageRepository(BaseRepository):
                         start_month = int(min_date_str[5:7])
                     except Exception:
                         pass
-                
+
                 curr_y, curr_m = start_year, start_month
-                while (curr_y < now.year) or (curr_y == now.year and curr_m <= now.month):
+                while (curr_y < now.year) or (
+                    curr_y == now.year and curr_m <= now.month
+                ):
                     time_buckets.append(f"{curr_y}-{curr_m:02d}")
                     curr_m += 1
                     if curr_m > 12:
@@ -360,14 +399,16 @@ class TokenUsageRepository(BaseRepository):
             async with self.conn.execute(sql_ts_usage, params_usage) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
-                    raw_points.append({
-                        "local_time": r["local_time"],
-                        "provider_id": r["provider_id"] or "",
-                        "model_name": r["model_name"] or "",
-                        "type": r["type"] or "",
-                        "group_or_user_id": r["group_or_user_id"] or "",
-                        "total": r["total_tokens"] or 0
-                    })
+                    raw_points.append(
+                        {
+                            "local_time": r["local_time"],
+                            "provider_id": r["provider_id"] or "",
+                            "model_name": r["model_name"] or "",
+                            "type": r["type"] or "",
+                            "group_or_user_id": r["group_or_user_id"] or "",
+                            "total": r["total_tokens"] or 0,
+                        }
+                    )
 
             # 2. From token_daily_stats
             if unit != "hour":
@@ -379,47 +420,66 @@ class TokenUsageRepository(BaseRepository):
                 async with self.conn.execute(sql_ts_daily, params_daily) as cursor:
                     rows = await cursor.fetchall()
                     for r in rows:
-                        raw_points.append({
-                            "local_time": r["date"] + " 00:00:00",
-                            "provider_id": r["provider_id"] or "",
-                            "model_name": r["model_name"] or "",
-                            "type": r["type"] or "",
-                            "group_or_user_id": r["group_or_user_id"] or "",
-                            "total": r["total_tokens"] or 0
-                        })
+                        raw_points.append(
+                            {
+                                "local_time": r["date"] + " 00:00:00",
+                                "provider_id": r["provider_id"] or "",
+                                "model_name": r["model_name"] or "",
+                                "type": r["type"] or "",
+                                "group_or_user_id": r["group_or_user_id"] or "",
+                                "total": r["total_tokens"] or 0,
+                            }
+                        )
 
             model_totals = defaultdict(int)
             type_totals = defaultdict(int)
             group_totals = defaultdict(int)
 
             for p in raw_points:
-                provider_id = p['provider_id']
-                model_name = p['model_name']
+                provider_id = p["provider_id"]
+                model_name = p["model_name"]
                 norm_provider_id = provider_id
                 norm_model_name = model_name
                 if provider_id and "/" in provider_id:
                     parts = provider_id.split("/")
                     norm_provider_id = parts[0]
                     norm_model_name = "/".join(parts[1:])
-                
-                m_key = f"{norm_provider_id}/{norm_model_name}" if norm_provider_id else norm_model_name
-                t_key = p['type']
-                g_key = p['group_or_user_id'] or "私聊/系统"
+
+                m_key = (
+                    f"{norm_provider_id}/{norm_model_name}"
+                    if norm_provider_id
+                    else norm_model_name
+                )
+                t_key = p["type"]
+                g_key = p["group_or_user_id"] or "私聊/系统"
                 if t_key != "tts":
                     model_totals[m_key] += p["total"]
                     type_totals[t_key] += p["total"]
                     group_totals[g_key] += p["total"]
 
-            top_models = set(sorted(model_totals.keys(), key=lambda x: model_totals[x], reverse=True)[:5])
-            top_types = set(sorted(type_totals.keys(), key=lambda x: type_totals[x], reverse=True)[:5])
-            top_groups = set(sorted(group_totals.keys(), key=lambda x: group_totals[x], reverse=True)[:5])
+            top_models = set(
+                sorted(
+                    model_totals.keys(), key=lambda x: model_totals[x], reverse=True
+                )[:5]
+            )
+            top_types = set(
+                sorted(type_totals.keys(), key=lambda x: type_totals[x], reverse=True)[
+                    :5
+                ]
+            )
+            top_groups = set(
+                sorted(
+                    group_totals.keys(), key=lambda x: group_totals[x], reverse=True
+                )[:5]
+            )
 
             timeline_data = {
                 b: {
                     "model": defaultdict(int),
                     "type": defaultdict(int),
-                    "group": defaultdict(int)
-                } for b in time_buckets
+                    "group": defaultdict(int),
+                }
+                for b in time_buckets
             }
 
             for p in raw_points:
@@ -430,22 +490,26 @@ class TokenUsageRepository(BaseRepository):
                     bucket_key = t_str[:10]
                 else:
                     bucket_key = t_str[:7]
-                
+
                 if bucket_key not in timeline_data:
                     continue
 
-                provider_id = p['provider_id']
-                model_name = p['model_name']
+                provider_id = p["provider_id"]
+                model_name = p["model_name"]
                 norm_provider_id = provider_id
                 norm_model_name = model_name
                 if provider_id and "/" in provider_id:
                     parts = provider_id.split("/")
                     norm_provider_id = parts[0]
                     norm_model_name = "/".join(parts[1:])
-                
-                m_key = f"{norm_provider_id}/{norm_model_name}" if norm_provider_id else norm_model_name
-                t_key = p['type']
-                g_key = p['group_or_user_id'] or "私聊/系统"
+
+                m_key = (
+                    f"{norm_provider_id}/{norm_model_name}"
+                    if norm_provider_id
+                    else norm_model_name
+                )
+                t_key = p["type"]
+                g_key = p["group_or_user_id"] or "私聊/系统"
                 tokens = p["total"]
 
                 if t_key != "tts":
@@ -466,23 +530,22 @@ class TokenUsageRepository(BaseRepository):
 
             timeline_list = []
             for b in time_buckets:
-                timeline_list.append({
-                    "time": b,
-                    "model": dict(timeline_data[b]["model"]),
-                    "type": dict(timeline_data[b]["type"]),
-                    "group": dict(timeline_data[b]["group"])
-                })
+                timeline_list.append(
+                    {
+                        "time": b,
+                        "model": dict(timeline_data[b]["model"]),
+                        "type": dict(timeline_data[b]["type"]),
+                        "group": dict(timeline_data[b]["group"]),
+                    }
+                )
 
-            time_series = {
-                "unit": unit,
-                "timeline": timeline_list
-            }
+            time_series = {"unit": unit, "timeline": timeline_list}
 
             return {
                 "summary": summary,
                 "by_group": by_group,
                 "by_model": by_model,
-                "time_series": time_series
+                "time_series": time_series,
             }
         except Exception as e:
             logger.error(f"[Database] get_token_stats error: {e}", exc_info=True)
@@ -490,7 +553,7 @@ class TokenUsageRepository(BaseRepository):
                 "summary": {},
                 "by_group": [],
                 "by_model": [],
-                "time_series": {"unit": "day", "timeline": []}
+                "time_series": {"unit": "day", "timeline": []},
             }
 
     async def get_token_logs(
@@ -517,7 +580,9 @@ class TokenUsageRepository(BaseRepository):
             if time_range:
                 now = datetime.now()
                 if time_range == "today":
-                    today_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+                    today_str = now.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    ).strftime("%Y-%m-%d %H:%M:%S")
                     today_str_utc = self._local_str_to_utc_str(today_str)
                     conditions.append("created_at >= ?")
                     params.append(today_str_utc)
@@ -555,18 +620,20 @@ class TokenUsageRepository(BaseRepository):
                 rows = await cursor.fetchall()
                 for r in rows:
                     created_at_str = self._utc_str_to_local_str(r["created_at"])
-                    logs.append({
-                        "id": r["id"],
-                        "bot_name": r["bot_name"],
-                        "group_or_user_id": r["group_or_user_id"],
-                        "type": r["type"],
-                        "provider_id": r["provider_id"],
-                        "model_name": r["model_name"],
-                        "prompt_tokens": r["prompt_tokens"],
-                        "completion_tokens": r["completion_tokens"],
-                        "total_tokens": r["total_tokens"],
-                        "created_at": created_at_str,
-                    })
+                    logs.append(
+                        {
+                            "id": r["id"],
+                            "bot_name": r["bot_name"],
+                            "group_or_user_id": r["group_or_user_id"],
+                            "type": r["type"],
+                            "provider_id": r["provider_id"],
+                            "model_name": r["model_name"],
+                            "prompt_tokens": r["prompt_tokens"],
+                            "completion_tokens": r["completion_tokens"],
+                            "total_tokens": r["total_tokens"],
+                            "created_at": created_at_str,
+                        }
+                    )
 
             return logs, total_count
         except Exception as e:
@@ -577,7 +644,11 @@ class TokenUsageRepository(BaseRepository):
         """将昨日及以前的详细 Token 日志合并压扁并归档，随后清理详细明细"""
         try:
             # 1. 确定今日凌晨的临界时间点（本地时间）
-            cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            cutoff = (
+                datetime.now()
+                .replace(hour=0, minute=0, second=0, microsecond=0)
+                .strftime("%Y-%m-%d %H:%M:%S")
+            )
             cutoff_utc = self._local_str_to_utc_str(cutoff)
 
             # 2. 查询所有早于临界点的详细记录
@@ -592,25 +663,29 @@ class TokenUsageRepository(BaseRepository):
             async with self.conn.execute(sql_select, (cutoff_utc,)) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
-                    rows_to_squash.append({
-                        "bot_name": r["bot_name"],
-                        "group_or_user_id": r["group_or_user_id"],
-                        "type": r["type"],
-                        "provider_id": r["provider_id"],
-                        "model_name": r["model_name"],
-                        "prompt_tokens": r["prompt_tokens"] or 0,
-                        "completion_tokens": r["completion_tokens"] or 0,
-                        "total_tokens": r["total_tokens"] or 0,
-                        "extra_info": r["extra_info"],
-                        "created_at": r["created_at"],
-                        "call_count": dict(r).get("call_count", 1) or 1,
-                    })
+                    rows_to_squash.append(
+                        {
+                            "bot_name": r["bot_name"],
+                            "group_or_user_id": r["group_or_user_id"],
+                            "type": r["type"],
+                            "provider_id": r["provider_id"],
+                            "model_name": r["model_name"],
+                            "prompt_tokens": r["prompt_tokens"] or 0,
+                            "completion_tokens": r["completion_tokens"] or 0,
+                            "total_tokens": r["total_tokens"] or 0,
+                            "extra_info": r["extra_info"],
+                            "created_at": r["created_at"],
+                            "call_count": dict(r).get("call_count", 1) or 1,
+                        }
+                    )
 
             if not rows_to_squash:
                 return 0
 
             # 3. 按维度分类累加
-            daily_sums = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "count": 0})
+            daily_sums = defaultdict(
+                lambda: {"prompt": 0, "completion": 0, "total": 0, "count": 0}
+            )
             for r in rows_to_squash:
                 # 提取日期 YYYY-MM-DD (按本地时间提取)
                 date_str = None
@@ -639,7 +714,7 @@ class TokenUsageRepository(BaseRepository):
                     r["type"],
                     r["provider_id"] or "",
                     r["model_name"] or "",
-                    status
+                    status,
                 )
                 daily_sums[key]["prompt"] += r["prompt_tokens"]
                 daily_sums[key]["completion"] += r["completion_tokens"]
@@ -649,7 +724,15 @@ class TokenUsageRepository(BaseRepository):
             # 4. 批量 Upsert 合并到历史表
             upsert_count = 0
             for key, sums in daily_sums.items():
-                date_val, bot_val, group_val, type_val, provider_val, model_val, status_val = key
+                (
+                    date_val,
+                    bot_val,
+                    group_val,
+                    type_val,
+                    provider_val,
+                    model_val,
+                    status_val,
+                ) = key
                 await self.conn.execute(
                     """
                     INSERT INTO token_daily_stats (
@@ -665,18 +748,31 @@ class TokenUsageRepository(BaseRepository):
                         call_count = call_count + excluded.call_count
                     """,
                     (
-                        date_val, bot_val, group_val, type_val, provider_val, model_val, status_val,
-                        sums["prompt"], sums["completion"], sums["total"], sums["count"]
-                    )
+                        date_val,
+                        bot_val,
+                        group_val,
+                        type_val,
+                        provider_val,
+                        model_val,
+                        status_val,
+                        sums["prompt"],
+                        sums["completion"],
+                        sums["total"],
+                        sums["count"],
+                    ),
                 )
                 upsert_count += 1
 
             # 5. 删除已拍扁的详细日志
-            cursor_del = await self.conn.execute("DELETE FROM token_usage WHERE created_at < ?", (cutoff_utc,))
+            cursor_del = await self.conn.execute(
+                "DELETE FROM token_usage WHERE created_at < ?", (cutoff_utc,)
+            )
             deleted_count = cursor_del.rowcount
             await self.conn.commit()
 
-            logger.info(f"[Database] Squash completed: consolidated {deleted_count} detailed rows into {upsert_count} summary rows.")
+            logger.info(
+                f"[Database] Squash completed: consolidated {deleted_count} detailed rows into {upsert_count} summary rows."
+            )
             return deleted_count
         except Exception as e:
             logger.error(f"[Database] squash_token_logs error: {e}", exc_info=True)
@@ -694,7 +790,9 @@ class TokenUsageRepository(BaseRepository):
             conds_usage = []
             params_usage = []
             if before_days is not None:
-                cutoff = (datetime.now() - timedelta(days=before_days)).strftime("%Y-%m-%d %H:%M:%S")
+                cutoff = (datetime.now() - timedelta(days=before_days)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 cutoff_utc = self._local_str_to_utc_str(cutoff)
                 conds_usage.append("created_at < ?")
                 params_usage.append(cutoff_utc)
@@ -720,7 +818,9 @@ class TokenUsageRepository(BaseRepository):
             conds_daily = []
             params_daily = []
             if before_days is not None:
-                cutoff_date = (datetime.now() - timedelta(days=before_days)).strftime("%Y-%m-%d")
+                cutoff_date = (datetime.now() - timedelta(days=before_days)).strftime(
+                    "%Y-%m-%d"
+                )
                 conds_daily.append("date < ?")
                 params_daily.append(cutoff_date)
             if bot_name:
