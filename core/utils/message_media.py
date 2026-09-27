@@ -8,11 +8,12 @@ import urllib.parse
 from collections import deque
 from typing import Any
 
+from xxhash import xxh3_64_hexdigest
+
 from astrbot.api import logger
 from astrbot.api.message_components import Image, Plain, Video
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.star.star_tools import StarTools
-from xxhash import xxh3_64_hexdigest
 
 from ..database.data_cache import DataCache, is_temp_or_local_path
 from ..llm.call_llm import CallLLM

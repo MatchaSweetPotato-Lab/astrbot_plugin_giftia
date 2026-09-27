@@ -1,19 +1,22 @@
+import asyncio
 import os
 import re
 import shutil
-import asyncio
-import logging
+
 import aiohttp
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
-from .path_security import get_safe_local_media_path
 from ..database.data_cache import is_temp_or_local_path
-
+from .path_security import get_safe_local_media_path
 
 # 视频转述核心体积阈值常量
-VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024   # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
-VIDEO_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024             # 20 MB：发往视觉模型的最终 Base64 请求体安全上限
+VIDEO_AUTO_COMPRESS_THRESHOLD_BYTES = (
+    5 * 1024 * 1024
+)  # 5 MB：超过此大小即主动触发 ffmpeg 720p 智能压制，防止高码率膨胀
+VIDEO_MAX_PAYLOAD_BYTES = (
+    20 * 1024 * 1024
+)  # 20 MB：发往视觉模型的最终 Base64 请求体安全上限
 
 
 def check_ffmpeg_available() -> bool:
@@ -22,6 +25,7 @@ def check_ffmpeg_available() -> bool:
         return True
     try:
         import static_ffmpeg
+
         static_ffmpeg.add_paths()
         return shutil.which("ffmpeg") is not None
     except ImportError:
@@ -70,12 +74,22 @@ def _scan_media_info_dict(data: dict) -> tuple[int, float, str]:
             if not found_url:
                 for k in ("url", "file_url", "src"):
                     v = curr.get(k)
-                    if isinstance(v, str) and (v.startswith("http://") or v.startswith("https://") or v.startswith("file://")):
+                    if isinstance(v, str) and (
+                        v.startswith("http://")
+                        or v.startswith("https://")
+                        or v.startswith("file://")
+                    ):
                         found_url = v
                         break
             # 匹配体积
             if not f_size:
-                for k in ("file_size", "size", "file_bytes", "fileSize", "file_size_bytes"):
+                for k in (
+                    "file_size",
+                    "size",
+                    "file_bytes",
+                    "fileSize",
+                    "file_size_bytes",
+                ):
                     v = curr.get(k)
                     if v and str(v).isdigit() and int(v) > 0:
                         f_size = int(v)
@@ -114,7 +128,9 @@ def _parse_cq_code_video(raw_str: str) -> tuple[int, float, str]:
     if match:
         params_str = match.group(1)
         params = dict(re.findall(r"([a-zA-Z0-9_]+)=([^,\s\]]+)", params_str))
-        if "url" in params and (params["url"].startswith("http") or params["url"].startswith("file")):
+        if "url" in params and (
+            params["url"].startswith("http") or params["url"].startswith("file")
+        ):
             url = params["url"]
         if "file_size" in params and params["file_size"].isdigit():
             f_size = int(params["file_size"])
@@ -151,7 +167,7 @@ async def _fetch_onebot_file_api(event, file_id: str) -> tuple[str, int, float]:
                         file_path = data.get("file") or data.get("path") or ""
                         u = data.get("url") or ""
                         sz = int(data.get("file_size") or data.get("size") or 0)
-                        
+
                         if file_path and os.path.isfile(file_path):
                             file_size = os.path.getsize(file_path)
                             url = file_path
@@ -159,7 +175,7 @@ async def _fetch_onebot_file_api(event, file_id: str) -> tuple[str, int, float]:
                             url = u
                         if sz > 0 and not file_size:
                             file_size = sz
-                        
+
                         if file_size > 0 or url:
                             break
             except Exception:
@@ -178,7 +194,9 @@ async def _fetch_http_video_size(url: str) -> tuple[int, float]:
         async with aiohttp.ClientSession() as session:
             # 1. 尝试 HEAD 请求
             try:
-                async with session.head(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                async with session.head(
+                    url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=4)
+                ) as resp:
                     if resp.status == 200:
                         cl = resp.headers.get("Content-Length")
                         if cl and cl.isdigit():
@@ -189,7 +207,12 @@ async def _fetch_http_video_size(url: str) -> tuple[int, float]:
             # 2. 如果 HEAD 拿不到 Content-Length，发送 Range: bytes=0-0
             if not file_size:
                 headers = {"Range": "bytes=0-0"}
-                async with session.get(url, headers=headers, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=4),
+                ) as resp:
                     if resp.status in (200, 206):
                         cr = resp.headers.get("Content-Range")
                         if cr and "/" in cr:
@@ -218,10 +241,13 @@ async def _probe_duration_fast(url_or_path: str) -> float:
     if ffprobe_bin:
         cmd = [
             ffprobe_bin,
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            url_or_path
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            url_or_path,
         ]
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -288,10 +314,17 @@ async def get_remote_video_info(
                 pass
 
     # 2. OneBot API 主动查询 (针对 NapCat / Lagrange / Go-CQHTTP)
-    if (not file_size or not duration) and event and hasattr(event, "bot") and event.bot:
+    if (
+        (not file_size or not duration)
+        and event
+        and hasattr(event, "bot")
+        and event.bot
+    ):
         file_id_candidate = file_name or url or ""
         if file_id_candidate and not file_id_candidate.startswith("http"):
-            api_url, api_size, api_dur = await _fetch_onebot_file_api(event, file_id_candidate)
+            api_url, api_size, api_dur = await _fetch_onebot_file_api(
+                event, file_id_candidate
+            )
             if api_size:
                 file_size = api_size
             if api_dur:
@@ -325,7 +358,9 @@ async def get_remote_video_info(
     # 4. 通过 HTTP HEAD/Range 请求获取文件大小
     target_http_url = ""
     for cand in candidates:
-        if isinstance(cand, str) and (cand.startswith("http://") or cand.startswith("https://")):
+        if isinstance(cand, str) and (
+            cand.startswith("http://") or cand.startswith("https://")
+        ):
             target_http_url = cand
             break
 
@@ -362,10 +397,14 @@ async def clip_video_ffmpeg(
         os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg",
-        "-ss", str(max(0, start_time)),
-        "-i", input_path,
-        "-t", str(max(1, duration)),
-        "-c", "copy",
+        "-ss",
+        str(max(0, start_time)),
+        "-i",
+        input_path,
+        "-t",
+        str(max(1, duration)),
+        "-c",
+        "copy",
         "-y",
         output_path,
     ]
@@ -377,10 +416,16 @@ async def clip_video_ffmpeg(
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        if (
+            proc.returncode == 0
+            and os.path.exists(output_path)
+            and os.path.getsize(output_path) > 0
+        ):
             return True
         else:
-            logger.error(f"[VideoUtils] ffmpeg 切片失败, exit_code={proc.returncode}, err={stderr.decode(errors='ignore')}")
+            logger.error(
+                f"[VideoUtils] ffmpeg 切片失败, exit_code={proc.returncode}, err={stderr.decode(errors='ignore')}"
+            )
             return False
     except Exception as e:
         logger.error(f"[VideoUtils] 执行 ffmpeg 异常: {e}")
@@ -407,14 +452,22 @@ async def compress_video_ffmpeg(
         os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg",
-        "-i", input_path,
-        "-vf", f"scale='min({max_width},iw)':-2",
-        "-c:v", "libx264",
-        "-crf", str(crf),
-        "-preset", preset,
-        "-c:a", "aac",
-        "-b:a", "64k",
-        "-movflags", "+faststart",
+        "-i",
+        input_path,
+        "-vf",
+        f"scale='min({max_width},iw)':-2",
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(crf),
+        "-preset",
+        preset,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -426,10 +479,16 @@ async def compress_video_ffmpeg(
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        if (
+            proc.returncode == 0
+            and os.path.exists(output_path)
+            and os.path.getsize(output_path) > 0
+        ):
             return True
         else:
-            logger.error(f"[VideoUtils] ffmpeg 压缩失败, exit_code={proc.returncode}, err={stderr.decode(errors='ignore')}")
+            logger.error(
+                f"[VideoUtils] ffmpeg 压缩失败, exit_code={proc.returncode}, err={stderr.decode(errors='ignore')}"
+            )
             return False
     except Exception as e:
         logger.error(f"[VideoUtils] 执行 ffmpeg 压缩异常: {e}")

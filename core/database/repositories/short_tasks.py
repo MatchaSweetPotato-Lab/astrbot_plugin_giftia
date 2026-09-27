@@ -307,9 +307,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return cursor.rowcount or 0
 
-    async def get_short_task_stats(
-        self, bot_name: str, group_or_user_id: str
-    ) -> dict:
+    async def get_short_task_stats(self, bot_name: str, group_or_user_id: str) -> dict:
         await self.expire_short_tasks(bot_name, group_or_user_id)
         stats = {
             "active": 0,

@@ -1,5 +1,4 @@
 import base64
-import ssl
 import urllib.parse
 from datetime import datetime
 from io import BytesIO
@@ -15,7 +14,6 @@ from PIL import Image
 
 from astrbot.api import logger
 from astrbot.core import AstrBotConfig
-
 
 from .path_security import get_safe_local_media_path
 
@@ -72,12 +70,9 @@ class HttpManager:
                         return await resp.read()
 
                     # 识别 Cloudflare 人机验证挑战（5秒盾/Turnstile），优雅跳过缓存并避免重复重试刷屏
-                    if (
-                        resp.headers.get("Cf-Mitigated") == "challenge"
-                        or (
-                            resp.status == 403
-                            and resp.headers.get("Server", "").lower() == "cloudflare"
-                        )
+                    if resp.headers.get("Cf-Mitigated") == "challenge" or (
+                        resp.status == 403
+                        and resp.headers.get("Server", "").lower() == "cloudflare"
                     ):
                         logger.warning(
                             f"[Giftia] 目标媒体站点开启了 Cloudflare 5秒盾/人机验证防护，跳过本地缓存: URL={url}"
@@ -92,25 +87,14 @@ class HttpManager:
                 ClientConnectorCertificateError,
             ) as ssl_err:
                 logger.warning(
-                    f"SSL 证书验证失败 ({ssl_err})，将尝试临时关闭 SSL 验证重新下载: {url}"
+                    f"[Giftia Security] Media download aborted after SSL verification "
+                    f"or handshake failure: {ssl_err}, URL={url}"
                 )
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                try:
-                    async with self.session.get(
-                        url, ssl=ssl_context, headers=headers
-                    ) as resp:
-                        if resp.status == 200:
-                            return await resp.read()
-                        else:
-                            logger.error(
-                                f"下载媒体文件失败(无SSL): {resp.status}，retry: {attempt + 1} times, URL: {url}"
-                            )
-                except Exception as inner_e:
-                    logger.error(f"下载媒体文件失败(无SSL重试): {inner_e}, URL={url}")
+                return b""
             except Exception as e:
-                logger.error(f"下载媒体文件失败: {e}，retry: {attempt + 1} times, URL={url}")
+                logger.error(
+                    f"下载媒体文件失败: {e}，retry: {attempt + 1} times, URL={url}"
+                )
         return b""
 
     @staticmethod

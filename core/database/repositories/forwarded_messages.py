@@ -1,9 +1,11 @@
-import json
 from datetime import datetime, timedelta
+
 import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import MessageData
+from .base import BaseRepository
 from .chat_history import _decode_json_dict
+
 
 class ForwardedMessagesRepository(BaseRepository):
     def __init__(self, conn: aiosqlite.Connection, chat_history_repo):
@@ -106,4 +108,3 @@ class ForwardedMessagesRepository(BaseRepository):
             deleted_count = cursor.rowcount
         await self.conn.commit()
         return deleted_count
-

@@ -1,8 +1,10 @@
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Callable, Coroutine, Any
-from astrbot.api import logger
+from typing import Any
+
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
+
 from .emoji_constants import EMOJI_MAP
 
 # 交互/反应类通知类型常量列表
@@ -142,7 +144,11 @@ class NoticeParser:
         """统一解析操作者（管理员等）的显示名称"""
         operator_id = str(operator_id or "").strip()
         target_id = str(target_id or "").strip()
-        if not operator_id or operator_id == "0" or (target_id and operator_id == target_id):
+        if (
+            not operator_id
+            or operator_id == "0"
+            or (target_id and operator_id == target_id)
+        ):
             return ""
 
         operator_name = await self._resolve_user_name(
@@ -178,7 +184,9 @@ class NoticeParser:
         reaction_names = [f"notice.{t}" for t in REACTION_NOTICE_TYPES]
 
         # 1. 贴表情回应（Reaction）
-        if (post_type == "notice" and notice_type in REACTION_NOTICE_TYPES) or message_name in reaction_names:
+        if (
+            post_type == "notice" and notice_type in REACTION_NOTICE_TYPES
+        ) or message_name in reaction_names:
             result.is_notice = True
             result.role = "message"
 
@@ -187,13 +195,15 @@ class NoticeParser:
                 likes = self.get_event_field(raw_message, "likes", [])
                 if likes and isinstance(likes, list) and len(likes) > 0:
                     first_like = likes[0]
-                    emoji_id = str(self.get_event_field(first_like, "emoji_id", "") or "")
+                    emoji_id = str(
+                        self.get_event_field(first_like, "emoji_id", "") or ""
+                    )
 
-            target_msg_id = str(self.get_event_field(raw_message, "message_id", "") or "")
-            emoji_desc = EMOJI_MAP.get(emoji_id, f"表情:{emoji_id}")
-            result.content = (
-                f'[贴表情回应: {emoji_desc}] <emoji_like message_id="{target_msg_id}" emoji_id="{emoji_id}" />'
+            target_msg_id = str(
+                self.get_event_field(raw_message, "message_id", "") or ""
             )
+            emoji_desc = EMOJI_MAP.get(emoji_id, f"表情:{emoji_id}")
+            result.content = f'[贴表情回应: {emoji_desc}] <emoji_like message_id="{target_msg_id}" emoji_id="{emoji_id}" />'
             if hasattr(event, "message_obj") and event.message_obj:
                 event.message_obj.message = [Plain(text=result.content)]
             return result
@@ -207,8 +217,12 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
-            target_ref, _ = await self.resolve_target_ref(event, bot_name, target_id, self_id)
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
+            target_ref, _ = await self.resolve_target_ref(
+                event, bot_name, target_id, self_id
+            )
 
             if sub_type == "set":
                 msg = f"【系统消息】{target_ref} 被设置为群管理员"
@@ -231,11 +245,19 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
-            operator_id = str(self.get_event_field(raw_message, "operator_id", "") or "").strip()
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
+            operator_id = str(
+                self.get_event_field(raw_message, "operator_id", "") or ""
+            ).strip()
 
-            target_ref, _ = await self.resolve_target_ref(event, bot_name, target_id, self_id)
-            operator_ref = await self.resolve_operator_ref(event, operator_id, target_id)
+            target_ref, _ = await self.resolve_target_ref(
+                event, bot_name, target_id, self_id
+            )
+            operator_ref = await self.resolve_operator_ref(
+                event, operator_id, target_id
+            )
 
             if sub_type == "approve":
                 msg = (
@@ -266,11 +288,19 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
-            operator_id = str(self.get_event_field(raw_message, "operator_id", "") or "").strip()
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
+            operator_id = str(
+                self.get_event_field(raw_message, "operator_id", "") or ""
+            ).strip()
 
-            target_ref, _ = await self.resolve_target_ref(event, bot_name, target_id, self_id)
-            operator_ref = await self.resolve_operator_ref(event, operator_id, target_id)
+            target_ref, _ = await self.resolve_target_ref(
+                event, bot_name, target_id, self_id
+            )
+            operator_ref = await self.resolve_operator_ref(
+                event, operator_id, target_id
+            )
 
             if sub_type == "leave":
                 msg = f"【系统消息】{target_ref} 退出了群聊"
@@ -297,7 +327,9 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
             card_new = str(self.get_event_field(raw_message, "card_new", "") or "")
             card_old = str(self.get_event_field(raw_message, "card_old", "") or "")
             target_name = card_new or card_old or target_id
@@ -318,9 +350,13 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
             file_info = self.get_event_field(raw_message, "file", {}) or {}
-            file_name = file_info.get("name") if isinstance(file_info, dict) else "未知文件"
+            file_name = (
+                file_info.get("name") if isinstance(file_info, dict) else "未知文件"
+            )
 
             target_name = await self._resolve_user_name(
                 event=event,
@@ -346,8 +382,12 @@ class NoticeParser:
                 result.sender_id = "system"
                 result.sender_name = "系统"
 
-                target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
-                honor_type = str(self.get_event_field(raw_message, "honor_type", "") or "").strip()
+                target_id = str(
+                    self.get_event_field(raw_message, "user_id", "") or ""
+                ).strip()
+                honor_type = str(
+                    self.get_event_field(raw_message, "honor_type", "") or ""
+                ).strip()
                 honor_map = {
                     "talkative": "龙王",
                     "performer": "群聊之火",
@@ -376,8 +416,12 @@ class NoticeParser:
                 result.sender_id = "system"
                 result.sender_name = "系统"
 
-                target_id = str(self.get_event_field(raw_message, "target_id", "") or "").strip()
-                operator_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
+                target_id = str(
+                    self.get_event_field(raw_message, "target_id", "") or ""
+                ).strip()
+                operator_id = str(
+                    self.get_event_field(raw_message, "user_id", "") or ""
+                ).strip()
 
                 target_name = await self._resolve_user_name(
                     event=event,
@@ -393,7 +437,9 @@ class NoticeParser:
                     current_name="",
                     force_lookup=True,
                 )
-                operator_ref = self.format_user_ref(operator_name or operator_id, operator_id)
+                operator_ref = self.format_user_ref(
+                    operator_name or operator_id, operator_id
+                )
                 msg = f"【系统消息】{target_ref} 成为了 {operator_ref} 发送红包的运气王"
 
                 result.content = msg
@@ -407,8 +453,12 @@ class NoticeParser:
                 result.sender_id = "system"
                 result.sender_name = "系统"
 
-                target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
-                title = str(self.get_event_field(raw_message, "title", "") or "").strip()
+                target_id = str(
+                    self.get_event_field(raw_message, "user_id", "") or ""
+                ).strip()
+                title = str(
+                    self.get_event_field(raw_message, "title", "") or ""
+                ).strip()
 
                 target_name = await self._resolve_user_name(
                     event=event,
@@ -433,8 +483,12 @@ class NoticeParser:
             result.sender_id = "system"
             result.sender_name = "系统"
 
-            operator_id = str(self.get_event_field(raw_message, "operator_id", "") or "").strip()
-            target_id = str(self.get_event_field(raw_message, "user_id", "") or "").strip()
+            operator_id = str(
+                self.get_event_field(raw_message, "operator_id", "") or ""
+            ).strip()
+            target_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
             duration = int(self.get_event_field(raw_message, "duration", 0) or 0)
 
             if not sub_type:

@@ -37,18 +37,12 @@ class MemoryApi:
         )
         if max_importance is not None:
             max_importance = min(10, max_importance)
-        max_hit_count = optional_int(
-            body.get("max_hit_count"), default=1, min_value=0
-        )
-        min_age_days = optional_int(
-            body.get("min_age_days"), default=60, min_value=0
-        )
+        max_hit_count = optional_int(body.get("max_hit_count"), default=1, min_value=0)
+        min_age_days = optional_int(body.get("min_age_days"), default=60, min_value=0)
         last_hit_before_days = optional_int(
             body.get("last_hit_before_days"), default=30, min_value=0
         )
-        include_never_hit = optional_bool(
-            body.get("include_never_hit"), default=True
-        )
+        include_never_hit = optional_bool(body.get("include_never_hit"), default=True)
 
         conditions = ["bot_name = ?"]
         params = [bot_name]
@@ -69,9 +63,9 @@ class MemoryApi:
             conditions.append("COALESCE(hit_count, 0) <= ?")
             params.append(max_hit_count)
         if min_age_days and min_age_days > 0:
-            created_cutoff = (
-                datetime.now() - timedelta(days=min_age_days)
-            ).strftime("%Y-%m-%d %H:%M:%S")
+            created_cutoff = (datetime.now() - timedelta(days=min_age_days)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             conditions.append("datetime(created_at) <= datetime(?)")
             params.append(created_cutoff)
         if last_hit_before_days and last_hit_before_days > 0:
@@ -189,19 +183,25 @@ class MemoryApi:
                 if user_ids:
                     placeholders = ",".join(["?"] * len(user_ids))
                     sql = f"""
-                        SELECT user_id, call_name 
-                        FROM user_profiles 
+                        SELECT user_id, call_name
+                        FROM user_profiles
                         WHERE bot_name = ? AND user_id IN ({placeholders})
                     """
                     sql_params = [bot_name] + list(user_ids)
                     try:
-                        async with self.giftia.db.conn.execute(sql, sql_params) as cursor:
+                        async with self.giftia.db.conn.execute(
+                            sql, sql_params
+                        ) as cursor:
                             p_rows = await cursor.fetchall()
                             for p_r in p_rows:
                                 if p_r["call_name"]:
-                                    user_id_to_name[str(p_r["user_id"])] = str(p_r["call_name"]).strip()
+                                    user_id_to_name[str(p_r["user_id"])] = str(
+                                        p_r["call_name"]
+                                    ).strip()
                     except Exception as e:
-                        logger.error(f"[Giftia API] Failed to query user call names for memories: {e}")
+                        logger.error(
+                            f"[Giftia API] Failed to query user call names for memories: {e}"
+                        )
 
             return json_response(
                 {

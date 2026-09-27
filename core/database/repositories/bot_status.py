@@ -1,9 +1,9 @@
 import json
-import time
 from datetime import datetime
-import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import Status
+from .base import BaseRepository
+
 
 def parse_custom_status_json(raw: str | None) -> dict[str, str]:
     """安全解析 custom_status 的 JSON 字符串并过滤空键值对。"""
@@ -113,4 +113,3 @@ class BotStatusRepository(BaseRepository):
             (group_or_user_id, bot_name),
         )
         await self.conn.commit()
-

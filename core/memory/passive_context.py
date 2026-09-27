@@ -1,8 +1,6 @@
 import re
 from datetime import datetime
 
-from ..utils.schemas import FORWARD_MEDIA_PATTERN
-
 from astrbot.api import logger
 
 from ..llm.preset_prompts import (
@@ -12,13 +10,13 @@ from ..llm.preset_prompts import (
 )
 from ..llm.prompt import (
     USER_PROFILE_FIELDS,
-    normalize_profile_text,
     normalize_profile_value,
     parse_caption_to_str,
     parse_message_to_str,
     process_media_captions_for_prompt,
     truncate_message_content,
 )
+from ..utils.schemas import FORWARD_MEDIA_PATTERN
 
 SESSION_PROFILE_FIELDS = {"aliases", "attitude", "agreements"}
 LONG_PROFILE_FIELDS = {"personality", "interests", "extra"}
@@ -63,7 +61,9 @@ class PassiveContextMixin:
     def _get_long_profile_sample_limit(self) -> int:
         return DEFAULT_LONG_PROFILE_SAMPLE_LIMIT
 
-    def _get_long_profile_thresholds(self, has_existing_long_profile: bool) -> tuple[int, int]:
+    def _get_long_profile_thresholds(
+        self, has_existing_long_profile: bool
+    ) -> tuple[int, int]:
         if has_existing_long_profile:
             return (
                 DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD,
@@ -90,10 +90,6 @@ class PassiveContextMixin:
             set(allowed_fields)
             if allowed_fields is not None
             else {field for field, _ in USER_PROFILE_FIELDS}
-        )
-        has_any_structured_field = any(
-            normalize_profile_value(record.get(field))
-            for field, _ in USER_PROFILE_FIELDS
         )
         for field, label in USER_PROFILE_FIELDS:
             if field not in allowed_fields:
@@ -147,7 +143,9 @@ class PassiveContextMixin:
     def _has_existing_long_profile(self, record: dict | None) -> bool:
         if not record:
             return False
-        return any(normalize_profile_value(record.get(field)) for field in LONG_PROFILE_FIELDS)
+        return any(
+            normalize_profile_value(record.get(field)) for field in LONG_PROFILE_FIELDS
+        )
 
     def _is_long_profile_sample_message(self, msg) -> bool:
         if not msg or getattr(msg, "is_recalled", 0):
@@ -167,7 +165,17 @@ class PassiveContextMixin:
         normalized = normalized.strip()
         if len(normalized) >= 4:
             return True
-        return normalized not in {"哈", "哈哈", "hhh", "？", "?", "。", "嗯", "哦", "草"}
+        return normalized not in {
+            "哈",
+            "哈哈",
+            "hhh",
+            "？",
+            "?",
+            "。",
+            "嗯",
+            "哦",
+            "草",
+        }
 
     def _long_profile_sample_text_length(self, msg) -> int:
         content = str(getattr(msg, "content", "") or "")
@@ -203,9 +211,7 @@ class PassiveContextMixin:
             threshold=100,
         )
 
-        user_message_lines = [
-            parse_message_to_str(msg) for msg in processed_messages
-        ]
+        user_message_lines = [parse_message_to_str(msg) for msg in processed_messages]
         sample_start = sample_messages[0].time if sample_messages else ""
         sample_end = sample_messages[-1].time if sample_messages else ""
 
@@ -240,9 +246,7 @@ class PassiveContextMixin:
                 f"<media_content>\n{media_captions_block}\n</media_content>"
             )
         user_prompt_parts.append(
-            "<user_messages>\n"
-            + "\n".join(user_message_lines)
-            + "\n</user_messages>"
+            "<user_messages>\n" + "\n".join(user_message_lines) + "\n</user_messages>"
         )
         return "\n\n".join(user_prompt_parts)
 
@@ -348,11 +352,14 @@ class PassiveContextMixin:
             if call_name:
                 parts.append(f"你对他的称呼: {call_name}")
             info_str = "，".join(p for p in parts if p)
-            active_user_lines.append(f"- {uid} ({info_str})" if info_str else f"- {uid}")
+            active_user_lines.append(
+                f"- {uid} ({info_str})" if info_str else f"- {uid}"
+            )
 
             block_lines = [f"用户 {uid} ({nickname})" if nickname else f"用户 {uid}"]
             block_lines.append(
-                "现有画像:\n" + self._format_user_profile_record_for_summary(
+                "现有画像:\n"
+                + self._format_user_profile_record_for_summary(
                     profile_record,
                     allowed_fields=SESSION_PROFILE_FIELDS,
                     include_relation_score=False,

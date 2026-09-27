@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 
-
 USER_PROFILE_FIELD_KEYS = (
     "call_name",
     "personality",
@@ -72,7 +71,9 @@ def safe_path_join(base_dir: str, rel_path: str) -> str | None:
     return None
 
 
-def read_file_to_base64(file_path: str, fallback_mime: str = "application/octet-stream") -> tuple[str, str]:
+def read_file_to_base64(
+    file_path: str, fallback_mime: str = "application/octet-stream"
+) -> tuple[str, str]:
     """
     Read file content and convert to base64 string and mime type.
     Returns (b64_string, mime_type).
@@ -100,5 +101,3 @@ def read_file_to_base64(file_path: str, fallback_mime: str = "application/octet-
         b64_str = base64.b64encode(f.read()).decode("utf-8")
 
     return b64_str, mime_type
-
-

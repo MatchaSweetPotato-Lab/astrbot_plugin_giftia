@@ -1,8 +1,9 @@
 import json
 from datetime import datetime
-import aiosqlite
-from .base import BaseRepository
+
 from ...utils.schemas import Sticker
+from .base import BaseRepository
+
 
 class StickersRepository(BaseRepository):
     async def insert_sticker(
@@ -385,7 +386,9 @@ class StickersRepository(BaseRepository):
             """
         ) as cursor:
             rows = await cursor.fetchall()
-        return [{"category": row["category"] or "", "count": row["count"]} for row in rows]
+        return [
+            {"category": row["category"] or "", "count": row["count"]} for row in rows
+        ]
 
     async def get_tag_stats(self) -> list[dict]:
         """获取标签及其表情包数量，数量降序。tags 是 JSON 数组，只能在 Python 侧聚合。"""
@@ -498,9 +501,7 @@ class StickersRepository(BaseRepository):
 
         return await self._rewrite_tags(transform, "tags LIKE ?", (f'%"{tag}"%',))
 
-    async def batch_update_category(
-        self, sticker_ids: list[str], category: str
-    ) -> int:
+    async def batch_update_category(self, sticker_ids: list[str], category: str) -> int:
         """批量设置分类"""
         if not sticker_ids:
             return 0

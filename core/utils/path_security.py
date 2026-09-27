@@ -1,4 +1,3 @@
-import os
 import tempfile
 import urllib.parse
 from pathlib import Path

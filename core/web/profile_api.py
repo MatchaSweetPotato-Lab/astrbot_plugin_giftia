@@ -41,9 +41,7 @@ class ProfileApi:
                 conditions.append("up.user_id = ?")
                 params.append(user_id)
             if search:
-                like_fields = [
-                    f"up.{field}" for field in USER_PROFILE_FIELD_KEYS
-                ]
+                like_fields = [f"up.{field}" for field in USER_PROFILE_FIELD_KEYS]
                 alias_exists = """
                     EXISTS (
                         SELECT 1
@@ -455,7 +453,13 @@ class ProfileApi:
             await self.giftia.db.upsert_kv_data(
                 "auto_clean_user_aliases_config", json.dumps(cfg)
             )
-            return json_response({"status": "success", "config": cfg, "message": "已保存过期外号自动清理配置"})
+            return json_response(
+                {
+                    "status": "success",
+                    "config": cfg,
+                    "message": "已保存过期外号自动清理配置",
+                }
+            )
         except Exception as e:
             logger.error(f"[Giftia API] set_auto_clean_aliases_config error: {e}")
             return error_response(f"保存过期外号自动清理配置失败: {str(e)}")

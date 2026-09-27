@@ -71,10 +71,14 @@ class BotStatusApi:
             if not bot_name or not group_or_user_id:
                 return error_response("缺少必要参数")
 
-            status = await self.giftia.data_cache.get_bot_status(bot_name, group_or_user_id)
+            status = await self.giftia.data_cache.get_bot_status(
+                bot_name, group_or_user_id
+            )
             status.energy = "100.0"
             status.timestamp = time.time()
-            await self.giftia.data_cache.set_bot_status(bot_name, group_or_user_id, status)
+            await self.giftia.data_cache.set_bot_status(
+                bot_name, group_or_user_id, status
+            )
 
             return json_response(
                 {"status": "success", "message": f"成功为 {bot_name} 补充能量"}
@@ -98,7 +102,9 @@ class BotStatusApi:
             if not bot_name or not group_or_user_id:
                 return error_response("缺少必要参数")
 
-            status = await self.giftia.data_cache.get_bot_status(bot_name, group_or_user_id)
+            status = await self.giftia.data_cache.get_bot_status(
+                bot_name, group_or_user_id
+            )
 
             if mood is not None:
                 status.mood = mood
@@ -115,7 +121,9 @@ class BotStatusApi:
                     if str(k).strip() and str(v).strip()
                 }
 
-            await self.giftia.data_cache.set_bot_status(bot_name, group_or_user_id, status)
+            await self.giftia.data_cache.set_bot_status(
+                bot_name, group_or_user_id, status
+            )
 
             return json_response({"status": "success", "message": "更新 Bot 状态成功"})
         except Exception as e:

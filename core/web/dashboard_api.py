@@ -1,4 +1,5 @@
 import json
+
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
@@ -35,10 +36,12 @@ class DashboardApi:
             cleaned_config = []
             for item in config:
                 if isinstance(item, dict) and "id" in item:
-                    cleaned_config.append({
-                        "id": str(item["id"]),
-                        "pinned": bool(item.get("pinned", False)),
-                    })
+                    cleaned_config.append(
+                        {
+                            "id": str(item["id"]),
+                            "pinned": bool(item.get("pinned", False)),
+                        }
+                    )
 
             await self.giftia.db.upsert_kv_data(
                 "dashboard_nav_config",
