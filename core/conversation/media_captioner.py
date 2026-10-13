@@ -83,7 +83,9 @@ class MediaCaptioner:
         """
         分析并后台添加表情包
         """
-        if not llm_result.add_stickers:
+        if not llm_result.add_stickers or not self.plugin.conf.get(
+            "caption_config", {}
+        ).get("image_caption_enabled", True):
             return
 
         categories = await self.plugin.db.get_sticker_categories()
@@ -229,15 +231,17 @@ class MediaCaptioner:
                     parts
                 ) if parts else media_caption.caption
 
+        caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
+        if not caption_config.get(f"{media_type}_caption_enabled", True):
+            media_label = {"image": "图片", "audio": "音频", "video": "视频"}.get(
+                media_type, "媒体"
+            )
+            return media_caption, f"{media_label}转述已关闭，无法发起媒体分析。"
+        if not getattr(self.plugin.call_llm, "media_caption_provider_ids", None):
+            return media_caption, "未配置媒体转述提供商，无法发起媒体分析。"
+
         try:
             if media_type == "video":
-                if not getattr(
-                    self.plugin.call_llm, "video_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置视频转述模型 (video_caption_provider_ids)，无法查看视频。",
-                    )
                 caption_text = await self.transcribe_video_media(
                     media_caption=media_caption,
                     start_time=start_time,
@@ -255,13 +259,6 @@ class MediaCaptioner:
             )
 
             if media_type == "audio":
-                if not getattr(
-                    self.plugin.call_llm, "audio_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置语音转述模型 (audio_caption_provider_ids)，无法查看语音。",
-                    )
                 audio_urls = (
                     [str(cache_file)] if cache_file.exists() else [media_caption.url]
                 )
@@ -294,13 +291,6 @@ class MediaCaptioner:
                 return media_caption, "语音文件缺失或转述失败"
 
             else:  # image media
-                if not getattr(
-                    self.plugin.call_llm, "image_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置图片转述模型 (image_caption_provider_ids)，无法查看图片。",
-                    )
                 image_bytes = None
                 if cache_file.exists():
                     try:

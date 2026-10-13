@@ -20,10 +20,6 @@ from ..utils.schemas import (
 from ..utils.token_utils import extract_tokens_robust
 from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
-    DEFAULT_AUDIO_CAPTION_PROMPT,
-    DEFAULT_IMAGE_CAPTION_PROMPT,
-    DEFAULT_STICKER_ANALYSIS_PROMPT,
-    DEFAULT_VIDEO_CAPTION_PROMPT,
     build_xml_instructions,
     get_audio_caption_prompt,
     get_decision_rules,
@@ -99,25 +95,13 @@ class CallLLM:
         self.xml_parse = xml_parse
         self.network_conf = network_config
         self.plugin = plugin
-        self.sticker_analysis_prompt = DEFAULT_STICKER_ANALYSIS_PROMPT
-        # 图片转述配置
-        image_caption_provider_ids = (
-            caption_config.get("image_caption_provider_ids") or []
+        self.caption_config = caption_config
+        self.media_caption_provider_ids = [
+            p for p in (caption_config.get("media_caption_provider_ids") or []) if p
+        ]
+        self.media_caption_retry_times = network_config.get(
+            "media_caption_retry_times", 2
         )
-        self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
-        self.image_caption_prompt = DEFAULT_IMAGE_CAPTION_PROMPT
-        # 音频转述配置
-        audio_caption_provider_ids = (
-            caption_config.get("audio_caption_provider_ids") or []
-        )
-        self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
-        self.audio_caption_prompt = DEFAULT_AUDIO_CAPTION_PROMPT
-        # 视频转述配置
-        video_caption_provider_ids = (
-            caption_config.get("video_caption_provider_ids") or []
-        )
-        self.video_caption_provider_ids = [p for p in video_caption_provider_ids if p]
-        self.video_caption_prompt = DEFAULT_VIDEO_CAPTION_PROMPT
 
     async def call_llm_decision(
         self,
@@ -465,9 +449,11 @@ class CallLLM:
         group_or_user_id: str = "",
     ) -> MediaCaption | None:
         """调用LLM生成图片描述"""
+        if not self.caption_config.get("image_caption_enabled", True):
+            return None
         logger.info(f"调用LLM生成图片描述，共{len(image_urls)}张图片")
-        for provider_id in self.image_caption_provider_ids:
-            for i in range(self.network_conf["image_caption_retry_times"]):
+        for provider_id in self.media_caption_provider_ids:
+            for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
                 try:
@@ -538,9 +524,11 @@ class CallLLM:
         group_or_user_id: str = "",
     ) -> MediaCaption | None:
         """调用LLM生成音频描述"""
+        if not self.caption_config.get("audio_caption_enabled", True):
+            return None
         logger.info(f"调用LLM生成音频描述，共{len(audio_urls)}个音频")
-        for provider_id in self.audio_caption_provider_ids:
-            for i in range(self.network_conf["audio_caption_retry_times"]):
+        for provider_id in self.media_caption_provider_ids:
+            for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成音频描述失败，{provider_id} 重试第 {i} 次")
                 try:
@@ -600,9 +588,11 @@ class CallLLM:
         group_or_user_id: str = "",
     ) -> tuple[bool, Sticker | None]:
         """调用LLM生成表情包分析结果"""
+        if not self.caption_config.get("image_caption_enabled", True):
+            return False, None
         logger.info(f"调用LLM生成表情包分析结果，共{len(image_urls)}张图片")
-        for provider_id in self.image_caption_provider_ids:
-            for i in range(self.network_conf.get("image_caption_retry_times", 1)):
+        for provider_id in self.media_caption_provider_ids:
+            for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM表情包分析失败，{provider_id} 重试第 {i} 次")
                 try:
@@ -711,10 +701,22 @@ class CallLLM:
         bot_name: str = "",
         group_or_user_id: str = "",
     ) -> MediaCaption | None:
-        """调用支持原生视频理解的大语言模型 (如 Gemini 3.6 Flash) 进行视频与语音全量转述"""
+        """Describe a video using a provider with native video understanding.
+
+        Args:
+            video_url: Video payload or URL.
+            question: Optional question about the video.
+            bot_name: Bot requesting the caption.
+            group_or_user_id: Conversation identifier.
+
+        Returns:
+            The parsed caption, or None when disabled or all attempts fail.
+        """
+        if not self.caption_config.get("video_caption_enabled", True):
+            return None
         logger.info(f"调用LLM生成原生视频描述(音频与画面同频)，带问题={bool(question)}")
-        for provider_id in self.video_caption_provider_ids:
-            for i in range(self.network_conf.get("image_caption_retry_times", 2)):
+        for provider_id in self.media_caption_provider_ids:
+            for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成视频描述失败，{provider_id} 重试第 {i} 次")
                 try:

@@ -69,7 +69,7 @@ class Giftia(Star):
         self.adapter_id_map: dict[str, str] = {}
         self.sync_bot_maps()
 
-        # 图片转述提供商
+        # Media caption settings.
         self.caption_config = self.conf.get("caption_config", {})
         # 聊天记录配置
         msg_history = self.conf.get("msg_history", {})

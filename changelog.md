@@ -1,3 +1,10 @@
+## [v0.3.9] - 2026-10-13
+
+### Changes
+- **统一媒体转述模型与重试配置**：`image_caption_provider_ids`、`audio_caption_provider_ids`、`video_caption_provider_ids` 合并为 `media_caption_provider_ids`；三类 `*_caption_retry_times` 合并为 `media_caption_retry_times`，表情包分析共用同一配置。升级后需重新选择媒体转述提供商，不自动迁移旧配置。
+- **非活跃会话固定延迟转述**：移除 `defer_caption_enabled` 配置及条件分支，媒体默认仅缓存，按需查看时再转述。
+- **媒体开关覆盖主动查看与表情包分析**：保留图片、音频、视频独立开关，关闭后不发起对应模型请求，已有缓存可继续通过工具读取；修复视频开关未生效的问题。
+
 ## [v0.3.8] - 2026-09-27
 
 ### Bug Fixes

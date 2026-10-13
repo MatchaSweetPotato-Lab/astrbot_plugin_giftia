@@ -61,8 +61,6 @@ class MessageParser:
     ):
         self.data_cache = data_cache
         self.http_manager = http_manager
-        self.image_caption_enabled = image_caption_enabled
-        self.audio_caption_enabled = audio_caption_enabled
         self.call_llm = call_llm
         # 异步锁，防止多机器人场景重复解析媒体信息
         self.url_locks = LockManager()

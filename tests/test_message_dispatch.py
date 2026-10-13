@@ -9,6 +9,8 @@ import pytest
 from core.conversation.chat_manager import ChatManager
 from core.utils.schemas import MessageData, XmlLlmResult
 
+from astrbot.api.message_components import At
+
 
 @pytest.fixture
 def runtime():
@@ -35,7 +37,7 @@ def runtime():
             get_recent_message=AsyncMock(return_value=[]),
             is_bot_muted=Mock(return_value=False),
         ),
-        get_caption_config=lambda bot: {"defer_caption_enabled": False},
+        get_caption_config=lambda bot: {},
         message_parser=SimpleNamespace(
             parse_user_message=AsyncMock(
                 return_value=(MessageData(message_id="m1", content="hello"), [], [])
@@ -49,6 +51,7 @@ def runtime():
         get_self_id=lambda: "999",
         get_sender_id=lambda: "200",
         get_group_id=lambda: "100",
+        get_messages=lambda: [],
         get_platform_name=lambda: "aiocqhttp",
         get_extra=lambda key, default=None: default,
         should_call_llm=Mock(),
@@ -65,6 +68,38 @@ def runtime():
     manager.action_dispatcher.dispatch_actions = AsyncMock()
     manager.reply_pipeline.commit_pending_session_recalled_memories = Mock()
     return plugin, manager, event
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "private,private_decision,active,mentions_bot,expected_defer",
+    [
+        (False, False, False, False, True),
+        (False, False, True, False, False),
+        (False, False, False, True, False),
+        (True, False, False, False, False),
+        (True, True, False, False, True),
+        (True, True, True, False, False),
+    ],
+)
+async def test_inactive_media_is_always_deferred(
+    runtime, private, private_decision, active, mentions_bot, expected_defer
+):
+    plugin, manager, event = runtime
+    plugin.bot_map["bot"]["decision_conf"] = {
+        "private_chat_decision_enabled": private_decision
+    }
+    event.get_group_id = lambda: "" if private else "100"
+    event.get_messages = lambda: [At(qq="999")] if mentions_bot else []
+    session = event.get_group_id() or event.get_sender_id()
+    plugin.active_reply_counters[f"bot:{session}"] = 1 if active else 0
+    manager._enqueue_message = AsyncMock()
+
+    await manager.job(event)
+
+    plugin.message_parser.parse_user_message.assert_awaited_once_with(
+        event, "bot", defer_caption=expected_defer
+    )
 
 
 @pytest.mark.asyncio

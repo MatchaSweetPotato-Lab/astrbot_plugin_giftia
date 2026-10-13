@@ -556,10 +556,3 @@ def get_decision_rules(use_meme_manager: bool = False) -> str:
 
 
 DEFAULT_DECISION_RULES = get_decision_rules(False)
-
-
-# 兼容性常量别名
-DEFAULT_IMAGE_CAPTION_PROMPT = get_image_caption_prompt()
-DEFAULT_AUDIO_CAPTION_PROMPT = get_audio_caption_prompt()
-DEFAULT_VIDEO_CAPTION_PROMPT = get_video_caption_prompt()
-DEFAULT_STICKER_ANALYSIS_PROMPT = get_sticker_analysis_prompt()

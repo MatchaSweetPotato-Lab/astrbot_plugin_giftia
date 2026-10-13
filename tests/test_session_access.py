@@ -53,7 +53,7 @@ def runtime(tmp_path):
         db=SimpleNamespace(
             get_kv_data=AsyncMock(return_value=None), upsert_kv_data=AsyncMock()
         ),
-        get_caption_config=lambda bot: {"defer_caption_enabled": False},
+        get_caption_config=lambda bot: {},
         parse_locks=defaultdict(asyncio.Lock),
         replying_status={},
     )
