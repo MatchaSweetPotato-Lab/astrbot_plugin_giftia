@@ -37,7 +37,6 @@ def runtime():
         tools_config={"max_loop": 3},
         embedding_conf={"enabled": False, "session_recall_enabled": False},
         msg_number=20,
-        get_caption_config=lambda _: {},
         data_cache=SimpleNamespace(
             get_recent_message=AsyncMock(side_effect=lambda *args: list(history)),
             get_bot_status=AsyncMock(return_value=Status()),

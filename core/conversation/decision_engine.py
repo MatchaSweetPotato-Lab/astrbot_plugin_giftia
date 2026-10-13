@@ -335,7 +335,6 @@ class DecisionEngine:
             short_task_limit = self.plugin.task_board.max_active_tasks()
 
         # 读取已有缓存的媒体转述（仅读缓存，非阻塞），用于轻量内联
-        caption_config = self.plugin.get_caption_config(bot_conf)
         all_for_caption = []
         if recent_messages:
             all_for_caption.extend(recent_messages)
@@ -344,8 +343,6 @@ class DecisionEngine:
         media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
             recent_messages=all_for_caption,
-            caption_config=caption_config,
-            group_or_user_id=group_or_user_id,
         )
 
         user_prompt = build_decision_prompt(

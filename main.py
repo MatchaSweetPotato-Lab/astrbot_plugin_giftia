@@ -151,13 +151,6 @@ class Giftia(Star):
 
         self._original_send_message = self.context.send_message
 
-    def get_caption_config(self, bot_conf: dict | None = None) -> dict:
-        """Return global media-caption config with optional per-bot overrides."""
-        caption_config = dict(self.caption_config or {})
-        if bot_conf:
-            caption_config.update(bot_conf.get("caption_config") or {})
-        return caption_config
-
     def get_bot_config(self, identifier: str | dict | None = None) -> dict:
         if isinstance(identifier, dict):
             return identifier

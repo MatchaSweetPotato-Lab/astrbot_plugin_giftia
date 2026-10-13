@@ -200,12 +200,9 @@ class ReplyPipeline:
                 if msg.user_id and str(msg.user_id) == self_id and msg.content:
                     sent_messages.append(msg.content)
 
-        caption_config = self.plugin.get_caption_config(bot_conf)
         media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
             recent_messages=[*recent_messages, *reply_messages],
-            caption_config=caption_config,
-            group_or_user_id=group_or_user_id,
         )
 
         if relevant_memories is None:

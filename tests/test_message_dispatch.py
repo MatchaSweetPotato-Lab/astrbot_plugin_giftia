@@ -37,7 +37,6 @@ def runtime():
             get_recent_message=AsyncMock(return_value=[]),
             is_bot_muted=Mock(return_value=False),
         ),
-        get_caption_config=lambda bot: {},
         message_parser=SimpleNamespace(
             parse_user_message=AsyncMock(
                 return_value=(MessageData(message_id="m1", content="hello"), [], [])

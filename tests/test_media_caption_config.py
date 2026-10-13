@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from core.conversation.media_captioner import MediaCaptioner
 from core.llm.call_llm import CallLLM
-from core.utils.schemas import MediaCaption, XmlLlmResult
+from core.utils.schemas import MediaCaption, MessageData, XmlLlmResult
 from core.web import sticker_api
 
 MEDIA_REQUESTS = [
@@ -101,6 +101,56 @@ async def test_unconfigured_media_never_reaches_a_provider(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method,media_type,kwargs", MEDIA_REQUESTS)
+@pytest.mark.parametrize("global_enabled", [False, True])
+async def test_media_requests_ignore_legacy_bot_caption_settings(
+    caption_caller, method, media_type, kwargs, global_enabled
+):
+    caption_caller.caption_config[f"{media_type}_caption_enabled"] = global_enabled
+    caption_caller.plugin = SimpleNamespace(
+        bot_map={
+            "bot": {
+                "caption_config": {f"{media_type}_caption_enabled": not global_enabled}
+            }
+        },
+        db=SimpleNamespace(log_token_usage=AsyncMock()),
+    )
+
+    await getattr(caption_caller, method)(bot_name="bot", **kwargs)
+
+    assert caption_caller.context.llm_generate.await_count == int(global_enabled)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type,media_label", [("image", "图片"), ("audio", "语音"), ("video", "视频")])
+@pytest.mark.parametrize("global_enabled", [False, True])
+async def test_cached_captions_use_global_settings_for_all_bots(
+    media_type, media_label, global_enabled
+):
+    media = MediaCaption(
+        hash_val="1234567890abcdef",
+        media_type=media_type,
+        caption="Cached caption",
+        is_captioned=True,
+    )
+    plugin = SimpleNamespace(
+        conf={"caption_config": {f"{media_type}_caption_enabled": global_enabled}},
+        bot_map={
+            "first": {"caption_config": {f"{media_type}_caption_enabled": False}},
+            "second": {"caption_config": {f"{media_type}_caption_enabled": True}},
+        },
+        data_cache=SimpleNamespace(get_caption_by_hash=AsyncMock(return_value=media)),
+        emoji_manager=SimpleNamespace(has_sticker=AsyncMock(return_value=False)),
+    )
+    messages = [MessageData(content=f"[{media_label}:{media.hash_val}]")]
+    captioner = MediaCaptioner(plugin)
+
+    for bot_name in ("first", "second"):
+        captions = await captioner.get_cached_media_captions(bot_name, messages)
+        assert captions == ([media] if global_enabled and media_type != "video" else [])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("media_type", ["image", "audio", "video"])
 @pytest.mark.parametrize(
     "has_cache,question,can_reuse", [(False, "", False), (True, "", True), (True, "Focus", False)]
@@ -116,6 +166,7 @@ async def test_inspect_respects_switches_and_reuses_existing_captions(
     )
     plugin = SimpleNamespace(
         conf={"caption_config": {f"{media_type}_caption_enabled": False}},
+        bot_map={"bot": {"caption_config": {f"{media_type}_caption_enabled": True}}},
         data_cache=SimpleNamespace(get_caption_by_hash=AsyncMock(return_value=media)),
         http_manager=SimpleNamespace(download_media=AsyncMock()),
         call_llm=SimpleNamespace(
@@ -126,7 +177,9 @@ async def test_inspect_respects_switches_and_reuses_existing_captions(
         ),
     )
 
-    record, text = await MediaCaptioner(plugin).inspect_media(media.hash_val, question)
+    record, text = await MediaCaptioner(plugin).inspect_media(
+        media.hash_val, question, bot_name="bot"
+    )
 
     assert record is media
     assert ("Cached caption" if can_reuse else "转述已关闭") in text
