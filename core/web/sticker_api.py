@@ -377,10 +377,12 @@ class StickerApi:
             tags = await db.get_all_sticker_tags()
             bots = self._get_bot_names()
 
-            has_ai = bool(
+            has_ai = self.giftia.conf.get("caption_config", {}).get(
+                "image_caption_enabled", True
+            ) and bool(
                 getattr(
                     getattr(self.giftia, "call_llm", None),
-                    "image_caption_provider_ids",
+                    "media_caption_provider_ids",
                     None,
                 )
             )
@@ -700,14 +702,18 @@ class StickerApi:
 
     async def _analyze_sticker_bytes(self, image_bytes: bytes, sticker_id: str):
         """调用视觉模型分析表情包，返回 (is_useful, Sticker|None, 错误信息)。"""
+        if not self.giftia.conf.get("caption_config", {}).get(
+            "image_caption_enabled", True
+        ):
+            return False, None, "图片转述已关闭，无法使用 AI 分析"
         call_llm = getattr(self.giftia, "call_llm", None)
         if call_llm is None or not getattr(
-            call_llm, "image_caption_provider_ids", None
+            call_llm, "media_caption_provider_ids", None
         ):
             return (
                 False,
                 None,
-                "未配置图片转述模型 (image_caption_provider_ids)，无法使用 AI 分析",
+                "未配置媒体转述提供商，无法使用 AI 分析",
             )
 
         try:

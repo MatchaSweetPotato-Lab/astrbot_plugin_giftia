@@ -21,46 +21,32 @@
     "caption_config": {
         "description": "媒体转述配置",
         "type": "object",
-        "hint": "",
+        "hint": "非活跃会话中的媒体默认仅缓存，按需查看时再转述。图片、音频和视频共用模型与重试配置，可按模型能力分别启用。",
         "items": {
+            "media_caption_provider_ids": {
+                "type": "list",
+                "description": "媒体转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "图片、音频、视频转述及表情包分析共用此列表。失败时按顺序尝试后续提供商；留空不调用模型。所选提供商需支持已启用的媒体类型，视频目前要求谷歌系原生视频理解。"
+            },
             "image_caption_enabled": {
                 "description": "启用图片转述",
                 "type": "bool",
                 "default": true,
-                "hint": "即使关闭图片转述，当前消息的图片仍然会与提示词一起发送给LLM。"
-            },
-            "image_caption_provider_ids": {
-                "type": "list",
-                "description": "图片转述提供商（按优先级多选）",
-                "_special": "select_providers",
-                "default": [],
-                "hint": "选择用于图片转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
+                "hint": "允许图片自动转述、按需查看及表情包 AI 分析。模型不支持图片时请关闭；关闭后仍可读取已有转述缓存。"
             },
             "audio_caption_enabled": {
                 "description": "启用音频转述",
                 "type": "bool",
                 "default": true,
-                "hint": "即使关闭音频转述，当前消息的音频仍然会与提示词一起发送给LLM。"
-            },
-            "audio_caption_provider_ids": {
-                "type": "list",
-                "description": "音频转述提供商（按优先级多选）",
-                "_special": "select_providers",
-                "default": [],
-                "hint": "选择用于音频转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
+                "hint": "允许音频自动转述及按需查看。模型不支持音频时请关闭；关闭后仍可读取已有转述缓存。"
             },
             "video_caption_enabled": {
                 "description": "启用视频转述",
                 "type": "bool",
                 "default": true,
-                "hint": "启用视频按需转述与切片智能分析。"
-            },
-            "video_caption_provider_ids": {
-                "type": "list",
-                "description": "视频转述提供商（仅支持谷歌系，按优先级多选）",
-                "_special": "select_providers",
-                "default": [],
-                "hint": "目前只支持谷歌系的多模态模型，原生视频理解，非抽帧！！！选择用于视频转述的多模态提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用视频转述。"
+                "hint": "允许视频按需转述与切片分析，不自动转述视频。模型不支持原生视频理解时请关闭；关闭后仍可读取已有转述缓存。"
             },
             "video_max_file_size_mb": {
                 "description": "视频处理最大文件大小(MB)",
@@ -73,12 +59,6 @@
                 "type": "int",
                 "default": 30,
                 "hint": "视频时长不超过该阈值时直接转述，超过该阈值时需要指定起始时间由Bot使用工具进行切片转述。"
-            },
-            "defer_caption_enabled": {
-                "description": "非活跃时媒体不自动转述",
-                "type": "bool",
-                "default": true,
-                "hint": "开启后，群聊在非活跃监听状态下收到的图片/语音不自动调用大模型转述，仅下载缓存并保留占位符 ID，Bot 在需要时可通过工具主动查看，极大减少 Token 消耗与唤醒延迟。"
             }
         }
     },
@@ -197,23 +177,11 @@
                 "default": 2,
                 "hint": "回复请求重试上限"
             },
-            "image_caption_retry_times": {
-                "description": "图片转述重试上限",
+            "media_caption_retry_times": {
+                "description": "媒体转述重试上限",
                 "type": "int",
                 "default": 2,
-                "hint": "图片转述重试上限"
-            },
-            "audio_caption_retry_times": {
-                "description": "音频转述重试上限",
-                "type": "int",
-                "default": 2,
-                "hint": "音频转述重试上限"
-            },
-            "video_caption_retry_times": {
-                "description": "视频转述重试上限",
-                "type": "int",
-                "default": 2,
-                "hint": "视频转述重试上限"
+                "hint": "图片、音频、视频转述及表情包分析共用。沿用原计数方式：包含首次请求，每个提供商最多尝试此次数，再切换至下一个提供商。"
             }
         }
     },

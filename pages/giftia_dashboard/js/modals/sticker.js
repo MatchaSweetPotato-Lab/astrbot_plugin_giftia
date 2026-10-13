@@ -91,7 +91,7 @@ window.openEditStickerModal = function(sticker) {
         aiBtn.disabled = !state.stickerOptions.ai_available;
         aiBtn.title = state.stickerOptions.ai_available
             ? "调用视觉模型重新识别名称/分类/标签（会消耗 Token）"
-            : "未配置图片转述模型 (image_caption_provider_ids)，无法使用";
+            : "配置媒体转述提供商并开启图片转述后可使用 AI 分析";
     }
 
     window.openModal("edit-sticker-modal");
@@ -233,7 +233,7 @@ window.openUploadStickerModal = function() {
     if (aiHint) {
         aiHint.textContent = state.stickerOptions.ai_available
             ? "勾选后调用视觉模型自动识别名称/分类/标签，每张图都会消耗 Token。"
-            : "未配置图片转述模型 (image_caption_provider_ids)，无法使用 AI 分析。";
+            : "配置媒体转述提供商并开启图片转述后可使用 AI 分析。";
     }
 
     renderUploadPreview();

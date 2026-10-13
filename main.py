@@ -69,7 +69,7 @@ class Giftia(Star):
         self.adapter_id_map: dict[str, str] = {}
         self.sync_bot_maps()
 
-        # 图片转述提供商
+        # Media caption settings.
         self.caption_config = self.conf.get("caption_config", {})
         # 聊天记录配置
         msg_history = self.conf.get("msg_history", {})
@@ -150,13 +150,6 @@ class Giftia(Star):
         self.replying_status: dict[str, int] = {}
 
         self._original_send_message = self.context.send_message
-
-    def get_caption_config(self, bot_conf: dict | None = None) -> dict:
-        """Return global media-caption config with optional per-bot overrides."""
-        caption_config = dict(self.caption_config or {})
-        if bot_conf:
-            caption_config.update(bot_conf.get("caption_config") or {})
-        return caption_config
 
     def get_bot_config(self, identifier: str | dict | None = None) -> dict:
         if isinstance(identifier, dict):

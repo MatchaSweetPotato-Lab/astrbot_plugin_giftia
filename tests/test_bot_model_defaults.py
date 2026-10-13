@@ -46,7 +46,6 @@ def runtime():
         active_reply_counters={},
         replying_status={},
         tools_config={},
-        get_caption_config=lambda bot: {},
         db=SimpleNamespace(
             update_message_decision=AsyncMock(),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),

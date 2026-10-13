@@ -408,7 +408,6 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
         tools_config={"max_loop": 3},
         embedding_conf={"enabled": False, "session_recall_enabled": False},
         msg_number=20,
-        get_caption_config=lambda _: {},
         data_cache=SimpleNamespace(
             get_recent_message=AsyncMock(return_value=[original, later, own]),
             get_bot_status=AsyncMock(return_value=Status()),

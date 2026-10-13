@@ -24,28 +24,22 @@ class MediaCaptioner:
     def __init__(self, plugin):
         self.plugin = plugin
 
-    @staticmethod
-    def _caption_enabled(media_caption: MediaCaption, caption_config: dict) -> bool:
-        media_type = str(getattr(media_caption, "media_type", "") or "").lower()
-        if media_type == "audio":
-            return bool(caption_config.get("audio_caption_enabled", True))
-        elif media_type == "video":
-            # 设计用意：视频不触发全局被动监听/回复前自动转述，且不自动注入到回复提示词的媒体注脚区。
-            # 避免长视频或多切片内容占用大量对话上下文窗口（防止 Token 消耗过大与上下文膨胀）。
-            # 视频内容仅在 Bot 明确需要时，通过 inspect_media 工具按需切片与定向提问查看。
-            return False
-        return bool(caption_config.get("image_caption_enabled", True))
-
     async def get_cached_media_captions(
         self,
         bot_name: str,
         recent_messages: list,
-        caption_config: dict,
-        group_or_user_id: str = "",
     ) -> list[MediaCaption]:
+        """Read cached captions using the global media settings.
+
+        Args:
+            bot_name: Bot whose collected stickers should be marked.
+            recent_messages: Messages containing media identifiers.
+
+        Returns:
+            Existing captions for enabled image and audio types. Videos remain
+            available only through explicit media inspection.
         """
-        根据近期消息中的媒体ID，仅读取本地已有缓存的转述结果并添加表情包标记，不触发任何阻塞的延迟转述。
-        """
+        caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
         hash_vals = []
         seen_media = set()
         for msg in reversed(recent_messages):
@@ -59,7 +53,11 @@ class MediaCaptioner:
         for hash_val in hash_vals:
             media_caption = await self.plugin.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
-                if not self._caption_enabled(media_caption, caption_config):
+                media_type = str(getattr(media_caption, "media_type", "") or "").lower()
+                if media_type == "video":
+                    continue
+                caption_type = "audio" if media_type == "audio" else "image"
+                if not caption_config.get(f"{caption_type}_caption_enabled", True):
                     continue
                 # 仅添加已经成功转述完成的记录
                 if getattr(media_caption, "is_captioned", False):
@@ -83,7 +81,9 @@ class MediaCaptioner:
         """
         分析并后台添加表情包
         """
-        if not llm_result.add_stickers:
+        if not llm_result.add_stickers or not self.plugin.conf.get(
+            "caption_config", {}
+        ).get("image_caption_enabled", True):
             return
 
         categories = await self.plugin.db.get_sticker_categories()
@@ -229,15 +229,17 @@ class MediaCaptioner:
                     parts
                 ) if parts else media_caption.caption
 
+        caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
+        if not caption_config.get(f"{media_type}_caption_enabled", True):
+            media_label = {"image": "图片", "audio": "音频", "video": "视频"}.get(
+                media_type, "媒体"
+            )
+            return media_caption, f"{media_label}转述已关闭，无法发起媒体分析。"
+        if not getattr(self.plugin.call_llm, "media_caption_provider_ids", None):
+            return media_caption, "未配置媒体转述提供商，无法发起媒体分析。"
+
         try:
             if media_type == "video":
-                if not getattr(
-                    self.plugin.call_llm, "video_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置视频转述模型 (video_caption_provider_ids)，无法查看视频。",
-                    )
                 caption_text = await self.transcribe_video_media(
                     media_caption=media_caption,
                     start_time=start_time,
@@ -255,13 +257,6 @@ class MediaCaptioner:
             )
 
             if media_type == "audio":
-                if not getattr(
-                    self.plugin.call_llm, "audio_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置语音转述模型 (audio_caption_provider_ids)，无法查看语音。",
-                    )
                 audio_urls = (
                     [str(cache_file)] if cache_file.exists() else [media_caption.url]
                 )
@@ -294,13 +289,6 @@ class MediaCaptioner:
                 return media_caption, "语音文件缺失或转述失败"
 
             else:  # image media
-                if not getattr(
-                    self.plugin.call_llm, "image_caption_provider_ids", None
-                ):
-                    return (
-                        media_caption,
-                        "未配置图片转述模型 (image_caption_provider_ids)，无法查看图片。",
-                    )
                 image_bytes = None
                 if cache_file.exists():
                     try:

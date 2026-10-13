@@ -411,31 +411,23 @@ class ChatManager:
         if await self.plugin.db.get_kv_data(session_key) != session_context:
             await self.plugin.db.upsert_kv_data(session_key, session_context)
 
-        # 检查是否开启延迟多媒体转述 (仅在没有 @ 且不在发言窗口时延迟)
-        caption_config = self.plugin.get_caption_config(bot_conf)
-        defer_enabled = caption_config.get("defer_caption_enabled", True)
-
-        should_defer = False
-        if defer_enabled:
-            is_just_at = any(
-                isinstance(c, At) and str(c.qq) == event.get_self_id()
-                for c in event.get_messages()
+        # Inactive conversations cache media until it is explicitly inspected.
+        is_direct_reply = any(
+            isinstance(c, At) and str(c.qq) == event.get_self_id()
+            for c in event.get_messages()
+        ) or (
+            not event.get_group_id()
+            and not bot_conf.get("decision_conf", {}).get(
+                "private_chat_decision_enabled", False
             )
-            is_private = not event.get_group_id()
-            private_decision_enabled = bool(
-                bot_conf.get("decision_conf", {}).get(
-                    "private_chat_decision_enabled", False
-                )
+        )
+        should_defer = (
+            not is_direct_reply
+            and self.plugin.active_reply_counters.get(
+                f"{bot_name}:{group_or_user_id}", 0
             )
-            if is_private and not private_decision_enabled:
-                is_just_at = True
-
-            fmt_key = f"{bot_name}:{group_or_user_id}"
-            active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
-            is_active_window = active_counter > 0
-
-            if not is_just_at and not is_active_window:
-                should_defer = True
+            <= 0
+        )
 
         # 解析用户消息并缓存多媒体
         async with self.plugin.parse_locks[f"{bot_name}:{event.unified_msg_origin}"]:
@@ -443,8 +435,8 @@ class ChatManager:
                 return
             (
                 current_message,
-                image_urls,
-                audio_urls,
+                _image_urls,
+                _audio_urls,
             ) = await self.plugin.message_parser.parse_user_message(
                 event, bot_name, defer_caption=should_defer
             )
