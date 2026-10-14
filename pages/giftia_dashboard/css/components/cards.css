@@ -677,7 +677,7 @@ html[data-theme="dark"] .media-caption-text {
    ========================================================================== */
 .memory-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
     gap: 16px;
     margin-bottom: 24px;
     width: 100%;
@@ -693,6 +693,7 @@ html[data-theme="dark"] .media-caption-text {
     box-shadow: var(--shadow);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     box-sizing: border-box;
+    min-width: 0;
 }
 
 .memory-card:hover {
@@ -705,7 +706,79 @@ html[data-theme="dark"] .media-caption-text {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 12px;
+    gap: 8px;
 }
+
+.memory-kind-badge,
+.memory-status-badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--bg-secondary);
+    color: var(--font-secondary);
+}
+
+.memory-kind-badge {
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+.memory-status-active { color: var(--success); background: var(--success-bg); }
+.memory-status-completed { color: var(--info); background: var(--info-bg); }
+.memory-status-cancelled { color: var(--danger); background: var(--danger-bg); }
+
+.memory-context,
+.memory-participants,
+.memory-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--font-secondary);
+    overflow-wrap: anywhere;
+}
+
+.memory-participants {
+    color: var(--font-color);
+    font-weight: 500;
+}
+
+.memory-observation,
+.memory-evidence-meta,
+.memory-source-ids {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--font-secondary);
+    overflow-wrap: anywhere;
+}
+
+.memory-evidence {
+    margin: 10px 0 12px;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.memory-evidence summary { cursor: pointer; color: var(--primary); }
+.memory-evidence ol { padding-left: 18px; margin: 10px 0; max-height: 300px; overflow-y: auto; }
+.memory-evidence li + li { margin-top: 12px; }
+.memory-evidence blockquote {
+    margin: 4px 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--border-color);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.memory-evidence p { margin: 8px 0 0; }
+.memory-edit-identity { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+
+#add-mem-expiry-group[hidden],
+#edit-mem-expiry-group[hidden] { display: none; }
 
 /* Importance badges */
 .memory-importance-badge {
@@ -834,7 +907,7 @@ html[data-theme="dark"] .memory-activity-badge {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    max-width: 75%;
+    min-width: 0;
 }
 
 .user-pill {
@@ -848,6 +921,8 @@ html[data-theme="dark"] .memory-activity-badge {
     cursor: pointer;
     font-weight: 500;
     transition: opacity 0.2s ease, transform 0.1s ease;
+    border: none;
+    overflow-wrap: anywhere;
 }
 
 .user-pill:hover {
@@ -868,6 +943,7 @@ html[data-theme="dark"] .user-pill-raw {
 .memory-actions {
     display: flex;
     gap: 6px;
+    flex-shrink: 0;
 }
 
 .btn-icon-action {

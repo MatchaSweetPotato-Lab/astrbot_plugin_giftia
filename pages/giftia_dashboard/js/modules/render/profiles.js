@@ -77,25 +77,11 @@ export function renderUserProfiles(items) {
         return;
     }
 
-    container.innerHTML = items.map(item => {
-        const structured = {
-            call_name: item.call_name || "",
-            personality: item.personality || "",
-            interests: item.interests || "",
-            attitude: item.attitude || "",
-            agreements: item.agreements || "",
-            extra: item.extra || "",
-            avatar_description: item.avatar_description || ""
-        };
-        const encodedStructured = encodeURIComponent(JSON.stringify(structured));
+    container.innerHTML = items.map((item, index) => {
         const profileHtml = window.renderProfileCard("", {
             call_name: item.call_name,
             aliases: item.aliases,
-            personality: item.personality,
-            interests: item.interests,
             attitude: item.attitude,
-            agreements: item.agreements,
-            extra: item.extra,
             avatar_description: item.avatar_description
         });
 
@@ -108,19 +94,16 @@ export function renderUserProfiles(items) {
         } else {
             relationBadge = `<span class="badge badge-secondary">0 好感度</span>`;
         }
-        const titleHtml = item.title ? `<span class="badge badge-info">${window.escapeHtml(item.title)}</span>` : "";
-        const encodedTitle = encodeURIComponent(item.title || "");
 
         return `
-            <div class="profile-item-card card">
+            <div class="profile-item-card card" data-profile-index="${index}">
                 <div class="profile-card-header">
                     <div class="profile-card-id-section">
                         <span class="profile-card-id-label">用户:</span>
-                        <span class="profile-card-id-value">${item.user_id}</span>
+                        <span class="profile-card-id-value">${window.escapeHtml(String(item.user_id))}</span>
                     </div>
                     <div class="profile-card-badges">
                         ${relationBadge}
-                        ${titleHtml}
                     </div>
                 </div>
                 <div class="profile-card-body">
@@ -131,14 +114,24 @@ export function renderUserProfiles(items) {
                         更新时间: ${window.formatDate(item.updated_at || item.created_at)}
                     </div>
                     <div class="profile-card-actions">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
-                        <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
+                        <button class="btn btn-secondary btn-small" data-profile-action="edit">编辑</button>
+                        <button class="btn btn-secondary btn-small" data-profile-action="aliases">外号</button>
+                        <button class="btn btn-danger btn-small" data-profile-action="delete">删除</button>
                     </div>
                 </div>
             </div>
         `;
     }).join("");
+    container.onclick = event => {
+        const button = event.target.closest('[data-profile-action]');
+        const card = button?.closest('[data-profile-index]');
+        if (!card) return;
+        const item = items[Number(card.dataset.profileIndex)];
+        if (button.dataset.profileAction === 'edit') window.openEditUserProfileModal(item);
+        if (button.dataset.profileAction === 'aliases') window.openUserAliasesModal(item.bot_name, item.group_or_user_id, item.user_id);
+        if (button.dataset.profileAction === 'delete') window.deleteUserProfile(item.bot_name, item.group_or_user_id, item.user_id);
+    };
+
 }
 
 export async function loadGroupProfiles() {

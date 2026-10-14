@@ -288,6 +288,7 @@ class LTM:
         text: str,
         time: str,
         metadata: str = "{}",
+        memory_id: str | None = None,
     ) -> tuple[str, bytes] | None:
         self._lazy_init()
         if self.embedding_conf.get("use_external_provider", False):
@@ -300,7 +301,7 @@ class LTM:
                 logger.error(f"[Giftia LTM] 获取外部 Embedding 失败: {e}")
                 return None
 
-            memory_id = str(uuid.uuid4())
+            memory_id = memory_id or str(uuid.uuid4())
             self.table.add(
                 [
                     {
@@ -329,17 +330,24 @@ class LTM:
                 text,
                 time,
                 metadata,
+                memory_id,
             )
 
     def _add_memory_sync(
-        self, bot_name: str, group_or_user_id: str, text: str, time: str, metadata: str
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        text: str,
+        time: str,
+        metadata: str,
+        memory_id: str | None = None,
     ) -> tuple[str, bytes] | None:
         """添加一条记忆"""
         self._lazy_init()
         if not hasattr(self, "embed_model"):
             logger.error("Embedding model not initialized")
             return None
-        memory_id = str(uuid.uuid4())
+        memory_id = memory_id or str(uuid.uuid4())
 
         # 使用 TextEmbedding 实例手动计算向量
         vector = list(self.embed_model.embed([text]))[0]

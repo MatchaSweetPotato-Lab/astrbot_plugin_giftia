@@ -18,6 +18,7 @@ from .repositories.forwarded_messages import ForwardedMessagesRepository
 from .repositories.kv_store import KVStoreRepository
 from .repositories.media_captions import MediaCaptionsRepository
 from .repositories.memories import MemoriesRepository
+from .repositories.memory_maintenance import MemoryMaintenanceRepository
 from .repositories.short_tasks import ShortTasksRepository
 from .repositories.slang import SlangRepository
 from .repositories.stickers import StickersRepository
@@ -42,6 +43,7 @@ class Database(ProfileStoreMixin):
         self.slang_repo = SlangRepository(conn)
         self.bot_status_repo = BotStatusRepository(conn)
         self.memories_repo = MemoriesRepository(conn)
+        self.memory_maintenance_repo = MemoryMaintenanceRepository(conn)
         self.kv_store_repo = KVStoreRepository(conn)
         self.stickers_repo = StickersRepository(conn)
         self.token_usage_repo = TokenUsageRepository(conn)
@@ -74,10 +76,15 @@ class Database(ProfileStoreMixin):
         )
 
     async def get_messages_by_id_range(
-        self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        start_id: int,
+        end_id: int,
+        limit: int | None = None,
     ) -> list[MessageData]:
         return await self.chat_history_repo.get_messages_by_id_range(
-            bot_name, group_or_user_id, start_id, end_id
+            bot_name, group_or_user_id, start_id, end_id, limit=limit
         )
 
     async def get_user_messages_after_id(

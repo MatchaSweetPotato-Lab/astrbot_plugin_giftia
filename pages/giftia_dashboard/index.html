@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="css/base.css">
     <link rel="stylesheet" href="css/components.css">
     <link rel="stylesheet" href="css/components/tables.css">
-    <link rel="stylesheet" href="css/components/cards.css">
+    <link rel="stylesheet" href="css/components/cards.css?v=atomic-memory">
     <link rel="stylesheet" href="css/components/token_stats.css">
     <link rel="stylesheet" href="css/components/switches.css">
     <link rel="stylesheet" href="css/components/priority_select.css">
@@ -221,6 +221,38 @@
                         <div class="filter-group">
                             <label>关联用户ID</label>
                             <input type="text" id="memory-associated-user-id" placeholder="筛选关联用户">
+                        </div>
+                        <div class="filter-group">
+                            <label for="memory-kind">记忆类型</label>
+                            <select id="memory-kind">
+                                <option value="">全部类型</option>
+                                <option value="event">事件</option>
+                                <option value="agreement">约定</option>
+                                <option value="relationship">关系</option>
+                                <option value="preference">偏好 / 边界</option>
+                                <option value="habit">习惯</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="memory-status">状态</label>
+                            <select id="memory-status">
+                                <option value="active">有效</option>
+                                <option value="">全部状态</option>
+                                <option value="completed">已完成</option>
+                                <option value="cancelled">已取消</option>
+                                <option value="expired">已过期</option>
+                                <option value="superseded">已被替代</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="memory-origin">来源</label>
+                            <select id="memory-origin">
+                                <option value="">全部来源</option>
+                                <option value="observed">原话记录 / 本人自述</option>
+                                <option value="derived">整理归纳</option>
+                                <option value="manual">人工录入</option>
+                                <option value="legacy">旧版记录</option>
+                            </select>
                         </div>
                         <div class="filter-group flex-grow">
                             <label>搜索记忆内容</label>
@@ -555,7 +587,7 @@
     <div id="add-memory-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>新增长期记忆</h2>
+                <h2 class="text-h3 pa-4 pb-0 pl-6">新增原子记忆</h2>
                 <button class="modal-close-btn" onclick="closeModal('add-memory-modal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -568,6 +600,34 @@
                     <input type="text" id="add-mem-group" placeholder="例如: 123456789">
                 </div>
                 <div class="form-group">
+                    <label for="add-mem-kind">记忆类型</label>
+                    <select id="add-mem-kind" onchange="updateAddMemoryKind()">
+                        <option value="event">事件</option>
+                        <option value="agreement">约定</option>
+                        <option value="relationship">关系</option>
+                        <option value="preference">偏好 / 边界</option>
+                        <option value="habit">习惯</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="add-mem-subject">主体用户ID <span class="required">*</span></label>
+                        <input type="text" id="add-mem-subject" maxlength="128" placeholder="行为或描述属于谁">
+                    </div>
+                    <div class="form-group">
+                        <label for="add-mem-object">对象用户ID</label>
+                        <input type="text" id="add-mem-object" maxlength="128" placeholder="行为针对谁（关系必填）">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="add-mem-topic">主题 <span class="required">*</span></label>
+                    <input type="text" id="add-mem-topic" maxlength="80" placeholder="例如：使用某个表情互动">
+                </div>
+                <div class="form-group" id="add-mem-expiry-group" hidden>
+                    <label for="add-mem-expires">到期时间（可选，按本地时间）</label>
+                    <input type="datetime-local" id="add-mem-expires" step="1">
+                </div>
+                <div class="form-group">
                     <label>关联用户ID (可选，多个以英文逗号分隔)</label>
                     <input type="text" id="add-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
@@ -577,11 +637,12 @@
                 </div>
                 <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>
-                    <textarea id="add-mem-text" rows="5" placeholder="例如: 老师最喜欢的食物是草莓蛋糕。"></textarea>
+                    <textarea id="add-mem-text" rows="5" maxlength="300" placeholder="一条记忆只描述一件事，习惯请保留适用时间和互动对象。"></textarea>
                 </div>
+                <p class="muted-text">保存后标记为“人工录入”。从聊天归纳的记录会另外保留原话证据。</p>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitAddMemory()">确认保存</button>
+                <button id="add-mem-save" class="btn btn-primary" variant="tonal" onclick="submitAddMemory()">确认保存</button>
             </div>
         </div>
     </div>
@@ -621,6 +682,20 @@
                                         <div class="form-group flex-grow">
                                             <label>搜索记忆内容</label>
                                             <input type="text" id="clean-mem-search" placeholder="可选关键词">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group flex-grow">
+                                            <label for="clean-mem-kind">记忆类型</label>
+                                            <select id="clean-mem-kind"></select>
+                                        </div>
+                                        <div class="form-group flex-grow">
+                                            <label for="clean-mem-status">状态</label>
+                                            <select id="clean-mem-status"></select>
+                                        </div>
+                                        <div class="form-group flex-grow">
+                                            <label for="clean-mem-origin">来源</label>
+                                            <select id="clean-mem-origin"></select>
                                         </div>
                                     </div>
                                     <div class="clean-filter-grid">
@@ -721,11 +796,14 @@
     <div id="edit-memory-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>编辑长期记忆</h2>
+                <h2 class="text-h3 pa-4 pb-0 pl-6">编辑原子记忆</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-memory-modal')">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="edit-mem-id">
+                <input type="hidden" id="edit-mem-revision">
+                <p id="edit-mem-identity" class="memory-edit-identity"></p>
+                <p class="muted-text">类型、主体、对象和来源依据保留原记录。修改内容会标记为人工修订。</p>
                 <div class="form-group">
                     <label>Bot名称</label>
                     <input type="text" id="edit-mem-bot" readonly class="readonly-input">
@@ -733,6 +811,14 @@
                 <div class="form-group">
                     <label>群聊/用户ID</label>
                     <input type="text" id="edit-mem-group" readonly class="readonly-input">
+                </div>
+                <div class="form-group">
+                    <label for="edit-mem-status">状态</label>
+                    <select id="edit-mem-status"></select>
+                </div>
+                <div class="form-group" id="edit-mem-expiry-group" hidden>
+                    <label for="edit-mem-expires">到期时间（可选，按本地时间）</label>
+                    <input type="datetime-local" id="edit-mem-expires" step="1">
                 </div>
                 <div class="form-group">
                     <label>关联用户ID (可选，多个以英文逗号分隔)</label>
@@ -748,7 +834,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitEditMemory()">保存修改</button>
+                <button id="edit-mem-save" class="btn btn-primary" variant="tonal" onclick="submitEditMemory()">保存修改</button>
             </div>
         </div>
     </div>
@@ -993,43 +1079,20 @@
                 <input type="hidden" id="edit-user-prof-bot">
                 <input type="hidden" id="edit-user-prof-group">
                 <input type="hidden" id="edit-user-prof-user">
+                <p class="muted-text">约定、关系、偏好和习惯统一在“长期记忆”中管理。</p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>好感度</label>
+                        <label for="edit-user-prof-relation">好感度</label>
                         <input type="number" id="edit-user-prof-relation" placeholder="好感度数值">
                     </div>
-                    <div class="form-group flex-2">
-                        <label>关系头衔</label>
-                        <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
+                    <div class="form-group">
+                        <label for="edit-user-prof-call-name">你的称呼</label>
+                        <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>你的称呼</label>
-                    <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>性格风格</label>
-                        <input type="text" id="edit-user-prof-personality" placeholder="性格特征与说话风格">
-                    </div>
-                    <div class="form-group">
-                        <label>兴趣话题</label>
-                        <input type="text" id="edit-user-prof-interests" placeholder="兴趣爱好与关注事物">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>互动态度</label>
-                        <input type="text" id="edit-user-prof-attitude" placeholder="该成员对机器人的态度">
-                    </div>
-                    <div class="form-group">
-                        <label>关键约定</label>
-                        <input type="text" id="edit-user-prof-agreements" placeholder="承诺、约定或共同回忆">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>其他补充</label>
-                    <textarea id="edit-user-prof-extra" rows="2" placeholder="无法归类但长期有用的信息"></textarea>
+                    <label for="edit-user-prof-attitude">互动态度</label>
+                    <input type="text" id="edit-user-prof-attitude" placeholder="该成员对机器人的态度">
                 </div>
                 <div class="form-group">
                     <label>头像描述</label>

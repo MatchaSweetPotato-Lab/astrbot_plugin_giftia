@@ -198,10 +198,6 @@ class SearchUserProfileTool(FunctionTool):
         relation = item.get("relation")
         if relation not in (None, "", 0):
             lines.append(f"- 好感度：{relation}")
-        title = normalize_profile_value(item.get("title"))
-        if title:
-            lines.append(f"- 关系头衔：{title}")
-
         for profile_field, label in USER_PROFILE_FIELDS:
             value = normalize_profile_value(item.get(profile_field))
             if value:

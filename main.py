@@ -237,6 +237,7 @@ class Giftia(Star):
         # 实例化逻辑管理器
         self.task_board = TaskBoardManager(self)
         self.passive_memory_manager = PassiveMemoryManager(self)
+        self.passive_memory_manager.register_jobs()
         self.tts_manager = TTSManager(self)
         self.reports = ReportService(
             self, StarTools.get_data_dir("astrbot_plugin_giftia")
@@ -396,6 +397,25 @@ class Giftia(Star):
             event, bot_name, group_or_user_id, rag_queries
         ):
             yield chunk
+
+    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
+    @filter.command("整理记忆")
+    async def consolidate_memory(self, event: AstrMessageEvent):
+        """Consolidate one memory batch in the current conversation.
+
+        Args:
+            event: Administrator command event.
+        """
+        bot_name = self.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield event.plain_result("当前机器人未配置 Giftia。")
+            return
+        result = await self.passive_memory_manager.force_consolidate_memories(
+            bot_name,
+            event.get_group_id() or event.get_sender_id(),
+            event.get_self_id(),
+        )
+        yield event.plain_result(result)
 
     @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("读取近期记忆")
@@ -864,8 +884,10 @@ class Giftia(Star):
                     )
             self.chat_manager.sessions.clear()
 
+        if hasattr(self, "passive_memory_manager"):
+            await self.passive_memory_manager.close()
+        self.task_manager.shutdown()
         await self.http_manager.close_session()
         await self.db.close()
-        self.task_manager.shutdown()
         self.ltm.close()
         remove_tools(self.context)

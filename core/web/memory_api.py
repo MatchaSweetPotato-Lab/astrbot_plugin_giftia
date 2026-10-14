@@ -1,9 +1,11 @@
 import json
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..memory.atomic import MemoryChange
 from ..utils.schemas import normalize_memory_importance
 from .web_helpers import optional_bool, optional_int, safe_json_dict
 
@@ -12,6 +14,11 @@ class MemoryApi:
     """Long-term memory APIs: CRUD, preview candidates, batch clean, auto clean configs/triggers."""
 
     def _memory_row_to_dict(self, row) -> dict:
+        status = row["status"]
+        if status == "active" and row["expires_at"]:
+            expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+            if expires.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+                status = "expired"
         return {
             "id": row["id"],
             "bot_name": row["bot_name"],
@@ -20,17 +27,91 @@ class MemoryApi:
             "text": row["text"],
             "metadata": safe_json_dict(row["metadata"]),
             "importance": normalize_memory_importance(row["importance"]),
+            "kind": row["kind"],
+            "status": status,
+            "expires_at": row["expires_at"],
+            "revision": row["revision"],
             "hit_count": int(row["hit_count"] or 0),
             "last_hit_at": row["last_hit_at"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
 
+    @staticmethod
+    def _memory_filter_conditions(values) -> tuple[list[str], list]:
+        """Build shared list, session-count, and cleanup filters.
+
+        Args:
+            values: Query or body fields, with optional scope and atom filters.
+
+        Returns:
+            SQL predicates and their bound parameters.
+
+        Raises:
+            ValueError: An atom filter is unsupported.
+        """
+        conditions, params = [], []
+        for key in ("bot_name", "group_or_user_id", "kind"):
+            value = str(values.get(key) or "").strip()
+            if not value:
+                continue
+            if key == "kind" and value not in {
+                "event",
+                "agreement",
+                "relationship",
+                "preference",
+                "habit",
+            }:
+                raise ValueError("不支持的记忆类型")
+            conditions.append(f"{key} = ?")
+            params.append(value)
+        status = str(values.get("status") or "").strip()
+        if status == "active":
+            conditions.append(
+                "status='active' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now'))"
+            )
+        elif status == "expired":
+            conditions.append(
+                "(status='expired' OR (status='active' AND julianday(expires_at)<=julianday('now')))"
+            )
+        elif status in {"completed", "cancelled", "superseded"}:
+            conditions.append("status = ?")
+            params.append(status)
+        elif status:
+            raise ValueError("不支持的记忆状态")
+        # Guard legacy malformed metadata before querying exact account IDs.
+        metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
+        user_id = str(values.get("associated_user_id") or "").strip()
+        if user_id:
+            conditions.append(
+                f"(CAST(json_extract({metadata}, '$.user_id') AS TEXT)=? "
+                f"OR CAST(json_extract({metadata}, '$.subject_id') AS TEXT)=? "
+                f"OR CAST(json_extract({metadata}, '$.object_id') AS TEXT)=? "
+                f"OR EXISTS (SELECT 1 FROM json_each({metadata}, '$.associated_user_ids') "
+                "WHERE CAST(value AS TEXT)=?))"
+            )
+            params.extend([user_id] * 4)
+        origin = str(values.get("origin") or "").strip()
+        manual = f"COALESCE(json_extract({metadata}, '$.manual_entry'), 0)"
+        if origin == "manual":
+            conditions.append(f"{manual}=1")
+        elif origin in {"observed", "derived"}:
+            conditions.append(f"{manual}=0 AND json_extract({metadata}, '$.origin')=?")
+            params.append(origin)
+        elif origin == "legacy":
+            conditions.append(
+                f"{manual}=0 AND json_extract({metadata}, '$.origin') IS NULL"
+            )
+        elif origin:
+            raise ValueError("不支持的记忆来源")
+        search = str(values.get("search") or "").strip()
+        if search:
+            conditions.append("text LIKE ?")
+            params.append(f"%{search}%")
+        return conditions, params
+
     def _memory_clean_conditions(self, body: dict) -> tuple[list[str], list, dict]:
         bot_name = str(body.get("bot_name") or "").strip()
-        group_or_user_id = str(body.get("group_or_user_id") or "").strip()
-        associated_user_id = str(body.get("associated_user_id") or "").strip()
-        search = str(body.get("search") or "").strip()
 
         max_importance = optional_int(
             body.get("max_importance"), default=3, min_value=1
@@ -44,18 +125,10 @@ class MemoryApi:
         )
         include_never_hit = optional_bool(body.get("include_never_hit"), default=True)
 
-        conditions = ["bot_name = ?"]
-        params = [bot_name]
-
-        if group_or_user_id:
-            conditions.append("group_or_user_id = ?")
-            params.append(group_or_user_id)
-        if associated_user_id:
-            conditions.append("metadata LIKE ?")
-            params.append(f"%{associated_user_id}%")
-        if search:
-            conditions.append("text LIKE ?")
-            params.append(f"%{search}%")
+        conditions, params = self._memory_filter_conditions(body)
+        if not bot_name:
+            conditions.append("bot_name = ?")
+            params.append("")
         if max_importance is not None:
             conditions.append("COALESCE(importance, 5) <= ?")
             params.append(max_importance)
@@ -115,29 +188,13 @@ class MemoryApi:
     async def get_memories(self):
         """Get memories with pagination and filters."""
         try:
-            page = int(request.query.get("page", 1))
-            limit = int(request.query.get("limit", 20))
+            page = max(1, int(request.query.get("page", 1)))
+            limit = min(100, max(1, int(request.query.get("limit", 20))))
             bot_name = request.query.get("bot_name")
             group_or_user_id = request.query.get("group_or_user_id")
-            associated_user_id = request.query.get("associated_user_id")
-            search = request.query.get("search")
 
             offset = (page - 1) * limit
-            conditions = []
-            params = []
-
-            if bot_name:
-                conditions.append("bot_name = ?")
-                params.append(bot_name)
-            if group_or_user_id:
-                conditions.append("group_or_user_id = ?")
-                params.append(group_or_user_id)
-            if associated_user_id:
-                conditions.append("metadata LIKE ?")
-                params.append(f"%{associated_user_id}%")
-            if search:
-                conditions.append("text LIKE ?")
-                params.append(f"%{search}%")
+            conditions, params = self._memory_filter_conditions(request.query)
 
             where_clause = ""
             if conditions:
@@ -152,10 +209,10 @@ class MemoryApi:
             # Query data
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, memory_id, text, metadata,
-                       importance, hit_count, last_hit_at, created_at, updated_at
+                       importance, hit_count, last_hit_at, created_at, updated_at, kind, status, expires_at, revision
                 FROM memories
                 {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?
             """
             data_params = params + [limit, offset]
@@ -167,7 +224,7 @@ class MemoryApi:
 
             # Query user nicknames for items on the page
             user_id_to_name = {}
-            if bot_name and items:
+            if bot_name and group_or_user_id and items:
                 user_ids = set()
                 for item in items:
                     meta = item.get("metadata") or {}
@@ -179,15 +236,18 @@ class MemoryApi:
                         for auid in associated:
                             if auid:
                                 user_ids.add(str(auid))
+                    for key in ("subject_id", "object_id"):
+                        if meta.get(key):
+                            user_ids.add(str(meta[key]))
 
                 if user_ids:
                     placeholders = ",".join(["?"] * len(user_ids))
                     sql = f"""
                         SELECT user_id, call_name
                         FROM user_profiles
-                        WHERE bot_name = ? AND user_id IN ({placeholders})
+                        WHERE bot_name = ? AND group_or_user_id = ? AND user_id IN ({placeholders})
                     """
-                    sql_params = [bot_name] + list(user_ids)
+                    sql_params = [bot_name, group_or_user_id, *user_ids]
                     try:
                         async with self.giftia.db.conn.execute(
                             sql, sql_params
@@ -223,8 +283,6 @@ class MemoryApi:
         """Get bot/session filter options for memories."""
         try:
             bot_name = request.query.get("bot_name")
-            associated_user_id = request.query.get("associated_user_id")
-            search = request.query.get("search")
 
             bots = []
             async with self.giftia.db.conn.execute(
@@ -244,14 +302,10 @@ class MemoryApi:
 
             sessions = []
             if selected_bot_name:
-                conditions = ["bot_name = ?"]
-                params = [selected_bot_name]
-                if associated_user_id:
-                    conditions.append("metadata LIKE ?")
-                    params.append(f"%{associated_user_id}%")
-                if search:
-                    conditions.append("text LIKE ?")
-                    params.append(f"%{search}%")
+                filters = dict(request.query)
+                filters["bot_name"] = selected_bot_name
+                filters.pop("group_or_user_id", None)
+                conditions, params = self._memory_filter_conditions(filters)
 
                 where_clause = "WHERE " + " AND ".join(conditions)
                 async with self.giftia.db.conn.execute(
@@ -289,35 +343,60 @@ class MemoryApi:
             return error_response(f"获取长期记忆筛选项失败: {str(e)}")
 
     async def add_memory(self):
-        """Add new memory item."""
+        """Add an administrator assertion without fabricating chat evidence."""
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
             group_or_user_id = body.get("group_or_user_id")
-            text = body.get("text")
-            user_id = body.get("user_id") or "admin"
-            associated_user_ids = body.get("associated_user_ids")
-            importance = normalize_memory_importance(body.get("importance"), 5)
-
-            if isinstance(associated_user_ids, str):
-                associated_user_ids = [
-                    uid.strip() for uid in associated_user_ids.split(",") if uid.strip()
-                ]
-
-            if not bot_name or not group_or_user_id or not text:
+            if not bot_name or not group_or_user_id:
                 return error_response("缺少必要参数 (bot_name, group_or_user_id, text)")
-
-            memory_id = await self.giftia.data_cache.add_memory(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                text=text,
-                user_id=user_id,
-                associated_user_ids=associated_user_ids,
-                importance=importance,
+            associated = body.get("associated_user_ids") or []
+            if isinstance(associated, str):
+                associated = [
+                    uid.strip() for uid in associated.split(",") if uid.strip()
+                ]
+            item = MemoryChange(
+                kind=body.get("kind", "event"),
+                subject_id=body.get("subject_id") or body.get("user_id") or "admin",
+                object_id=body.get("object_id") or "",
+                topic=body.get("topic") or "人工记录",
+                text=body.get("text"),
+                associated_user_ids=associated,
+                importance=normalize_memory_importance(body.get("importance"), 5),
+                expires_at=body.get("expires_at") or "",
             )
-
-            if not memory_id:
-                return error_response("添加记忆失败，大模型 Embedding 出错")
+            if item.kind == "relationship" and (
+                not item.object_id or item.object_id == item.subject_id
+            ):
+                return error_response("关系记忆需要两个不同的用户账号")
+            if item.expires_at:
+                if item.kind != "agreement":
+                    return error_response("只有约定可以设置到期时间")
+                item.expires_at = (
+                    datetime.fromisoformat(item.expires_at.replace("Z", "+00:00"))
+                    .astimezone(timezone.utc)
+                    .isoformat()
+                )
+            item.associated_user_ids = sorted(
+                {uid for uid in [item.subject_id, item.object_id, *associated] if uid}
+            )
+            created_ids = await self.giftia.db.memory_maintenance_repo.apply_changes(
+                bot_name,
+                group_or_user_id,
+                [
+                    {
+                        **item.model_dump(),
+                        "fingerprint": str(uuid.uuid4()),
+                        "manual_entry": True,
+                    }
+                ],
+                expected={},
+            )
+            memory_id = created_ids[0]
+            self.giftia.data_cache.memories.pop(f"{bot_name}:{group_or_user_id}", None)
+            await self.giftia.passive_memory_manager._sync_memory_vectors(
+                bot_name, group_or_user_id
+            )
 
             return json_response(
                 {
@@ -331,68 +410,120 @@ class MemoryApi:
             return error_response(f"添加记忆失败: {str(e)}")
 
     async def update_memory(self):
-        """Update existing memory text by replacing it."""
+        """Edit an atom in place while preserving its identity and evidence."""
         try:
             body = await request.json()
             memory_id = body.get("memory_id")
             bot_name = body.get("bot_name")
-            group_or_user_id = body.get("group_or_user_id")
+            session_id = body.get("group_or_user_id")
             text = body.get("text")
-            user_id = body.get("user_id") or "admin"
-            associated_user_ids = body.get("associated_user_ids")
-            importance_raw = body.get("importance")
-
-            if isinstance(associated_user_ids, str):
-                associated_user_ids = [
-                    uid.strip() for uid in associated_user_ids.split(",") if uid.strip()
-                ]
-
-            if not memory_id or not bot_name or not group_or_user_id or not text:
+            if (
+                not memory_id
+                or not bot_name
+                or not session_id
+                or not isinstance(text, str)
+                or not text.strip()
+            ):
                 return error_response("缺少必要参数")
-
             async with self.giftia.db.conn.execute(
-                "SELECT importance, hit_count, last_hit_at FROM memories WHERE memory_id = ?",
-                (memory_id,),
+                "SELECT * FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
+                (memory_id, bot_name, session_id),
             ) as cursor:
-                old_row = await cursor.fetchone()
-
-            if importance_raw is None or importance_raw == "":
-                importance = normalize_memory_importance(
-                    old_row["importance"] if old_row else None, 5
+                old = await cursor.fetchone()
+            if old is None:
+                return error_response("当前会话未找到该记忆")
+            if body.get("revision", old["revision"]) != old["revision"]:
+                return error_response("记忆已被更新，请刷新列表后重新编辑")
+            metadata = safe_json_dict(old["metadata"])
+            status = body.get("status", old["status"])
+            effective_status = self._memory_row_to_dict(old)["status"]
+            if status != old["status"] and not (
+                old["kind"] == "agreement"
+                and effective_status == "active"
+                and status in {"completed", "cancelled"}
+            ):
+                return error_response(
+                    "只有有效约定可以改为已完成或已取消；历史状态不能重开"
                 )
-            else:
-                importance = normalize_memory_importance(importance_raw, 5)
-            hit_count = int(old_row["hit_count"] or 0) if old_row else 0
-            last_hit_at = (old_row["last_hit_at"] or "") if old_row else ""
-
-            # Delete old memory first
-            await self.giftia.data_cache.delete_memory(memory_id)
-
-            # Re-insert with updated text
-            new_memory_id = await self.giftia.data_cache.add_memory(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                text=text,
-                user_id=user_id,
-                associated_user_ids=associated_user_ids,
-                importance=importance,
-                hit_count=hit_count,
-                last_hit_at=last_hit_at,
+            expires_at = old["expires_at"]
+            if "expires_at" in body:
+                expires_at = body["expires_at"] or None
+                if expires_at:
+                    if old["kind"] != "agreement":
+                        return error_response("只有约定可以设置到期时间")
+                    expires_at = (
+                        datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                        .astimezone(timezone.utc)
+                        .isoformat()
+                    )
+                if effective_status != "active" and expires_at != old["expires_at"]:
+                    return error_response("历史约定的到期时间不能修改")
+            for field in ("kind", "subject_id", "object_id", "topic"):
+                existing = old["kind"] if field == "kind" else metadata.get(field, "")
+                if field in body and body[field] != existing:
+                    return error_response(
+                        "类型、主体、对象和主题不能改写，请新增一条记忆"
+                    )
+            associated = body.get("associated_user_ids")
+            if isinstance(associated, str):
+                associated = [
+                    uid.strip() for uid in associated.split(",") if uid.strip()
+                ]
+            if associated is not None:
+                if not isinstance(associated, list) or any(
+                    not isinstance(uid, str) for uid in associated
+                ):
+                    return error_response("关联用户必须是账号列表")
+                metadata["associated_user_ids"] = sorted(
+                    {
+                        uid.strip()
+                        for uid in [
+                            *associated,
+                            metadata.get("subject_id", ""),
+                            metadata.get("object_id", ""),
+                        ]
+                        if uid.strip()
+                    }
+                )
+            importance = normalize_memory_importance(
+                body.get("importance"), old["importance"]
             )
-
-            if not new_memory_id:
-                return error_response("更新记忆失败，大模型 Embedding 出错")
-
+            metadata["importance"] = importance
+            metadata.update(status=status, expires_at=expires_at, manually_edited=True)
+            cursor = await self.giftia.db.conn.execute(
+                "UPDATE memories SET text=?, metadata=?, importance=?, status=?, expires_at=?, revision=revision+1, vector=NULL, updated_at=? "
+                "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
+                (
+                    text.strip(),
+                    json.dumps(metadata, ensure_ascii=False),
+                    importance,
+                    status,
+                    expires_at,
+                    datetime.now().isoformat(),
+                    memory_id,
+                    bot_name,
+                    session_id,
+                    old["revision"],
+                ),
+            )
+            await self.giftia.db.conn.commit()
+            if cursor.rowcount != 1:
+                return error_response("记忆已被更新，请刷新列表后重新编辑")
+            self.giftia.data_cache.memories.pop(f"{bot_name}:{session_id}", None)
+            self.giftia.data_cache.remove_session_recalled_memory(memory_id)
+            await self.giftia.passive_memory_manager._sync_memory_vectors(
+                bot_name, session_id
+            )
             return json_response(
                 {
                     "status": "success",
                     "message": "更新记忆成功",
-                    "data": {"memory_id": new_memory_id},
+                    "data": {"memory_id": memory_id},
                 }
             )
-        except Exception as e:
-            logger.error(f"[Giftia API] update_memory error: {e}")
-            return error_response(f"更新记忆失败: {str(e)}")
+        except Exception as error:
+            logger.error("[Giftia API] Memory update failed: %s", error)
+            return error_response(f"更新记忆失败: {error}")
 
     async def delete_memory(self):
         """Delete memory item."""
@@ -402,6 +533,13 @@ class MemoryApi:
 
             if not memory_id:
                 return error_response("缺少 memory_id 参数")
+            if body.get("bot_name") or body.get("group_or_user_id"):
+                async with self.giftia.db.conn.execute(
+                    "SELECT 1 FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
+                    (memory_id, body.get("bot_name"), body.get("group_or_user_id")),
+                ) as cursor:
+                    if not await cursor.fetchone():
+                        return error_response("当前会话未找到该记忆")
 
             success = await self.giftia.data_cache.delete_memory(memory_id)
             if not success:
@@ -432,7 +570,7 @@ class MemoryApi:
 
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, memory_id, text, metadata,
-                       importance, hit_count, last_hit_at, created_at, updated_at
+                       importance, hit_count, last_hit_at, created_at, updated_at, kind, status, expires_at, revision
                 FROM memories
                 {where_clause}
                 ORDER BY COALESCE(importance, 5) ASC,

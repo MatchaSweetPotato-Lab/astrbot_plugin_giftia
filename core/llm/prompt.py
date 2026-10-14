@@ -27,11 +27,7 @@ MAX_FORWARDED_INDEX_IN_PROMPT = 20
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
-    ("personality", "性格风格"),
-    ("interests", "兴趣话题"),
     ("attitude", "互动态度"),
-    ("agreements", "关键约定"),
-    ("extra", "其他补充"),
     ("avatar_description", "头像描述"),
 ]
 
@@ -770,15 +766,12 @@ def build_user_relation(relation: tuple[int, str] | None) -> str:
         return ""
 
     score = relation[0] if relation[0] is not None else 0
-    title = relation[1] or ""
-    if score == 0 and not title:
+    if score == 0:
         return ""
 
     text = []
     if score != 0:
         text.append(f"好感度：{score}")
-    if title:
-        text.append(f"称号：{title}")
     return "\n".join(text)
 
 
@@ -838,9 +831,6 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
         relation = item.get("relation")
         if relation not in (None, "", 0):
             lines.append(f"好感度：{relation}")
-        title = normalize_profile_value(item.get("title"))
-        if title:
-            lines.append(f"关系头衔：{title}")
         if call_name:
             lines.append(f"你的称呼：{call_name}")
         aliases = normalize_profile_value(item.get("aliases"))

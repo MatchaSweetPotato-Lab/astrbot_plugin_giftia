@@ -105,29 +105,13 @@ window.GiftiaApp = {
 };
 
 // Global handlers bound to window for inline HTML onclick/etc.
-window.toggleMemoryText = function(memoryId) {
-    const textContainer = document.getElementById(`memory-text-${memoryId}`);
-    const btnToggle = document.getElementById(`btn-toggle-${memoryId}`);
-    if (textContainer && btnToggle) {
-        const isCollapsed = textContainer.classList.contains("collapsed");
-        if (isCollapsed) {
-            textContainer.classList.remove("collapsed");
-            textContainer.classList.add("expanded");
-            btnToggle.textContent = "收起全部";
-        } else {
-            textContainer.classList.remove("expanded");
-            textContainer.classList.add("collapsed");
-            btnToggle.textContent = "展开全部";
-        }
-    }
-};
-
 window.filterMemoryByUser = async function(userId) {
     const input = document.getElementById("memory-associated-user-id");
     if (input) {
         input.value = userId;
         const app = window.GiftiaApp;
         app.resetPagination("memories");
+        await app.refreshScopedFilters("memories", true);
         await app.loadMemories();
     }
 };
@@ -227,7 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let filterTimeout;
     const filterInputIds = [
         "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
-        "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
+        "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-kind", "memory-status", "memory-origin", "memory-search",
         "media-type", "media-search",
         "sticker-bot-name", "sticker-category", "sticker-tag", "sticker-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",

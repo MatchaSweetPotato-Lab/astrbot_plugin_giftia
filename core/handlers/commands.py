@@ -121,14 +121,17 @@ class CommandHandler:
             logger.error("未启用embedding功能")
             yield await event.send(MessageChain([Plain("未启用embedding功能")]))
             return
-        embedding_memories = await self.plugin.ltm.search_memory(
-            bot_name,
-            group_or_user_id,
-            rag_queries,
-            limit=self.plugin.embedding_conf.get(
-                "limit", self.plugin.embedding_conf.get("top_k", 5)
-            ),
-            threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+        embedding_memories = (
+            await self.plugin.passive_memory_manager.search_and_filter_memories(
+                bot_name,
+                group_or_user_id,
+                rag_queries,
+                limit=self.plugin.embedding_conf.get(
+                    "limit", self.plugin.embedding_conf.get("top_k", 5)
+                ),
+                threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                filter_active_users=False,
+            )
         )
         if self.plugin.rerank_conf.get("enabled", False):
             rerank_memories = await self.plugin.ltm.rerank_memories(
@@ -169,11 +172,6 @@ class CommandHandler:
         limit: int = 10,
     ):
         """根据ID获取记忆"""
-        if not self.plugin.embedding_conf.get("enabled", False):
-            logger.error("未启用embedding功能")
-            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
-            return
-
         long_memories = await self.plugin.data_cache.get_memories(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,

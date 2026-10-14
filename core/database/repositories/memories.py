@@ -43,7 +43,8 @@ class MemoriesRepository(BaseRepository):
             SELECT * FROM (
                 SELECT memory_id, text, vector, metadata, importance, hit_count, last_hit_at, created_at, updated_at
                 FROM memories
-                WHERE group_or_user_id = ? AND bot_name = ?
+                WHERE group_or_user_id = ? AND bot_name = ? AND status = 'active'
+                  AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))
                 ORDER BY created_at DESC
                 LIMIT ?
             )

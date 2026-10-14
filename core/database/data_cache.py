@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -883,6 +884,23 @@ class DataCache:
         for memory in ranked:
             if len(selected) >= max_items:
                 break
+            try:
+                metadata = json.loads(memory.metadata or "{}")
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                expires_at = metadata.get("expires_at")
+                expired = (
+                    expires_at
+                    and datetime.fromisoformat(
+                        expires_at.replace("Z", "+00:00")
+                    ).timestamp()
+                    <= now
+                )
+                if expired or metadata.get("status", "active") != "active":
+                    pool.pop(memory.memory_id, None)
+                    continue
+            except (ValueError, TypeError):
+                pass
             selected.append(memory)
         return selected
 
@@ -898,10 +916,7 @@ class DataCache:
     ) -> list[MemoryItem]:
         """获取记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
-        memories = self.memories.get(fmt_key)
-        if memories and len(memories) >= limit:
-            return list(memories)[-limit:]
-        # 从数据库中获取
+        # Validity may end between reads; SQLite owns the current lifecycle.
         db_memories = await self.db.get_memories(
             group_or_user_id=group_or_user_id, bot_name=bot_name, limit=limit
         )
@@ -934,20 +949,11 @@ class DataCache:
             meta_dict["associated_user_ids"] = associated_user_ids
         meta_str = json.dumps(meta_dict)
 
-        result = await self.ltm.add_memory(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            text=text,
-            time=now,
-            metadata=meta_str,
-        )
-        if result is None:
-            return
-        memory_id, vector = result
+        memory_id = str(uuid.uuid4())
         memory = MemoryItem(
             memory_id=memory_id,
             text=text,
-            vector=vector,
+            vector=b"",
             metadata=meta_str,
             updated_at=now,
             created_at=now,
@@ -960,6 +966,9 @@ class DataCache:
         await self.db.insert_memory(
             bot_name=bot_name, group_or_user_id=group_or_user_id, memory=memory
         )
+        manager = getattr(self.plugin, "passive_memory_manager", None)
+        if manager is not None:
+            await manager._sync_memory_vectors(bot_name, group_or_user_id)
         return memory_id
 
     async def record_memory_hits(
@@ -998,10 +1007,16 @@ class DataCache:
 
     async def delete_memory(self, memory_id: str) -> bool:
         """删除记忆"""
-        result = await self.ltm.delete_memory(memory_id=memory_id)
-        if result is None:
-            return False
         await self.db.delete_memory(memory_id=memory_id)
+        if self.ltm and self.ltm.embedding_conf.get("enabled", False):
+            try:
+                await self.ltm.delete_memory(memory_id=memory_id)
+            except Exception as error:
+                logger.warning(
+                    "[Giftia Memory] Vector deletion deferred for %s: %s",
+                    memory_id,
+                    error,
+                )
         # 从缓存中删除
         for memories in self.memories.values():
             for memory in memories:

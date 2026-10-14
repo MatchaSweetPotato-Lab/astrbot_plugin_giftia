@@ -303,6 +303,28 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_group_bot_importance ON memories (group_or_user_id, bot_name, importance)"
         )
+        async with conn.execute("PRAGMA table_info(memories)") as columns:
+            memory_columns = {row[1] for row in await columns.fetchall()}
+        for name, definition in (
+            ("kind", "TEXT NOT NULL DEFAULT 'event'"),
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("expires_at", "TEXT"),
+            ("revision", "INTEGER NOT NULL DEFAULT 1"),
+            ("reviewed_revision", "INTEGER NOT NULL DEFAULT 0"),
+            ("indexed_revision", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in memory_columns:
+                await cursor.execute(
+                    f"ALTER TABLE memories ADD COLUMN {name} {definition}"
+                )
+        if "indexed_revision" not in memory_columns:
+            await cursor.execute(
+                "UPDATE memories SET indexed_revision=revision WHERE vector IS NOT NULL"
+            )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_maintenance ON memories "
+            "(bot_name, group_or_user_id, status, reviewed_revision, id)"
+        )
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_group_bot_activity ON memories (group_or_user_id, bot_name, hit_count, last_hit_at)"
         )

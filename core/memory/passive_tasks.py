@@ -1,18 +1,17 @@
 import asyncio
 import re
-from datetime import datetime
 
 from astrbot.api import logger
 
 from ..database.utils import parse_aliases
-from ..utils.schemas import normalize_memory_importance
 from ..utils.token_utils import extract_tokens_robust
+from .maintenance import MemoryMaintenanceMixin
 from .passive_context import PassiveContextMixin
 
 RELATION_DELTA_LIMIT = 5
 
 
-class PassiveSummaryTaskMixin(PassiveContextMixin):
+class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
     async def _call_summary_llm(
         self,
         task_name: str,
@@ -40,10 +39,13 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                     logger.debug(
                         f"[Giftia Passive Memory] {task_name} user_prompt:\n{user_prompt}"
                     )
-                    llm_resp = await self.plugin.context.llm_generate(
-                        chat_provider_id=provider_id,
-                        system_prompt=system_prompt,
-                        prompt=user_prompt,
+                    llm_resp = await asyncio.wait_for(
+                        self.plugin.context.llm_generate(
+                            chat_provider_id=provider_id,
+                            system_prompt=system_prompt,
+                            prompt=user_prompt,
+                        ),
+                        timeout=120,
                     )
                     if llm_resp and self.plugin:
                         prompt_tokens, completion_tokens, total_tokens = (
@@ -62,6 +64,11 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                             extra_info={"task_name": task_name},
                         )
                     if llm_resp and llm_resp.completion_text:
+                        logger.debug(
+                            "[Giftia Memory] %s raw response: %s",
+                            task_name,
+                            llm_resp.completion_text,
+                        )
                         return llm_resp.completion_text
                 except Exception as e:
                     logger.error(
@@ -72,90 +79,6 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             f"[Giftia Passive Memory] 所有配置的总结提供商均调用失败，{task_name}终止。"
         )
         return None
-
-    async def _run_memory_summary_task(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        self_id: str,
-        nickname: str,
-        context: dict,
-    ) -> bool | None:
-        if not self.plugin.embedding_conf.get("enabled", False):
-            logger.debug(
-                "[Giftia Passive Memory] 嵌入模型未启用，跳过长期记忆提炼，仅维护画像。"
-            )
-            return None
-
-        sys_prompt = self._format_prompt_template(
-            self._get_memory_summary_prompt(), nickname=nickname, self_id=self_id
-        )
-        user_prompt = self._build_memory_user_prompt(group_or_user_id, context)
-        completion_text = await self._call_summary_llm(
-            "长期记忆提炼",
-            sys_prompt,
-            user_prompt,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-        )
-        if not completion_text:
-            return False
-
-        logger.info(f"[Giftia Passive Memory] 长期记忆提炼返回内容:\n{completion_text}")
-
-        memory_matches = re.finditer(
-            r"<memory([^>]*)>(.*?)</memory>",
-            completion_text,
-            re.DOTALL,
-        )
-        for match in memory_matches:
-            attrs = dict(
-                re.findall(
-                    r'([a-zA-Z_][\w-]*)=["\']([^"\']*)["\']',
-                    match.group(1) or "",
-                )
-            )
-            users_attr = attrs.get("users", "")
-            importance = normalize_memory_importance(attrs.get("importance"), 5)
-            text = match.group(2).strip()
-
-            if not text or text == "无":
-                continue
-
-            associated_ids = []
-            seen_associated_ids = set()
-            self_id_str = str(self_id)
-            if users_attr:
-                for u in re.split(r"[,，]", users_attr):
-                    u = u.strip()
-                    resolved_uid = context["nickname_to_user_id"].get(u, u)
-                    resolved_uid = str(resolved_uid).strip() if resolved_uid else ""
-                    if not resolved_uid or resolved_uid == self_id_str:
-                        continue
-                    if resolved_uid not in seen_associated_ids:
-                        associated_ids.append(resolved_uid)
-                        seen_associated_ids.add(resolved_uid)
-
-            if not associated_ids:
-                logger.info(
-                    f"[Giftia Passive Memory] 跳过长期记忆入库：未关联到除机器人自身以外的用户。记忆内容: {text}"
-                )
-                continue
-
-            primary_user = associated_ids[0]
-
-            await self.plugin.data_cache.add_memory(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                text=text,
-                user_id=primary_user,
-                associated_user_ids=associated_ids,
-                importance=importance,
-            )
-            logger.info(
-                f"[Giftia Passive Memory] 已成功记录长期记忆: {text} (关联用户: {associated_ids}, 重要度: {importance})"
-            )
-        return True
 
     async def _run_profile_summary_task(
         self,
@@ -213,10 +136,6 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 )
                 continue
 
-            title = attrs.get("title")
-            if title is not None:
-                title = title.strip()
-
             relation_updates = []
 
             def strip_relation_update(update_match):
@@ -242,7 +161,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             ).strip()
             has_profile_content = bool(profile_content and profile_content != "无")
             if not resolved_user_id or (
-                not has_profile_content and title is None and not relation_updates
+                not has_profile_content and not relation_updates
             ):
                 continue
             if self._is_bot_reference(
@@ -276,15 +195,14 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 if aliases:
                     profile_fields["aliases"] = "，".join(aliases)
 
-            if not profile_fields and title is None and not relation_updates:
+            if not profile_fields and not relation_updates:
                 continue
 
-            if profile_fields or title is not None:
+            if profile_fields:
                 await self.plugin.data_cache.set_user_profile(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     user_id=resolved_user_id,
-                    title=title,
                     profile_fields=profile_fields,
                 )
                 logger.info(
@@ -304,200 +222,6 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
 
         return True
 
-    async def _run_long_profile_summary_task(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        nickname: str,
-        self_id: str,
-        user_id: str,
-        user_nickname: str,
-        profile_record: dict | None,
-        sample_messages: list,
-        fetched_message_count: int,
-        sample_limit: int,
-    ) -> bool:
-        sys_prompt = self._format_prompt_template(
-            self._get_long_profile_summary_prompt(), nickname=nickname, self_id=self_id
-        )
-        logger.debug(
-            f"[Giftia Passive Memory] 用户画像维护({user_id})系统提示词:\n{sys_prompt}"
-        )
-        user_prompt = await self._build_long_profile_user_prompt(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=user_id,
-            nickname=user_nickname,
-            profile_record=profile_record,
-            sample_messages=sample_messages,
-            fetched_message_count=fetched_message_count,
-            sample_limit=sample_limit,
-        )
-        completion_text = await self._call_summary_llm(
-            f"用户画像维护({user_id})",
-            sys_prompt,
-            user_prompt,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-        )
-        if not completion_text:
-            return False
-
-        logger.info(
-            f"[Giftia Passive Memory] 用户画像维护返回内容({user_id}):\n{completion_text}"
-        )
-        profile_fields = self._parse_long_profile_fields(completion_text)
-        if profile_fields:
-            await self.plugin.data_cache.set_user_profile(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=user_id,
-                profile_fields=profile_fields,
-            )
-            logger.info(
-                f"[Giftia Passive Memory] 已更新用户 {user_id} 用户画像字段: {', '.join(sorted(profile_fields))}"
-            )
-        else:
-            logger.debug(f"[Giftia Passive Memory] 用户 {user_id} 用户画像无可更新字段")
-        return True
-
-    async def _maybe_run_long_profile_summary_for_user(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        nickname: str,
-        self_id: str,
-        user_id: str,
-        user_nickname: str,
-    ) -> bool | None:
-        if not user_id or self._is_bot_reference(
-            user_id, user_id, self_id, nickname=nickname, bot_name=bot_name
-        ):
-            return None
-
-        today = datetime.now().date().isoformat()
-        base_key = (
-            f"passive_memory:long_profile:{bot_name}:{group_or_user_id}:{user_id}"
-        )
-        last_run_date = await self.plugin.db.get_kv_data(
-            f"{base_key}:last_run_date", ""
-        )
-        if last_run_date == today:
-            return None
-
-        if not hasattr(self, "long_profile_locks"):
-            self.long_profile_locks = {}
-        if base_key not in self.long_profile_locks:
-            self.long_profile_locks[base_key] = asyncio.Lock()
-
-        async with self.long_profile_locks[base_key]:
-            last_run_date = await self.plugin.db.get_kv_data(
-                f"{base_key}:last_run_date", ""
-            )
-            if last_run_date == today:
-                return None
-
-            last_analyzed_id = await self.plugin.db.get_kv_data(
-                f"{base_key}:last_analyzed_id", 0
-            )
-            sample_limit = self._get_long_profile_sample_limit()
-            fetched_messages = await self.plugin.db.get_user_messages_after_id(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=user_id,
-                after_id=last_analyzed_id,
-                limit=sample_limit,
-            )
-            if not fetched_messages:
-                return None
-
-            sample_messages = [
-                msg
-                for msg in fetched_messages
-                if self._is_long_profile_sample_message(msg)
-            ]
-            if not sample_messages:
-                return None
-
-            profile_record = await self.plugin.data_cache.get_user_profile_record(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=user_id,
-            )
-            has_existing = self._has_existing_long_profile(profile_record)
-            message_threshold, text_threshold = self._get_long_profile_thresholds(
-                has_existing
-            )
-            sample_text_length = sum(
-                self._long_profile_sample_text_length(msg) for msg in sample_messages
-            )
-            if (
-                len(sample_messages) < message_threshold
-                and sample_text_length < text_threshold
-            ):
-                return None
-
-            latest_fetched_id = max(
-                getattr(msg, "db_id", 0) for msg in fetched_messages
-            )
-            if latest_fetched_id <= last_analyzed_id:
-                return None
-
-            ok = await self._run_long_profile_summary_task(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                nickname=nickname,
-                self_id=self_id,
-                user_id=user_id,
-                user_nickname=user_nickname,
-                profile_record=profile_record,
-                sample_messages=sample_messages,
-                fetched_message_count=len(fetched_messages),
-                sample_limit=sample_limit,
-            )
-            if not ok:
-                return False
-
-            await self.plugin.db.upsert_kv_data(
-                f"{base_key}:last_analyzed_id", latest_fetched_id
-            )
-            await self.plugin.db.upsert_kv_data(f"{base_key}:last_run_date", today)
-            logger.info(
-                f"[Giftia Passive Memory] 用户 {user_id} 用户画像游标推进到 {latest_fetched_id}"
-            )
-            return True
-
-    async def _run_long_profile_summary_tasks(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        nickname: str,
-        self_id: str,
-        db_messages: list,
-    ) -> bool:
-        candidate_users = {}
-        for msg in db_messages or []:
-            user_id = str(getattr(msg, "user_id", "") or "").strip()
-            if not user_id or self._is_bot_reference(
-                user_id, user_id, self_id, nickname=nickname, bot_name=bot_name
-            ):
-                continue
-            candidate_users[user_id] = getattr(msg, "nickname", "") or ""
-
-        any_success = False
-        for user_id, user_nickname in candidate_users.items():
-            result = await self._maybe_run_long_profile_summary_for_user(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                nickname=nickname,
-                self_id=self_id,
-                user_id=user_id,
-                user_nickname=user_nickname,
-            )
-            if result is True:
-                any_success = True
-        return any_success
-
     async def _run_background_summarize(
         self,
         bot_name: str,
@@ -505,72 +229,89 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         self_id: str,
         start_id: int,
         end_id: int,
-    ):
-        """后台异步总结历史消息段，提炼记忆与状态"""
+    ) -> bool:
+        """Persist one bounded batch before advancing its source cursor.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            self_id: Observing bot account.
+            start_id: First unprocessed database message ID.
+            end_id: Upper bound of the observed source interval.
+
+        Returns:
+            Whether the selected messages were durably handled.
+        """
+        key = f"{bot_name}:{group_or_user_id}"
         try:
-            db_messages = await self.plugin.db.get_messages_by_id_range(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                start_id=start_id,
-                end_id=end_id,
+            config = self.plugin.conf.get("memory_config", {})
+            limit = max(1, min(200, int(config.get("memory_summary_batch_size", 100))))
+            messages = await self.plugin.db.get_messages_by_id_range(
+                bot_name,
+                group_or_user_id,
+                start_id,
+                end_id,
+                limit=limit,
             )
-            if not db_messages:
-                return
-
-            bot_conf = self.plugin.bot_map.get(bot_name, {})
-            nickname = bot_conf.get("nickname", bot_name)
-
-            bot_participated = any(
-                str(msg.user_id) == str(self_id) for msg in db_messages
+            if not messages:
+                return True
+            # Persist pending work before inference, including forced batches,
+            # so failures remain retryable and a later wake-up cannot skip them.
+            await self.plugin.db.upsert_kv_data(
+                f"passive_memory:silence_armed:{key}", 1
             )
-            memory_ok = None
-            profile_ok = None
-            if bot_participated:
-                summary_context = await self._build_summary_context(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    self_id=self_id,
-                    db_messages=db_messages,
-                )
-
-                memory_ok = await self._run_memory_summary_task(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    self_id=self_id,
-                    nickname=nickname,
-                    context=summary_context,
-                )
-                profile_ok = await self._run_profile_summary_task(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    nickname=nickname,
-                    self_id=self_id,
-                    context=summary_context,
-                )
-            else:
-                logger.debug(
-                    f"[Giftia Passive Memory] {bot_name}:{group_or_user_id} 消息范围 {start_id}-{end_id} 内机器人没有直接参与，跳过长期记忆和群片段画像总结。"
-                )
-
-            await self._run_long_profile_summary_tasks(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                nickname=nickname,
-                self_id=self_id,
-                db_messages=db_messages,
+            selected, text_size = [], 0
+            for msg in messages:
+                if selected and text_size + len(msg.content or "") > 16000:
+                    break
+                selected.append(msg)
+                text_size += len(msg.content or "")
+            has_human_source = any(
+                str(msg.user_id) != str(self_id)
+                and not msg.is_recalled
+                and msg.role != "operation_log"
+                and (msg.content or msg.media_id_list)
+                for msg in selected
             )
-
-            if profile_ok is False and memory_ok is not True:
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}",
-                    start_id - 1,
+            context = None
+            nickname = self.plugin.bot_map.get(bot_name, {}).get("nickname", bot_name)
+            if has_human_source:
+                context = await self._build_summary_context(
+                    bot_name, group_or_user_id, self_id, selected
                 )
-
-        except Exception as e:
-            logger.error(
-                f"[Giftia Passive Memory] 后台总结执行异常: {e}", exc_info=True
+                if not await self._run_memory_summary_task(
+                    bot_name, group_or_user_id, self_id, nickname, context
+                ):
+                    return False
+            processed_end = selected[-1].db_id
+            await self.plugin.db.upsert_kv_data(
+                f"passive_memory:last_summarized_id:{key}", processed_end
+            )
+            await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{key}", 0)
+            activity_version = self.activity_versions.get(key, 0)
+            latest_id = await self.plugin.db.get_max_message_id(
+                bot_name, group_or_user_id
             )
             await self.plugin.db.upsert_kv_data(
-                f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}",
-                start_id - 1,
+                f"passive_memory:silence_armed:{key}", int(processed_end < latest_id)
             )
+            if self.activity_versions.get(key, 0) != activity_version:
+                await self.plugin.db.upsert_kv_data(
+                    f"passive_memory:silence_armed:{key}", 1
+                )
+            if context:
+                try:
+                    await self._run_profile_summary_task(
+                        bot_name, group_or_user_id, nickname, self_id, context
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Giftia Memory] Lightweight relationship update failed for %s",
+                        key,
+                    )
+            return True
+        except Exception:
+            logger.exception(
+                "[Giftia Memory] Summary failed for %s; source cursor retained", key
+            )
+            return False

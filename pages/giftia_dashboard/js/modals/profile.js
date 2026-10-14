@@ -1,28 +1,14 @@
 // Giftia Dashboard Modals - User & Group Profiles & Aliases Actions
 
 // 1. Edit User Profile
-window.openEditUserProfileModal = function(bot, group, user, relation, titleEncoded, structuredEncoded) {
-    const title = decodeURIComponent(titleEncoded || "");
-    let structured = {};
-    if (structuredEncoded) {
-        try {
-            structured = JSON.parse(decodeURIComponent(structuredEncoded));
-        } catch (e) {
-            structured = {};
-        }
-    }
-    document.getElementById("edit-user-prof-bot").value = bot;
-    document.getElementById("edit-user-prof-group").value = group;
-    document.getElementById("edit-user-prof-user").value = user;
-    document.getElementById("edit-user-prof-relation").value = relation !== undefined ? relation : 0;
-    document.getElementById("edit-user-prof-title").value = title;
-    document.getElementById("edit-user-prof-call-name").value = structured.call_name || "";
-    document.getElementById("edit-user-prof-personality").value = structured.personality || "";
-    document.getElementById("edit-user-prof-interests").value = structured.interests || "";
-    document.getElementById("edit-user-prof-attitude").value = structured.attitude || "";
-    document.getElementById("edit-user-prof-agreements").value = structured.agreements || "";
-    document.getElementById("edit-user-prof-extra").value = structured.extra || "";
-    document.getElementById("edit-user-prof-avatar").value = structured.avatar_description || "";
+window.openEditUserProfileModal = function(item) {
+    document.getElementById("edit-user-prof-bot").value = item.bot_name;
+    document.getElementById("edit-user-prof-group").value = item.group_or_user_id;
+    document.getElementById("edit-user-prof-user").value = item.user_id;
+    document.getElementById("edit-user-prof-relation").value = item.relation ?? 0;
+    document.getElementById("edit-user-prof-call-name").value = item.call_name || "";
+    document.getElementById("edit-user-prof-attitude").value = item.attitude || "";
+    document.getElementById("edit-user-prof-avatar").value = item.avatar_description || "";
     window.openModal("edit-user-profile-modal");
 };
 
@@ -31,13 +17,8 @@ window.submitEditUserProfile = async function() {
     const group = document.getElementById("edit-user-prof-group").value;
     const user = document.getElementById("edit-user-prof-user").value;
     const relationVal = document.getElementById("edit-user-prof-relation").value;
-    const title = document.getElementById("edit-user-prof-title").value.trim();
     const callName = document.getElementById("edit-user-prof-call-name").value.trim();
-    const personality = document.getElementById("edit-user-prof-personality").value.trim();
-    const interests = document.getElementById("edit-user-prof-interests").value.trim();
     const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
-    const agreements = document.getElementById("edit-user-prof-agreements").value.trim();
-    const extra = document.getElementById("edit-user-prof-extra").value.trim();
     const avatarDescription = document.getElementById("edit-user-prof-avatar").value.trim();
 
     const relation = relationVal !== "" ? parseInt(relationVal) : 0;
@@ -48,13 +29,8 @@ window.submitEditUserProfile = async function() {
             group_or_user_id: group,
             user_id: user,
             relation: relation,
-            title: title,
             call_name: callName,
-            personality: personality,
-            interests: interests,
             attitude: attitude,
-            agreements: agreements,
-            extra: extra,
             avatar_description: avatarDescription
         });
         if (res.status === "success") {

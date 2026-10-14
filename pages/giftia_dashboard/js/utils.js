@@ -224,11 +224,7 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
     let fields = {
         "你的称呼": "",
         "其他外号": "",
-        "性格风格": "",
-        "兴趣话题": "",
         "互动态度": "",
-        "关键约定": "",
-        "其他补充": "",
         "头像描述": ""
     };
     
@@ -236,11 +232,7 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
     if (structured) {
         fields["你的称呼"] = structured.call_name || "";
         fields["其他外号"] = structured.aliases || "";
-        fields["性格风格"] = structured.personality || "";
-        fields["兴趣话题"] = structured.interests || "";
         fields["互动态度"] = structured.attitude || "";
-        fields["关键约定"] = structured.agreements || "";
-        fields["其他补充"] = structured.extra || "";
         fields["头像描述"] = structured.avatar_description || "";
     }
     
@@ -295,15 +287,11 @@ window.renderProfileCard = function(rawProfile, structured, isGroup) {
 
     // Extract fields
     const profileFields = [
-        { label: "头像描述", val: fields["头像描述"] || "", class: "prop-avatar", color: "var(--accent, #ec4899)" },
-        { label: "性格风格", val: fields["性格风格"] || "", class: "prop-personality", color: "var(--primary)" },
-        { label: "兴趣话题", val: fields["兴趣话题"] || "", class: "prop-interests", color: "var(--info)" },
-        { label: "其他补充", val: fields["其他补充"] || "", class: "prop-extra", color: "var(--font-secondary)" }
+        { label: "头像描述", val: fields["头像描述"] || "", class: "prop-avatar", color: "var(--accent, #ec4899)" }
     ].filter(f => f.val && String(f.val).trim());
 
     const relationFields = [
         { label: "互动态度", val: fields["互动态度"] || "", class: "prop-attitude", color: "var(--success)" },
-        { label: "关键约定", val: fields["关键约定"] || "", class: "prop-agreements", color: "var(--warning)" }
     ].filter(f => f.val && String(f.val).trim());
 
     // --- Tab 1: 画像 ---
