@@ -445,14 +445,22 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             if lock.locked() or key in self.consolidation_tasks:
                 return "当前会话正在进行记忆维护，请稍后再试。"
             async with lock:
-                if not await self.plugin.db.memory_maintenance_repo.pending_consolidation(
-                    bot_name, session_id
-                ):
+                job = (
+                    await self.plugin.db.memory_maintenance_repo.pending_consolidation(
+                        bot_name, session_id, include_suspended=True
+                    )
+                )
+                if not job:
                     return "当前会话暂无待整理的新增记忆批次。"
-                if await self.consolidate_memories(bot_name, session_id, str(self_id)):
+                if await self.consolidate_memories(
+                    bot_name, session_id, str(self_id), include_suspended=True
+                ):
                     self._schedule_memory_consolidation(
                         bot_name, session_id, str(self_id)
                     )
+                    remaining = await self.plugin.db.get_kv_data(job["key"])
+                    if remaining and json.loads(remaining).get("status") == "suspended":
+                        return "记忆整理在一次纠正后仍未通过校验，本批已暂挂，原记录与诊断保留；其他批次会继续处理。可执行 /整理记忆 重试。"
                     return "已处理一批新增记忆；无相关历史记忆的条目已跳过整理，原始来源保留。"
                 return "记忆整理失败，原记录与进度保留，可稍后重试。"
         finally:

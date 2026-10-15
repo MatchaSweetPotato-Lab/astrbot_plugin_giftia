@@ -283,7 +283,11 @@ class MemoryMaintenanceMixin:
         return True
 
     async def consolidate_memories(
-        self, bot_name: str, session_id: str, self_id: str = ""
+        self,
+        bot_name: str,
+        session_id: str,
+        self_id: str = "",
+        include_suspended: bool = False,
     ) -> bool:
         """Consume one queued extraction batch, reviewing only historical matches.
 
@@ -291,12 +295,15 @@ class MemoryMaintenanceMixin:
             bot_name: Owning bot configuration.
             session_id: Owning conversation.
             self_id: Observing account, overridden by the durable job identity.
+            include_suspended: Retry a suspended batch on explicit request.
 
         Returns:
-            Whether job progress was committed, including an unmatched batch.
+            Whether a batch was processed or suspended, allowing the queue to advance.
         """
         repo = self.plugin.db.memory_maintenance_repo
-        job = await repo.pending_consolidation(bot_name, session_id)
+        job = await repo.pending_consolidation(
+            bot_name, session_id, include_suspended=include_suspended
+        )
         if job is None:
             return False
         batch = job["payload"]
@@ -342,48 +349,84 @@ class MemoryMaintenanceMixin:
                 + "\n\nJSON Schema:\n"
                 + json.dumps(MemoryChanges.model_json_schema(), ensure_ascii=False)
             )
-            completion = await self._call_summary_llm(
-                "关联记忆整理",
-                prompt,
-                self._memory_user_prompt(
-                    bot_name,
-                    session_id,
-                    self_id,
-                    [],
-                    {},
-                    related,
-                    True,
-                    new_memories=matched,
-                    related_memory_ids={
-                        row["memory_id"]: ids
-                        for row, ids in zip(active, related_ids)
-                        if ids
-                    },
-                ),
-                bot_name=bot_name,
-                group_or_user_id=session_id,
+            input_prompt = self._memory_user_prompt(
+                bot_name,
+                session_id,
+                self_id,
+                [],
+                {},
+                related,
+                True,
+                new_memories=matched,
+                related_memory_ids={
+                    row["memory_id"]: ids
+                    for row, ids in zip(active, related_ids)
+                    if ids
+                },
             )
-            if not completion:
-                return False
-            try:
-                parsed = MemoryChanges.model_validate(parse_markdown_json(completion))
-                changes = validate_memory_changes(
-                    parsed,
-                    existing,
-                    [],
-                    {},
-                    self_id,
-                    consolidating=True,
-                    new_memory_ids={row["memory_id"] for row in matched},
+            user_prompt = input_prompt
+            failures = []
+            for attempt in range(2):
+                completion = await self._call_summary_llm(
+                    "关联记忆整理",
+                    prompt,
+                    user_prompt,
+                    bot_name=bot_name,
+                    group_or_user_id=session_id,
                 )
-            except (ValueError, TypeError) as error:
+                if not completion:
+                    if attempt == 0:
+                        return False
+                    error_text = "Correction returned no response"
+                else:
+                    try:
+                        parsed = MemoryChanges.model_validate(
+                            parse_markdown_json(completion)
+                        )
+                        changes = validate_memory_changes(
+                            parsed,
+                            existing,
+                            [],
+                            {},
+                            self_id,
+                            consolidating=True,
+                            new_memory_ids={row["memory_id"] for row in matched},
+                        )
+                    except (ValueError, TypeError) as error:
+                        error_text = str(error)
+                    else:
+                        break
+                failures.append(
+                    {
+                        "user_prompt": user_prompt,
+                        "response": completion or "",
+                        "error": error_text,
+                    }
+                )
                 logger.warning(
-                    "[Giftia Memory] Rejected consolidation for %s:%s: %s",
+                    "[Giftia Memory] Rejected consolidation for %s:%s (response %s/2): %s",
                     bot_name,
                     session_id,
-                    error,
+                    attempt + 1,
+                    error_text,
                 )
-                return False
+                if attempt == 0:
+                    feedback = Element("validation_feedback")
+                    SubElement(feedback, "previous_response").text = completion
+                    SubElement(feedback, "validation_error").text = error_text
+                    user_prompt = (
+                        input_prompt + "\n\n" + tostring(feedback, encoding="unicode")
+                    )
+                else:
+                    suspended = await repo.suspend_consolidation(
+                        job, {"system_prompt": prompt, "attempts": failures}
+                    )
+                    logger.warning(
+                        "[Giftia Memory] %s consolidation job %s after one correction",
+                        "Suspended" if suspended else "Could not suspend changed",
+                        job["key"],
+                    )
+                    return suspended
         try:
             affected = await repo.apply_changes(
                 bot_name,

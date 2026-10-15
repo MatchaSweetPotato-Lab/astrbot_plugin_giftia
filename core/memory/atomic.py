@@ -205,8 +205,16 @@ def validate_memory_changes(
                 )
             ]
             if len(matches) == 1:
+                # Resolving an omitted target can turn a proposed retirement
+                # into an update of that same record; keep its evidence intact.
+                resolved_id = matches[0]["memory_id"]
                 change = change.model_copy(
-                    update={"memory_id": matches[0]["memory_id"]}
+                    update={
+                        "memory_id": resolved_id,
+                        "supersedes": [
+                            ref for ref in change.supersedes if ref != resolved_id
+                        ],
+                    }
                 )
         item = change.model_dump()
         target = known.get(change.memory_id)
@@ -373,16 +381,40 @@ def validate_memory_changes(
         for ref in change.supersedes:
             old = known.get(ref)
             if old is None or ref == change.memory_id or ref in touched:
-                raise ValueError("Invalid superseded memory")
+                reason = (
+                    "ID is not present in the input snapshot"
+                    if old is None
+                    else "ID equals the retained memory_id"
+                    if ref == change.memory_id
+                    else "ID was already updated or superseded by an earlier change"
+                )
+                raise ValueError(
+                    f"Invalid superseded memory: memory_id={change.memory_id!r}, "
+                    f"supersedes={ref!r}; {reason}"
+                )
             if old["status"] != "active" or (
                 old.get("schema_version") == 2 and old["kind"] != change.kind
             ):
-                raise ValueError("Only active atoms of the same type may be superseded")
+                raise ValueError(
+                    "Only active atoms of the same type may be superseded: "
+                    f"memory_id={change.memory_id!r}, supersedes={ref!r}, "
+                    f"existing status={old['status']!r}, kind={old['kind']!r}, "
+                    f"output kind={change.kind!r}"
+                )
             if old.get("schema_version") == 2 and any(
                 old.get(key, "") != item[key]
                 for key in ("subject_id", "object_id", "topic")
             ):
-                raise ValueError("Supersession cannot retire an unrelated fact")
+                differences = {
+                    key: {"existing": old.get(key, ""), "output": item[key]}
+                    for key in ("subject_id", "object_id", "topic")
+                    if old.get(key, "") != item[key]
+                }
+                raise ValueError(
+                    "Supersession cannot retire an unrelated fact: "
+                    f"memory_id={change.memory_id!r}, supersedes={ref!r}, "
+                    f"field differences={json.dumps(differences, ensure_ascii=False)}"
+                )
             if change.kind == "habit" and old["kind"] == "event":
                 raise ValueError("Habit consolidation must preserve source events")
         item["evidence"] = evidence

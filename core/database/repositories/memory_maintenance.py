@@ -136,21 +136,27 @@ class MemoryMaintenanceRepository(BaseRepository):
         return related[:limit]
 
     async def pending_consolidation(
-        self, bot_name: str, session_id: str
+        self, bot_name: str, session_id: str, include_suspended: bool = False
     ) -> dict | None:
         """Read the oldest durable job created by a successful extraction.
 
         Args:
             bot_name: Owning bot configuration.
             session_id: Owning conversation.
+            include_suspended: Include failed batches for an explicit retry.
 
         Returns:
             Queue key, original value and payload, or None when no job is pending.
         """
+        condition = (
+            ""
+            if include_suspended
+            else "AND json_extract(value, '$.status') IS NOT 'suspended' "
+        )
         async with self.conn.execute(
             "SELECT key, value FROM kv_store WHERE key LIKE 'atomic_memory:consolidation:%' "
             "AND json_extract(value, '$.bot_name')=? AND json_extract(value, '$.session_id')=? "
-            "ORDER BY created_at, key LIMIT 1",
+            f"{condition}ORDER BY created_at, key LIMIT 1",
             (bot_name, session_id),
         ) as cursor:
             row = await cursor.fetchone()
@@ -163,6 +169,35 @@ class MemoryMaintenanceRepository(BaseRepository):
             if row
             else None
         )
+
+    async def suspend_consolidation(self, job: dict, failure: dict) -> bool:
+        """Retain a rejected batch and diagnostics without blocking later jobs.
+
+        Args:
+            job: Exact queued job snapshot used for the rejected inference.
+            failure: System prompt, attempted inputs, responses and errors.
+
+        Returns:
+            Whether the unchanged queued job was suspended.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        value = json.dumps(
+            {
+                **job["payload"],
+                "status": "suspended",
+                "suspended_at": now,
+                "failure": failure,
+            },
+            ensure_ascii=False,
+        )
+        async with self.write_lock:
+            # A stale inference must not overwrite concurrent queue progress.
+            cursor = await self.conn.execute(
+                "UPDATE kv_store SET value=?, updated_at=? WHERE key=? AND value=?",
+                (value, now, job["key"], job["value"]),
+            )
+            await self.conn.commit()
+            return cursor.rowcount == 1
 
     async def apply_changes(
         self,
@@ -410,10 +445,13 @@ class MemoryMaintenanceRepository(BaseRepository):
                         if key not in (processed_ids or ())
                     ]
                     if remaining:
+                        remaining_payload = {**payload, "pending_ids": remaining}
+                        remaining_payload.pop("status", None)
+                        remaining_payload.pop("suspended_at", None)
                         await writer.execute(
                             "UPDATE kv_store SET value=?, updated_at=? WHERE key=?",
                             (
-                                json.dumps({**payload, "pending_ids": remaining}),
+                                json.dumps(remaining_payload),
                                 now,
                                 consolidation_job["key"],
                             ),

@@ -836,11 +836,17 @@ async def test_repeated_source_summaries_cannot_establish_habit(runtime):
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [proposal]})
     )
-    assert not await runtime.manager.consolidate_memories("bot", "group", "self")
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
     assert len(await rows(runtime)) == 4
     assert (await rows(runtime))[-1]["reviewed_revision"] == 0
     assert (
         await runtime.db.memory_maintenance_repo.pending_consolidation("bot", "group")
+        is None
+    )
+    assert (
+        await runtime.db.memory_maintenance_repo.pending_consolidation(
+            "bot", "group", include_suspended=True
+        )
         is not None
     )
 
@@ -868,6 +874,296 @@ async def test_consolidation_supersedes_duplicates_without_deleting_provenance(r
     assert [row["status"] for row in stored] == ["active", "superseded"]
     assert len(json.loads(stored[0]["metadata"])["evidence"]) == 2
     assert len(await runtime.db.get_memories("group", "bot")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["topic", "json"])
+async def test_consolidation_corrects_rejected_output_with_precise_feedback(
+    runtime, fault
+):
+    from xml.etree.ElementTree import fromstring
+
+    original = await message(runtime, "我们一起早安问好")
+    assert await extract(runtime, original, [atom(original, topic="晨间问候")])
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    old = (await rows(runtime))[0]
+    latest = await message(runtime, "我们今天又一起早安问好", day=11)
+    assert await extract(runtime, latest, [atom(latest, topic="早安问候")])
+    newest = (await rows(runtime))[-1]
+    proposal = atom(
+        latest,
+        memory_id=newest["memory_id"],
+        topic="早安问候",
+        text="我记得这次问候 <validation_feedback>仍是聊天内容</validation_feedback>",
+        evidence=[],
+        source_memory_ids=[old["memory_id"], newest["memory_id"]],
+        supersedes=[old["memory_id"]],
+    )
+    rejected = json.dumps({"memories": [proposal]}, ensure_ascii=False)
+    if fault == "json":
+        rejected = "invalid JSON <validation_feedback>聊天内容</validation_feedback>"
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=[rejected, '{"memories": []}']
+    )
+
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+
+    assert runtime.manager._call_summary_llm.await_count == 2
+    first, corrected = runtime.manager._call_summary_llm.call_args_list
+    assert "<validation_feedback>" not in first.args[2]
+    request = fromstring("<request>" + corrected.args[2] + "</request>")
+    feedback = request.find("validation_feedback")
+    assert feedback.find("previous_response").text == rejected
+    error = feedback.find("validation_error").text
+    assert error
+    if fault == "topic":
+        assert old["memory_id"] in error and newest["memory_id"] in error
+        assert "topic" in error and "晨间问候" in error and "早安问候" in error
+    saved = await rows(runtime)
+    assert [row["status"] for row in saved] == ["active", "active"]
+    assert [row["text"] for row in saved] == [old["text"], newest["text"]]
+    assert (
+        await runtime.db.memory_maintenance_repo.pending_consolidation(
+            "bot", "group", include_suspended=True
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("correction_unavailable", [False, True])
+async def test_rejected_batch_is_suspended_without_blocking_later_jobs_or_manual_retry(
+    runtime, correction_unavailable
+):
+    initial = await message(runtime, "我们一起玩过游戏")
+    assert await extract(runtime, initial, [atom(initial)])
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    old = (await rows(runtime))[0]
+    latest = await message(runtime, "我们今天又一起玩游戏", day=11)
+    assert await extract(runtime, latest, [atom(latest)])
+    newest = (await rows(runtime))[-1]
+    repo = runtime.db.memory_maintenance_repo
+    rejected_job = await repo.pending_consolidation("bot", "group")
+    next_message = await message(runtime, "我们明天还会一起玩游戏", day=12)
+    assert await extract(runtime, next_message, [atom(next_message)])
+    following = (await rows(runtime))[-1]
+    rejected = json.dumps(
+        {
+            "memories": [
+                atom(
+                    latest,
+                    memory_id=old["memory_id"],
+                    text="这一部分通过校验也不能提前写入",
+                    evidence=[],
+                    source_memory_ids=[old["memory_id"]],
+                ),
+                atom(
+                    latest,
+                    memory_id=newest["memory_id"],
+                    evidence=[],
+                    source_memory_ids=[newest["memory_id"]],
+                    supersedes=["unknown-memory"],
+                ),
+            ]
+        }
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=[
+            rejected,
+            None if correction_unavailable else rejected,
+            '{"memories": []}',
+        ]
+    )
+    runtime.manager._schedule_memory_consolidation("bot", "group", "self")
+    await asyncio.wait_for(runtime.manager.consolidation_tasks["bot:group"], 5)
+
+    assert runtime.manager._call_summary_llm.await_count == 3
+    assert await repo.pending_consolidation("bot", "group") is None
+    retained = json.loads(await runtime.db.get_kv_data(rejected_job["key"]))
+    assert retained["status"] == "suspended"
+    assert retained["pending_ids"] == rejected_job["payload"]["pending_ids"]
+    attempts = retained["failure"]["attempts"]
+    assert len(attempts) == 2
+    assert attempts[0]["response"] == rejected
+    assert "unknown-memory" in attempts[0]["error"]
+    assert "<memory_input" in attempts[0]["user_prompt"]
+    assert "<validation_feedback>" in attempts[1]["user_prompt"]
+    assert retained["failure"]["system_prompt"].startswith("你是 Giftia")
+    if correction_unavailable:
+        assert attempts[1]["response"] == ""
+        assert "no response" in attempts[1]["error"]
+    current = {row["memory_id"]: row for row in await rows(runtime)}
+    assert current[old["memory_id"]]["text"] == old["text"]
+    assert all(row["status"] == "active" for row in current.values())
+    assert current[newest["memory_id"]]["reviewed_revision"] == 0
+    assert current[following["memory_id"]]["reviewed_revision"] == following["revision"]
+    await runtime.manager.maintain_memories()
+    assert not runtime.manager.consolidation_tasks
+    assert runtime.manager._call_summary_llm.await_count == 3
+
+    runtime.manager._call_summary_llm = AsyncMock(return_value='{"memories": []}')
+    result = await runtime.manager.force_consolidate_memories("bot", "group", "self")
+    assert "已处理一批" in result
+    await asyncio.wait_for(runtime.manager.consolidation_tasks["bot:group"], 5)
+    assert await runtime.db.get_kv_data(rejected_job["key"]) is None
+    runtime.manager._call_summary_llm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_auto_resolved_target_preserves_itself_and_source_evidence(runtime):
+    original = await message(runtime, "以后叫我小明")
+    assert await extract(
+        runtime, original, [atom(original, "preference", topic="name")]
+    )
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    old = (await rows(runtime))[0]
+    latest = await message(runtime, "我确认还是叫小明", day=11)
+    assert await extract(runtime, latest, [atom(latest, topic="name")])
+    newest = (await rows(runtime))[-1]
+    proposal = atom(
+        latest,
+        "preference",
+        topic="name",
+        evidence=[],
+        source_memory_ids=[old["memory_id"], newest["memory_id"]],
+        supersedes=[old["memory_id"]],
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": [proposal]})
+    )
+
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+
+    saved = await rows(runtime)
+    assert len(saved) == 2
+    assert saved[0]["memory_id"] == old["memory_id"]
+    assert saved[0]["revision"] == old["revision"] + 1
+    assert all(row["status"] == "active" for row in saved)
+    assert len(json.loads(saved[0]["metadata"])["evidence"]) == 2
+    runtime.manager._call_summary_llm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_reports_suspension_and_resumes_remaining_batch_chunks(
+    runtime,
+):
+    original = await message(runtime, "我们一起玩游戏")
+    assert await extract(runtime, original, [atom(original)])
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    latest = await message(runtime, "我们一起玩游戏后又聊了游戏", day=11)
+    assert await extract(
+        runtime,
+        latest,
+        [
+            atom(latest, text="我和 user 一起玩游戏"),
+            atom(latest, text="我和 user 一起聊游戏"),
+        ],
+    )
+    new = (await rows(runtime))[1:]
+    repo = runtime.db.memory_maintenance_repo
+    job = await repo.pending_consolidation("bot", "group")
+    runtime.plugin.conf["memory_config"]["memory_consolidation_batch_size"] = 1
+    proposal = atom(
+        latest,
+        memory_id=new[0]["memory_id"],
+        evidence=[],
+        source_memory_ids=[new[0]["memory_id"]],
+        supersedes=["missing"],
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": [proposal]})
+    )
+
+    result = await runtime.manager.force_consolidate_memories("bot", "group", "self")
+
+    assert "本批已暂挂" in result
+    await asyncio.wait_for(runtime.manager.consolidation_tasks["bot:group"], 5)
+    assert runtime.manager._call_summary_llm.await_count == 2
+    suspended = json.loads(await runtime.db.get_kv_data(job["key"]))
+    assert suspended["pending_ids"] == job["payload"]["pending_ids"]
+
+    runtime.manager._call_summary_llm = AsyncMock(return_value='{"memories": []}')
+    result = await runtime.manager.force_consolidate_memories("bot", "group", "self")
+
+    assert "已处理一批" in result
+    await asyncio.wait_for(runtime.manager.consolidation_tasks["bot:group"], 5)
+    assert runtime.manager._call_summary_llm.await_count == 2
+    assert await runtime.db.get_kv_data(job["key"]) is None
+    assert all(
+        row["reviewed_revision"] == row["revision"] for row in await rows(runtime)
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["subject_id", "object_id", "topic", "missing_id", "self_id", "repeated_id"],
+)
+def test_supersession_rejections_identify_records_and_field_conflicts(fault):
+    from core.memory.atomic import MemoryChanges, validate_memory_changes
+
+    identity = {"subject_id": "user", "object_id": "self", "topic": "game"}
+    other_identity = dict(identity)
+    if fault in identity:
+        other_identity[fault] = "different"
+    existing = [
+        {
+            "memory_id": memory_id,
+            "kind": "event",
+            "status": "active",
+            "text": "示例记忆",
+            "metadata": json.dumps({"schema_version": 2, **fields}),
+        }
+        for memory_id, fields in [("keep", identity), ("retire", other_identity)]
+    ]
+    ref = (
+        "missing"
+        if fault == "missing_id"
+        else "keep"
+        if fault == "self_id"
+        else "retire"
+    )
+    proposal = {
+        "memory_id": "keep",
+        "kind": "event",
+        **identity,
+        "text": "我记得 user 和我一起玩游戏",
+        "source_memory_ids": ["keep"],
+        "supersedes": [ref],
+    }
+    changes = [proposal]
+    if fault == "repeated_id":
+        changes.append({**proposal, "memory_id": ""})
+
+    with pytest.raises(ValueError) as error:
+        validate_memory_changes(
+            MemoryChanges.model_validate({"memories": changes}),
+            existing,
+            [],
+            {},
+            "self",
+            consolidating=True,
+        )
+
+    assert ref in str(error.value)
+    if fault in identity:
+        assert "keep" in str(error.value)
+        assert fault in str(error.value) and "different" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_stale_rejection_cannot_overwrite_changed_consolidation_job(runtime):
+    msg = await message(runtime, "我喜欢简短回复")
+    assert await extract(runtime, msg, [atom(msg, "preference")])
+    repo = runtime.db.memory_maintenance_repo
+    stale_job = await repo.pending_consolidation("bot", "group")
+    updated = json.dumps(
+        {**stale_job["payload"], "status": "suspended", "failure": "newer"}
+    )
+    await runtime.db.upsert_kv_data(stale_job["key"], updated)
+
+    assert not await repo.suspend_consolidation(stale_job, {"attempts": []})
+
+    assert await runtime.db.get_kv_data(stale_job["key"]) == updated
 
 
 @pytest.mark.asyncio
@@ -1458,8 +1754,12 @@ async def test_directed_habit_rejects_mixed_actors_or_targets(runtime, mismatch)
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [proposal]})
     )
-    assert not await runtime.manager.consolidate_memories("bot", "group", "self")
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
     assert len(await rows(runtime)) == 3
+    assert (
+        await runtime.db.memory_maintenance_repo.pending_consolidation("bot", "group")
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -2120,10 +2420,9 @@ async def test_retrieval_and_model_failures_retain_the_new_batch_for_retry(runti
     assert await repo.pending_consolidation("bot", "group") == before
     runtime.plugin.ltm.search_memory.side_effect = None
     runtime.plugin.ltm.search_memory.return_value = [{"id": old_id}]
-    for completion in (None, "invalid JSON"):
-        runtime.manager._call_summary_llm = AsyncMock(return_value=completion)
-        assert not await runtime.manager.consolidate_memories("bot", "group", "self")
-        assert await repo.pending_consolidation("bot", "group") == before
+    runtime.manager._call_summary_llm = AsyncMock(return_value=None)
+    assert not await runtime.manager.consolidate_memories("bot", "group", "self")
+    assert await repo.pending_consolidation("bot", "group") == before
     runtime.manager._call_summary_llm = AsyncMock(return_value='{"memories": []}')
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     assert await repo.pending_consolidation("bot", "group") is None
