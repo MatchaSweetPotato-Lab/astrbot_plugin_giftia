@@ -3,6 +3,7 @@ import json
 
 from astrbot.api import logger
 
+from .atomic import recall_memory_metadata
 from .passive_tasks import PassiveSummaryTaskMixin
 
 
@@ -209,7 +210,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         threshold: float = 0.7,
         filter_active_users: bool = True,
     ) -> list[dict]:
-        """Search vectors and recheck authoritative validity before recall.
+        """Recall current memory versions, including historical agreement states.
 
         Args:
             bot_name: Owning bot configuration.
@@ -221,14 +222,23 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             filter_active_users: Limit automatic recall to current participants.
 
         Returns:
-            Current active memories with matching index revisions.
+            Non-superseded memories with matching index revisions and current state.
         """
+        async with self.plugin.db.conn.execute(
+            "SELECT memory_id FROM memories WHERE bot_name=? AND group_or_user_id=? "
+            "AND status<>'superseded' AND revision=indexed_revision",
+            (bot_name, group_or_user_id),
+        ) as cursor:
+            eligible_ids = [row[0] for row in await cursor.fetchall()]
+        if not eligible_ids:
+            return []
         embedding_memories = await self.plugin.ltm.search_memory(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             query=query,
             limit=limit,
             threshold=threshold,
+            include_ids=eligible_ids,
         )
         if not embedding_memories:
             return []
@@ -236,21 +246,27 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         ids = [str(memory.get("id") or "") for memory in embedding_memories]
         placeholders = ",".join("?" for _ in ids)
         async with self.plugin.db.conn.execute(
-            f"SELECT memory_id, text, metadata FROM memories WHERE bot_name=? AND group_or_user_id=? "
-            f"AND memory_id IN ({placeholders}) AND status='active' AND revision=indexed_revision "
-            "AND (expires_at IS NULL OR julianday(expires_at)>julianday('now'))",
+            "SELECT memory_id, text, metadata, kind, status, expires_at, created_at, updated_at "
+            "FROM memories WHERE bot_name=? AND group_or_user_id=? "
+            f"AND memory_id IN ({placeholders}) AND status<>'superseded' AND revision=indexed_revision",
             (bot_name, group_or_user_id, *ids),
         ) as cursor:
             current = {row["memory_id"]: dict(row) for row in await cursor.fetchall()}
-        embedding_memories = [
-            {
-                **memory,
-                "text": current[memory["id"]]["text"],
-                "metadata": current[memory["id"]]["metadata"],
-            }
-            for memory in embedding_memories
-            if memory.get("id") in current
-        ]
+        recalled = []
+        for memory in embedding_memories:
+            row = current.get(memory.get("id"))
+            if row is None:
+                continue
+            metadata = recall_memory_metadata(row)
+            recalled.append(
+                {
+                    **memory,
+                    **row,
+                    "status": metadata["status"],
+                    "metadata": json.dumps(metadata, ensure_ascii=False),
+                }
+            )
+        embedding_memories = recalled
 
         if not filter_active_users:
             return embedding_memories

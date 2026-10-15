@@ -136,6 +136,40 @@ def memory_input(row: dict) -> dict:
     }
 
 
+def recall_memory_metadata(memory: dict) -> dict:
+    """Normalize recall metadata and expose the effective lifecycle state.
+
+    Args:
+        memory: Recalled record with optional authoritative lifecycle columns.
+
+    Returns:
+        Copied metadata with current type, status and deadline. Elapsed deadlines
+        mark active records expired without discarding their historical facts.
+    """
+    metadata = memory.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            metadata = {}
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    for key in ("kind", "status", "expires_at"):
+        if key in memory:
+            metadata[key] = memory[key]
+    status = metadata.get("status") or "active"
+    expires_at = metadata.get("expires_at")
+    if status == "active" and isinstance(expires_at, str) and expires_at:
+        try:
+            if datetime.fromisoformat(
+                expires_at.replace("Z", "+00:00")
+            ).timestamp() <= (datetime.now(timezone.utc).timestamp()):
+                status = "expired"
+        except (ValueError, OverflowError, OSError):
+            pass
+    metadata["status"] = status
+    return metadata
+
+
 def validate_memory_changes(
     result: MemoryChanges,
     existing: list[dict],

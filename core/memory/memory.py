@@ -399,6 +399,7 @@ class LTM:
         threshold: float = 0.7,
         exclude_ids: list[str] | None = None,
         raise_errors: bool = False,
+        include_ids: list[str] | None = None,
     ) -> list[dict]:
         """Search scoped vectors with optional strict failure handling.
 
@@ -410,6 +411,7 @@ class LTM:
             threshold: Maximum accepted vector distance.
             exclude_ids: Records excluded before applying the candidate limit.
             raise_errors: Propagate failures so queued consolidation can retry.
+            include_ids: Allow only these records before limiting; None allows all.
 
         Returns:
             Matching vector records in relevance order.
@@ -417,6 +419,8 @@ class LTM:
         Raises:
             Exception: An indexing or embedding failure when raise_errors is true.
         """
+        if include_ids is not None and not include_ids:
+            return []
         self._lazy_init()
         if self.embedding_conf.get("use_external_provider", False):
             if not hasattr(self, "embed_provider"):
@@ -441,6 +445,11 @@ class LTM:
                         "'" + key.replace("'", "''") + "'" for key in exclude_ids
                     )
                     condition += f" AND id NOT IN ({excluded})"
+                if include_ids is not None:
+                    included = ",".join(
+                        "'" + key.replace("'", "''") + "'" for key in include_ids
+                    )
+                    condition += f" AND id IN ({included})"
                 results = (
                     self.table.search(query_vector)
                     .where(condition, prefilter=True)
@@ -467,6 +476,7 @@ class LTM:
                 threshold,
                 exclude_ids,
                 raise_errors,
+                include_ids,
             )
 
     def _search_memory_sync(
@@ -478,8 +488,28 @@ class LTM:
         threshold: float,
         exclude_ids: list[str] | None = None,
         raise_errors: bool = False,
+        include_ids: list[str] | None = None,
     ) -> list[dict]:
-        """语义搜索相关记忆"""
+        """Search local vectors with the same candidate scope as external embeddings.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            query: Semantic search text.
+            limit: Maximum number of candidates.
+            threshold: Maximum accepted vector distance.
+            exclude_ids: Records excluded before applying the candidate limit.
+            raise_errors: Propagate indexing and embedding failures.
+            include_ids: Allow only these records before limiting; None allows all.
+
+        Returns:
+            Matching vector records in relevance order.
+
+        Raises:
+            Exception: An indexing or embedding failure when raise_errors is true.
+        """
+        if include_ids is not None and not include_ids:
+            return []
         self._lazy_init()
         try:
             if not hasattr(self, "embed_model"):
@@ -502,6 +532,11 @@ class LTM:
                     "'" + key.replace("'", "''") + "'" for key in exclude_ids
                 )
                 condition += f" AND id NOT IN ({excluded})"
+            if include_ids is not None:
+                included = ",".join(
+                    "'" + key.replace("'", "''") + "'" for key in include_ids
+                )
+                condition += f" AND id IN ({included})"
             results = (
                 self.table.search(query_vector)
                 .where(condition, prefilter=True)

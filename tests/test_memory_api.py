@@ -241,7 +241,9 @@ async def test_agreement_edit_preserves_provenance_and_checks_revision(memory_ap
     assert after["metadata"]["associated_user_ids"] == ["B"]
     assert after["metadata"]["manually_edited"] is True
     assert after["revision"] == item["revision"] + 1
-    assert await plugin.data_cache.get_memories("bot", "group") == []
+    recalled = await plugin.data_cache.get_memories("bot", "group")
+    assert [memory.memory_id for memory in recalled] == ["promise"]
+    assert json.loads(recalled[0].metadata)["status"] == "completed"
     for changes in [
         {},
         {"revision": after["revision"], "status": "active"},

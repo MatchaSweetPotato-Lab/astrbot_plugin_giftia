@@ -71,11 +71,12 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
     assert len(root.findall(".//memory")) == 3
     relevant = root.find("relevant_memories/memory")
     assert relevant.text == current["text"]
-    assert set(relevant.attrib) == {"kind", "occurred_at"}
+    assert set(relevant.attrib) == {"kind", "status", "occurred_at"}
+    assert relevant.attrib["status"] == "active"
     habit = root.find("session_recalled_memories/memory")
-    assert set(habit.attrib) == {"kind", "observed_from", "observed_until"}
+    assert set(habit.attrib) == {"kind", "status", "observed_from", "observed_until"}
     old = root.find("long_memories/memory")
-    assert set(old.attrib) == {"recorded_at"}
+    assert set(old.attrib) == {"status", "recorded_at"}
     assert old.attrib["recorded_at"].startswith("2020-01-01")
     assert old.text == legacy.text
     for omitted in (
@@ -110,7 +111,84 @@ def test_agreement_context_preserves_deadline_and_does_not_invent_event_time():
     memory = fromstring("<context>" + prompt + "</context>").find(
         "relevant_memories/memory"
     )
-    assert set(memory.attrib) == {"kind", "recorded_at", "expires_at"}
+    assert set(memory.attrib) == {"kind", "status", "recorded_at", "expires_at"}
+
+
+@pytest.mark.parametrize(
+    ("status", "expires_at", "expected"),
+    [
+        ("active", None, "active"),
+        ("active", "2000-01-01T00:00:00Z", "expired"),
+        ("completed", "2000-01-01T00:00:00Z", "completed"),
+        ("cancelled", "2000-01-01T00:00:00Z", "cancelled"),
+        ("expired", "2999-01-01T00:00:00Z", "expired"),
+        ("superseded", "invalid", None),
+    ],
+)
+@pytest.mark.parametrize(
+    "source", ["relevant_memories", "session_recalled_memories", "long_memories"]
+)
+def test_reply_context_shows_historical_status_and_excludes_replaced_versions(
+    status, expires_at, expected, source
+):
+    metadata = {
+        "kind": "agreement",
+        "status": status,
+        "expires_at": expires_at,
+    }
+    if source == "relevant_memories":
+        record = {
+            "id": "promise",
+            "text": "我和甲之前的约定。",
+            "status": status,
+            "expires_at": expires_at,
+            "metadata": {
+                **metadata,
+                "status": "active",
+                "expires_at": "2000-01-01T00:00:00Z",
+            },
+        }
+    elif source == "session_recalled_memories":
+        record = SessionRecallMemory(
+            memory_id="promise",
+            text="我和甲之前的约定。",
+            metadata=json.dumps(metadata),
+        )
+    else:
+        record = MemoryItem(
+            memory_id="promise",
+            text="我和甲之前的约定。",
+            vector=b"",
+            metadata=json.dumps(metadata),
+            created_at="2000-01-01T00:00:00Z",
+            updated_at="2000-01-01T00:00:00Z",
+        )
+    prompt = build_reply_prompt(
+        recent_messages=[], media_captions=[], bot_status=None, **{source: [record]}
+    )
+    memories = fromstring("<context>" + prompt + "</context>").findall(".//memory")
+    if expected is None:
+        assert memories == []
+    else:
+        assert len(memories) == 1 and memories[0].attrib["status"] == expected
+        assert memories[0].text == "我和甲之前的约定。"
+
+
+def test_superseded_current_result_suppresses_older_cached_copies():
+    prompt = build_reply_prompt(
+        recent_messages=[],
+        media_captions=[],
+        bot_status=None,
+        relevant_memories=[
+            {"id": "old", "text": "旧版本", "status": "superseded"},
+            {"id": "new", "text": "更新后的事实", "status": "active"},
+        ],
+        session_recalled_memories=[SessionRecallMemory(memory_id="old", text="旧版本")],
+    )
+    memories = fromstring("<context>" + prompt + "</context>").findall(".//memory")
+    assert [(item.text, item.attrib["status"]) for item in memories] == [
+        ("更新后的事实", "active")
+    ]
 
 
 @pytest.mark.asyncio

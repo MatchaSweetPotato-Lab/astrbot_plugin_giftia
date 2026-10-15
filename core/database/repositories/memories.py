@@ -1,5 +1,7 @@
+import json
 from datetime import datetime
 
+from ...memory.atomic import recall_memory_metadata
 from ...utils.schemas import MemoryItem, normalize_memory_importance
 from .base import BaseRepository
 
@@ -37,14 +39,23 @@ class MemoriesRepository(BaseRepository):
     async def get_memories(
         self, group_or_user_id: str, bot_name: str, limit: int = 10
     ) -> list[MemoryItem]:
-        """获取近期记忆，并按时间正序排列"""
+        """Read recent non-superseded memories in chronological order.
+
+        Args:
+            group_or_user_id: Owning conversation.
+            bot_name: Owning bot configuration.
+            limit: Maximum number of recent memory records.
+
+        Returns:
+            Memory versions with authoritative lifecycle metadata.
+        """
         async with self.conn.execute(
             """
             SELECT * FROM (
-                SELECT memory_id, text, vector, metadata, importance, hit_count, last_hit_at, created_at, updated_at
+                SELECT memory_id, text, vector, metadata, importance, hit_count, last_hit_at,
+                       created_at, updated_at, kind, status, expires_at
                 FROM memories
-                WHERE group_or_user_id = ? AND bot_name = ? AND status = 'active'
-                  AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))
+                WHERE group_or_user_id = ? AND bot_name = ? AND status <> 'superseded'
                 ORDER BY created_at DESC
                 LIMIT ?
             )
@@ -58,7 +69,9 @@ class MemoriesRepository(BaseRepository):
                 memory_id=row["memory_id"],
                 text=row["text"],
                 vector=row["vector"],
-                metadata=row["metadata"],
+                metadata=json.dumps(
+                    recall_memory_metadata(dict(row)), ensure_ascii=False
+                ),
                 importance=normalize_memory_importance(row["importance"]),
                 hit_count=int(row["hit_count"] or 0),
                 last_hit_at=row["last_hit_at"] or "",

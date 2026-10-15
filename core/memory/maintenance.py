@@ -13,9 +13,16 @@ from ..conversation.memory_recall import (
     conf_int,
     resolve_memory_search_limit,
 )
+from ..database.repositories.memory_maintenance import MEMORY_PARTICIPANT_SQL
 from ..llm.json_parse import parse_markdown_json
 from ..llm.preset_prompts import DEFAULT_MEMORY_CONSOLIDATION_PROMPT
-from .atomic import DirectSpeech, MemoryChanges, memory_input, validate_memory_changes
+from .atomic import (
+    DirectSpeech,
+    MemoryChanges,
+    memory_input,
+    recall_memory_metadata,
+    validate_memory_changes,
+)
 
 MEMORY_CONSOLIDATION_BATCH_SIZE = 60
 
@@ -126,18 +133,20 @@ class MemoryMaintenanceMixin:
         self,
         bot_name: str,
         session_id: str,
-        queries: list[str],
+        new_memories: list[dict],
         exclude_ids: set[str] | None = None,
         history_end: int | None = None,
+        self_id: str = "",
     ) -> tuple[list[dict], list[list[str]]]:
         """Recall each source independently and share the input budget fairly.
 
         Args:
             bot_name: Owning bot configuration.
             session_id: Owning conversation.
-            queries: Text of each newly extracted record.
+            new_memories: Newly extracted records defining each query and its members.
             exclude_ids: All records created in the extraction batch.
             history_end: Last historical row before the extraction batch.
+            self_id: Observing bot account, excluded from participant matching.
 
         Returns:
             Deduplicated authoritative rows and retained IDs for every query.
@@ -145,7 +154,7 @@ class MemoryMaintenanceMixin:
         embedding = self.plugin.embedding_conf
         search_limit = max(1, min(20, resolve_memory_search_limit(embedding)))
         if history_end == 0:
-            return [], [[] for _ in queries]
+            return [], [[] for _ in new_memories]
         excluded = set(exclude_ids or ())
         if embedding.get("enabled", False) and history_end is not None:
             async with self.plugin.db.conn.execute(
@@ -154,12 +163,37 @@ class MemoryMaintenanceMixin:
             ) as cursor:
                 excluded.update(row[0] for row in await cursor.fetchall())
         groups = []
-        for query in queries:
-            if not query.strip():
+        for memory in new_memories:
+            query = memory["text"]
+            source = memory_input(memory)
+            associated = source.get("associated_user_ids")
+            if not isinstance(associated, list) or not associated:
+                associated = [source.get("user_id")]
+            user_ids = {
+                str(uid).strip()
+                for uid in associated
+                if isinstance(uid, (str, int))
+                and not isinstance(uid, bool)
+                and str(uid).strip()
+                and str(uid).strip() != self_id
+            }
+            if not query.strip() or not user_ids:
                 groups.append([])
                 continue
+            participant_ids = json.dumps(sorted(user_ids))
             candidates = []
             if embedding.get("enabled", False):
+                # Scope vectors using authoritative accounts before their result limit.
+                async with self.plugin.db.conn.execute(
+                    "SELECT memory_id FROM memories WHERE bot_name=? AND group_or_user_id=? "
+                    "AND status='active' "
+                    "AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')) "
+                    f"AND {MEMORY_PARTICIPANT_SQL} AND (? IS NULL OR id<=?)",
+                    (bot_name, session_id, participant_ids, history_end, history_end),
+                ) as cursor:
+                    eligible_ids = {
+                        row[0] for row in await cursor.fetchall()
+                    } - excluded
                 candidates = await self.plugin.ltm.search_memory(
                     bot_name=bot_name,
                     group_or_user_id=session_id,
@@ -168,8 +202,9 @@ class MemoryMaintenanceMixin:
                     threshold=conf_float(embedding, "threshold", 0.7),
                     exclude_ids=sorted(excluded),
                     raise_errors=True,
+                    include_ids=sorted(eligible_ids),
                 )
-                candidates = [row for row in candidates if row["id"] not in excluded]
+                candidates = [row for row in candidates if row["id"] in eligible_ids]
                 rerank = getattr(self.plugin, "rerank_conf", {})
                 if candidates and rerank.get("enabled", False):
                     candidates = await self.plugin.ltm.rerank_memories(
@@ -188,14 +223,15 @@ class MemoryMaintenanceMixin:
                 exclude_ids=excluded,
                 history_end=history_end,
                 text_fallback=not embedding.get("enabled", False),
+                associated_user_ids=user_ids,
             )
             if embedding.get("enabled", False) and not matches:
                 async with self.plugin.db.conn.execute(
                     "SELECT 1 FROM memories WHERE bot_name=? AND group_or_user_id=? "
                     "AND status='active' AND indexed_revision<revision "
                     "AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')) "
-                    "AND (? IS NULL OR id<=?) LIMIT 1",
-                    (bot_name, session_id, history_end, history_end),
+                    f"AND {MEMORY_PARTICIPANT_SQL} AND (? IS NULL OR id<=?) LIMIT 1",
+                    (bot_name, session_id, participant_ids, history_end, history_end),
                 ) as cursor:
                     if await cursor.fetchone():
                         raise RuntimeError("Historical memory index is incomplete")
@@ -333,9 +369,10 @@ class MemoryMaintenanceMixin:
             related, related_ids = await self._recall_maintenance_memories(
                 bot_name,
                 session_id,
-                [row["text"] for row in active],
+                active,
                 exclude_ids=set(batch["memory_ids"]),
                 history_end=batch["history_end"],
+                self_id=self_id,
             )
         except Exception as error:
             logger.warning(
@@ -490,13 +527,15 @@ class MemoryMaintenanceMixin:
                     if not removed:
                         break
                     vector = None
-                    if row["status"] == "active":
+                    if row["status"] != "superseded":
                         result = await self.plugin.ltm.add_memory(
                             bot_name=bot_name,
                             group_or_user_id=session_id,
                             text=row["text"],
                             time=row["created_at"],
-                            metadata=row["metadata"] or "{}",
+                            metadata=json.dumps(
+                                recall_memory_metadata(row), ensure_ascii=False
+                            ),
                             memory_id=row["memory_id"],
                         )
                         if not result:
@@ -611,9 +650,6 @@ class MemoryMaintenanceMixin:
                             )
                             if expired:
                                 self.plugin.data_cache.memories.pop(key, None)
-                                self.plugin.data_cache.session_recalled_memories.pop(
-                                    key, None
-                                )
                             await self._sync_memory_vectors(bot_name, session_id)
                     except Exception:
                         logger.exception(

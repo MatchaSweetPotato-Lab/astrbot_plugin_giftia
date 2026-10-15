@@ -372,6 +372,170 @@ async def test_maintenance_text_recall_rechecks_scope_state_and_current_content(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("semantic", [False, True])
+async def test_maintenance_recall_matches_exact_participants_and_legacy_accounts(
+    runtime, semantic
+):
+    records = [
+        ("unrelated", {"associated_user_ids": ["11"]}),
+        ("bot-only", {"associated_user_ids": ["self"]}),
+        ("unknown", {}),
+        ("malformed", "invalid JSON"),
+        ("non-object", []),
+        ("invalid-list", {"associated_user_ids": "1"}),
+        ("conflicting-legacy", {"associated_user_ids": ["11"], "user_id": "1"}),
+        ("legacy", {"user_id": 1}),
+        ("legacy-empty", {"associated_user_ids": [], "user_id": "1"}),
+        ("shared", {"associated_user_ids": ["1", "B"]}),
+        ("secondary", {"associated_user_ids": ["B"]}),
+    ]
+    await runtime.db.conn.executemany(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, indexed_revision) "
+        "VALUES ('bot', 'group', ?, '我看到用户参加观星活动', ?, 1)",
+        [
+            (memory_id, metadata if isinstance(metadata, str) else json.dumps(metadata))
+            for memory_id, metadata in records
+        ],
+    )
+    await runtime.db.conn.commit()
+    repo = runtime.db.memory_maintenance_repo
+    candidates = [memory_id for memory_id, _ in records] if semantic else []
+    found = await repo.related_snapshot(
+        "bot",
+        "group",
+        "参加观星活动",
+        candidates,
+        limit=2,
+        text_fallback=not semantic,
+        associated_user_ids={"1"},
+    )
+    assert [row["memory_id"] for row in found] == ["legacy", "legacy-empty"]
+    shared = await repo.related_snapshot(
+        "bot",
+        "group",
+        "参加观星活动",
+        candidates,
+        text_fallback=not semantic,
+        associated_user_ids={"B", "C"},
+    )
+    assert [row["memory_id"] for row in shared] == ["shared", "secondary"]
+    assert not await repo.related_snapshot(
+        "bot",
+        "group",
+        "参加观星活动",
+        candidates,
+        text_fallback=not semantic,
+        associated_user_ids=set(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retrieval", ["text", "local", "external"])
+async def test_maintenance_recall_filters_each_memory_before_candidate_limit(
+    runtime, tmp_path, retrieval
+):
+    records = [
+        ("unrelated", "C", "event", [0.0, 0.0]),
+        ("bot-only", "self", "event", [0.0, 0.0]),
+        ("old'A", "A", "agreement", [0.1, 0.1]),
+        ("old-B", "B", "habit", [0.1, 0.1]),
+    ]
+    await runtime.db.conn.executemany(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, kind, indexed_revision) "
+        "VALUES ('bot', 'group', ?, '我看到用户参加观星活动', ?, ?, 1)",
+        [
+            (memory_id, json.dumps({"associated_user_ids": [uid]}), kind)
+            for memory_id, uid, kind, _ in records
+        ],
+    )
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf.update(enabled=retrieval != "text", top_k=1)
+    if retrieval != "text":
+        import lancedb
+        from core.memory.memory import LTM
+
+        ltm = object.__new__(LTM)
+        ltm._lazy_initialized = True
+        ltm.embedding_conf = {"use_external_provider": retrieval == "external"}
+        ltm.embed_provider = SimpleNamespace(
+            get_embedding=AsyncMock(return_value=[0.0, 0.0])
+        )
+        ltm.embed_model = SimpleNamespace(embed=Mock(return_value=[[0.0, 0.0]]))
+        ltm.table = lancedb.connect(tmp_path / "vectors").create_table(
+            "memories",
+            data=[
+                {
+                    "id": memory_id,
+                    "bot_name": "bot",
+                    "group_or_user_id": "group",
+                    "vector": vector,
+                }
+                for memory_id, _, _, vector in records
+            ],
+        )
+        runtime.plugin.ltm.search_memory = ltm.search_memory
+        runtime.plugin.rerank_conf = {"enabled": True, "top_k": 1}
+        runtime.plugin.ltm.rerank_memories = AsyncMock(
+            side_effect=lambda **kwargs: kwargs["memories"]
+        )
+    new_memories = [
+        {
+            "text": "我看到用户参加观星活动",
+            "metadata": json.dumps({"associated_user_ids": [uid, "self"]}),
+        }
+        for uid in ("A", "B", "self")
+    ]
+    new_memories.append(
+        {"text": "我看到用户参加观星活动", "metadata": '{"user_id":"A"}'}
+    )
+    selected, per_memory = await runtime.manager._recall_maintenance_memories(
+        "bot", "group", new_memories, self_id="self"
+    )
+    assert per_memory == [["old'A"], ["old-B"], [], ["old'A"]]
+    assert {row["kind"] for row in selected} == {"agreement", "habit"}
+    if retrieval != "text":
+        assert [
+            [row["id"] for row in call.kwargs["memories"]]
+            for call in runtime.plugin.ltm.rerank_memories.call_args_list
+        ] == [["old'A"], ["old-B"], ["old'A"]]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_vector_recall_rechecks_changed_participants(runtime):
+    await runtime.db.conn.execute(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, indexed_revision) "
+        "VALUES ('bot', 'group', 'old', '参加观星活动', '{\"associated_user_ids\":[\"A\"]}', 1)"
+    )
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf["enabled"] = True
+
+    async def search(**kwargs):
+        """Change account metadata while vector retrieval is in progress.
+
+        Args:
+            **kwargs: Production vector-search arguments.
+
+        Returns:
+            The vector hit with newly conflicting authoritative metadata.
+        """
+        assert kwargs["include_ids"] == ["old"]
+        await runtime.db.conn.execute(
+            "UPDATE memories SET metadata='{\"associated_user_ids\":[\"B\"]}' WHERE memory_id='old'"
+        )
+        await runtime.db.conn.commit()
+        return [{"id": "old"}]
+
+    runtime.plugin.ltm.search_memory.side_effect = search
+    selected, per_memory = await runtime.manager._recall_maintenance_memories(
+        "bot",
+        "group",
+        [{"text": "参加观星活动", "metadata": '{"associated_user_ids":["A"]}'}],
+        self_id="self",
+    )
+    assert selected == [] and per_memory == [[]]
+
+
+@pytest.mark.asyncio
 async def test_maintenance_recall_budget_preserves_a_hit_for_each_message(runtime):
     runtime.plugin.embedding_conf["top_k"] = 3
     runtime.db.memory_maintenance_repo.related_snapshot = AsyncMock(
@@ -380,7 +544,12 @@ async def test_maintenance_recall_budget_preserves_a_hit_for_each_message(runtim
         ]
     )
     selected, per_message = await runtime.manager._recall_maintenance_memories(
-        "bot", "group", [f"message-{index}" for index in range(200)]
+        "bot",
+        "group",
+        [
+            {"text": f"message-{index}", "metadata": '{"associated_user_ids":["user"]}'}
+            for index in range(200)
+        ],
     )
     assert len(selected) == 200
     assert per_message == [[f"message-{index}-0"] for index in range(200)]
@@ -1343,6 +1512,143 @@ async def test_vector_failure_does_not_lose_memory_and_index_can_retry(runtime):
 
 
 @pytest.mark.asyncio
+async def test_reply_recall_keeps_historical_states_and_authoritative_metadata(runtime):
+    states = {
+        "active": "active",
+        "completed": "completed",
+        "cancelled": "cancelled",
+        "expired": "expired",
+        "elapsed": "active",
+        "superseded": "superseded",
+        "unindexed": "completed",
+    }
+    await runtime.db.conn.executemany(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, kind, status, "
+        "expires_at, indexed_revision) VALUES ('bot', 'group', ?, ?, ?, 'agreement', ?, ?, ?)",
+        [
+            (
+                memory_id,
+                f"约定的当前正文：{memory_id}",
+                json.dumps({"associated_user_ids": ["user"], "status": "active"}),
+                status,
+                None if memory_id == "active" else "2000-01-01T00:00:00+00:00",
+                0 if memory_id == "unindexed" else 1,
+            )
+            for memory_id, status in states.items()
+        ],
+    )
+    await runtime.db.conn.execute(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, indexed_revision) "
+        "VALUES ('other-bot', 'group', 'foreign', '别的机器人的约定', 1)"
+    )
+    await runtime.db.conn.commit()
+    runtime.plugin.ltm.search_memory.return_value = [
+        {"id": memory_id, "text": "旧的向量正文", "metadata": "{}"}
+        for memory_id in [*states, "foreign"]
+    ]
+    recalled = await runtime.manager.search_and_filter_memories(
+        "bot", "group", "之前的约定", [MessageData(user_id="user")], limit=20
+    )
+    expected = {**{key: states[key] for key in list(states)[:4]}, "elapsed": "expired"}
+    assert {item["id"]: item["status"] for item in recalled} == expected
+    assert set(runtime.plugin.ltm.search_memory.call_args.kwargs["include_ids"]) == set(
+        expected
+    )
+    assert all(item["text"] == f"约定的当前正文：{item['id']}" for item in recalled)
+    assert {
+        item["id"]: json.loads(item["metadata"])["status"] for item in recalled
+    } == (expected)
+    recent = await runtime.plugin.data_cache.get_memories("bot", "group")
+    assert {item.memory_id: json.loads(item.metadata)["status"] for item in recent} == {
+        **expected,
+        "unindexed": "completed",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external", [False, True])
+async def test_reply_recall_excludes_superseded_vectors_before_limit(
+    runtime, tmp_path, external
+):
+    import lancedb
+    from core.memory.memory import LTM
+
+    await runtime.db.conn.executemany(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, kind, status, indexed_revision) "
+        "VALUES ('bot', 'group', ?, '之前的观星约定', 'agreement', ?, 1)",
+        [("old", "superseded"), ("current", "completed")],
+    )
+    await runtime.db.conn.commit()
+    ltm = object.__new__(LTM)
+    ltm._lazy_initialized = True
+    ltm.embedding_conf = {"use_external_provider": external}
+    ltm.embed_provider = SimpleNamespace(
+        get_embedding=AsyncMock(return_value=[0.0, 0.0])
+    )
+    ltm.embed_model = SimpleNamespace(embed=Mock(return_value=[[0.0, 0.0]]))
+    ltm.table = lancedb.connect(tmp_path / "reply-vectors").create_table(
+        "memories",
+        data=[
+            {
+                "id": memory_id,
+                "bot_name": "bot",
+                "group_or_user_id": "group",
+                "vector": vector,
+            }
+            for memory_id, vector in (("old", [0.0, 0.0]), ("current", [0.1, 0.1]))
+        ],
+    )
+    runtime.plugin.ltm.search_memory = ltm.search_memory
+    recalled = await runtime.manager.search_and_filter_memories(
+        "bot", "group", "之前的约定", [], limit=1
+    )
+    assert [(item["id"], item["status"]) for item in recalled] == [
+        ("current", "completed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_indexes_historical_states_without_reopening_memories(
+    runtime,
+):
+    states = ["active", "completed", "cancelled", "expired", "superseded"]
+    await runtime.db.conn.executemany(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, kind, status, "
+        "revision, indexed_revision, vector) VALUES ('bot', 'group', ?, '之前的约定', ?, 'agreement', ?, 2, ?, ?)",
+        [
+            (
+                status,
+                '{"status":"active"}',
+                status,
+                1,
+                b"obsolete" if status == "superseded" else None,
+            )
+            for status in states
+        ],
+    )
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf["enabled"] = True
+    runtime.plugin.passive_memory_enabled = False
+    runtime.plugin.passive_memory_provider_ids = []
+    runtime.plugin.ltm.add_memory.side_effect = lambda **kwargs: (
+        kwargs["memory_id"],
+        b"vector",
+    )
+    await runtime.manager.maintain_memories()
+    indexed = await rows(runtime)
+    assert [item["status"] for item in indexed] == states
+    assert all(item["revision"] == item["indexed_revision"] == 2 for item in indexed)
+    assert [item["vector"] for item in indexed] == [b"vector"] * 4 + [None]
+    assert {
+        call.kwargs["memory_id"]: json.loads(call.kwargs["metadata"])["status"]
+        for call in runtime.plugin.ltm.add_memory.call_args_list
+    } == {status: status for status in states[:-1]}
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    await runtime.manager.maintain_memories()
+    assert runtime.plugin.ltm.add_memory.await_count == 4
+
+
+@pytest.mark.asyncio
 async def test_bounded_batches_report_real_committed_source_range(runtime, monkeypatch):
     monkeypatch.setattr("core.memory.passive_tasks.MEMORY_SUMMARY_BATCH_SIZE", 2)
     # Removed configuration keys must not override the internal batch limits.
@@ -1596,7 +1902,9 @@ async def test_web_edit_preserves_atom_id_state_and_evidence(runtime, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_expired_agreement_is_removed_from_temporary_recall_pool(runtime):
+async def test_expired_agreement_remains_in_temporary_recall_pool_with_current_state(
+    runtime,
+):
     cache = runtime.plugin.data_cache
     cache.merge_session_recalled_memories(
         "bot",
@@ -1611,7 +1919,47 @@ async def test_expired_agreement_is_removed_from_temporary_recall_pool(runtime):
             }
         ],
     )
-    assert cache.get_session_recalled_memories("bot", "group") == []
+    recalled = cache.get_session_recalled_memories("bot", "group")
+    assert [memory.memory_id for memory in recalled] == ["expired"]
+    assert json.loads(recalled[0].metadata)["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_recall_pool_retains_historical_states_and_preserves_cache_ttl(runtime):
+    cache = runtime.plugin.data_cache
+    states = ["active", "completed", "cancelled", "expired", "superseded"]
+    cache.merge_session_recalled_memories(
+        "bot",
+        "group",
+        [
+            {
+                "id": status,
+                "text": f"约定状态：{status}",
+                "status": status,
+                "metadata": {"status": "active", "expires_at": "invalid"},
+            }
+            for status in states
+        ],
+        max_items=4,
+    )
+    recalled = cache.get_session_recalled_memories("bot", "group", ttl_seconds=60)
+    assert {
+        item.memory_id: json.loads(item.metadata)["status"] for item in recalled
+    } == {status: status for status in states[:-1]}
+    expired_cache = next(item for item in recalled if item.memory_id == "completed")
+    expired_cache.last_recalled_at -= 61
+    assert {
+        item.memory_id
+        for item in cache.get_session_recalled_memories("bot", "group", ttl_seconds=60)
+    } == {"active", "cancelled", "expired"}
+    cache.merge_session_recalled_memories(
+        "bot",
+        "group",
+        [{"id": "active", "text": "旧版本", "status": "superseded"}],
+    )
+    assert {
+        item.memory_id for item in cache.get_session_recalled_memories("bot", "group")
+    } == {"cancelled", "expired"}
 
 
 def test_retired_portrait_fields_and_titles_do_not_enter_context():
@@ -2716,11 +3064,27 @@ async def test_semantic_recall_excludes_new_batch_before_limit_and_propagates_fa
     builder.limit.return_value = builder
     builder.to_list.return_value = [{"id": "old", "_distance": 0.1}]
     ltm.table = SimpleNamespace(search=Mock(return_value=builder))
+    assert (
+        await ltm.search_memory(
+            "bot", "group", "query", include_ids=[], raise_errors=True
+        )
+        == []
+    )
+    ltm.table.search.assert_not_called()
+    ltm.embed_provider.get_embedding.assert_not_awaited()
+    ltm.embed_model.embed.assert_not_called()
     found = await ltm.search_memory(
-        "bot", "group", "query", limit=1, exclude_ids=["new'one"], raise_errors=True
+        "bot",
+        "group",
+        "query",
+        limit=1,
+        exclude_ids=["new'one"],
+        raise_errors=True,
+        include_ids=["old", "old'two"],
     )
     assert [item["id"] for item in found] == ["old"]
     assert "id NOT IN ('new''one')" in builder.where.call_args.args[0]
+    assert "id IN ('old','old''two')" in builder.where.call_args.args[0]
     assert builder.where.call_args.kwargs["prefilter"] is True
     builder.to_list.side_effect = RuntimeError("Index unavailable")
     with pytest.raises(RuntimeError, match="Index unavailable"):
@@ -2772,6 +3136,26 @@ async def test_incomplete_index_does_not_turn_a_related_memory_into_a_no_match(r
         await runtime.db.memory_maintenance_repo.pending_consolidation("bot", "group")
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_incomplete_index_does_not_block_consolidation(runtime):
+    await runtime.db.conn.execute(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata) "
+        "VALUES ('bot', 'group', 'other', '我喜欢天文观测', '{\"associated_user_ids\":[\"other\"]}')"
+    )
+    await runtime.db.conn.commit()
+    latest = await message(runtime, "我也喜欢天文观测")
+    assert await extract(runtime, latest, [atom(latest)])
+    runtime.plugin.embedding_conf["enabled"] = True
+    runtime.manager._call_summary_llm = AsyncMock(return_value='{"memories": []}')
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    assert (
+        await runtime.db.memory_maintenance_repo.pending_consolidation("bot", "group")
+        is None
+    )
+    assert len(await rows(runtime)) == 2
 
 
 @pytest.mark.asyncio

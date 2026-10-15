@@ -10,9 +10,17 @@ import aiosqlite
 
 from .base import BaseRepository
 
-ATOMIC_MEMORY_SQL = (
-    "json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, "
-    "'$.schema_version')=2"
+_MEMORY_METADATA_SQL = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
+ATOMIC_MEMORY_SQL = f"json_extract({_MEMORY_METADATA_SQL}, '$.schema_version')=2"
+# Prefer explicit participant lists; legacy records fall back to their account.
+MEMORY_PARTICIPANT_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(CASE "
+    f"WHEN json_type({_MEMORY_METADATA_SQL}, '$.associated_user_ids')='array' "
+    f"AND json_array_length({_MEMORY_METADATA_SQL}, '$.associated_user_ids')>0 "
+    f"THEN json_extract({_MEMORY_METADATA_SQL}, '$.associated_user_ids') "
+    f"ELSE json_array(json_extract({_MEMORY_METADATA_SQL}, '$.user_id')) END) "
+    "AS participant WHERE participant.type IN ('text', 'integer') "
+    "AND trim(CAST(participant.value AS TEXT)) IN (SELECT value FROM json_each(?)))"
 )
 
 
@@ -66,6 +74,7 @@ class MemoryMaintenanceRepository(BaseRepository):
         exclude_ids: set[str] | None = None,
         history_end: int | None = None,
         text_fallback: bool = True,
+        associated_user_ids: set[str] | None = None,
     ) -> list[dict]:
         """Hydrate semantic hits and supplement them with full-history text matches.
 
@@ -78,6 +87,7 @@ class MemoryMaintenanceRepository(BaseRepository):
             exclude_ids: Seed records already included in the model input.
             history_end: Last historical row before the extraction batch.
             text_fallback: Search text when semantic retrieval is disabled.
+            associated_user_ids: Require an exact overlap with these member accounts.
 
         Returns:
             Current active historical rows, including legacy records.
@@ -88,6 +98,9 @@ class MemoryMaintenanceRepository(BaseRepository):
             "AND (expires_at IS NULL OR julianday(expires_at)>julianday('now'))"
         )
         scope_params = [bot_name, session_id]
+        if associated_user_ids is not None:
+            scope += f" AND {MEMORY_PARTICIPANT_SQL}"
+            scope_params.append(json.dumps(sorted(associated_user_ids)))
         if not text_fallback:
             scope += " AND indexed_revision=revision"
         if history_end is not None:

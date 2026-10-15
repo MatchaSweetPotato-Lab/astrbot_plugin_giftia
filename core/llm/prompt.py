@@ -1,9 +1,9 @@
-import json
 import time
 from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
+from ..memory.atomic import recall_memory_metadata
 from ..utils.schemas import (
     MediaCaption,
     MemoryItem,
@@ -687,7 +687,7 @@ def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
         seen_ids: Shared internal identifiers already rendered in this prompt.
 
     Returns:
-        Escaped memory XML with semantic type and available time fields.
+        Escaped memory XML with current state, semantic type and available times.
     """
     if seen_ids is None:
         seen_ids = set()
@@ -707,15 +707,11 @@ def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
         key = str(item.get("memory_id") or item.get("id") or "") or f"text:{text}"
         if not text or key in seen_ids:
             continue
-        metadata = item.get("metadata") or {}
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except (TypeError, ValueError):
-                metadata = {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-        attrs = []
+        metadata = recall_memory_metadata(item)
+        if metadata["status"] == "superseded":
+            seen_ids.add(key)
+            continue
+        attrs = [f"status={quoteattr(str(metadata['status']))}"]
         kind = item.get("kind") or metadata.get("kind")
         if isinstance(kind, str) and kind in {
             "event",
