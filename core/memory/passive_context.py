@@ -53,8 +53,7 @@ class PassiveContextMixin:
         include_relation_score: bool = True,
         include_relation_title: bool = True,
     ) -> str:
-        if not record:
-            return "无"
+        record = record or {}
 
         parts = []
         structured_lines = []
@@ -74,9 +73,8 @@ class PassiveContextMixin:
 
         relation_parts = []
         title = record.get("title") if include_relation_title else None
-        relation = record.get("relation") if include_relation_score else None
-        if relation not in (None, "", 0):
-            relation_parts.append(f"好感度: {relation}")
+        if include_relation_score:
+            relation_parts.append(f"好感度: {record.get('relation') or 0}")
         if title:
             relation_parts.append(f"头衔: {title}")
         if relation_parts:
@@ -206,7 +204,7 @@ class PassiveContextMixin:
                 + self._format_user_profile_record_for_summary(
                     profile_record,
                     allowed_fields=SESSION_PROFILE_FIELDS,
-                    include_relation_score=False,
+                    include_relation_score=True,
                     include_relation_title=False,
                 )
             )
