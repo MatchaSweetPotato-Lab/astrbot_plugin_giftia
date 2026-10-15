@@ -2,12 +2,18 @@
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
 import aiosqlite
 
 from .base import BaseRepository
+
+ATOMIC_MEMORY_SQL = (
+    "json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, "
+    "'$.schema_version')=2"
+)
 
 
 class MemoryMaintenanceRepository(BaseRepository):
@@ -50,6 +56,114 @@ class MemoryMaintenanceRepository(BaseRepository):
         ) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
+    async def related_snapshot(
+        self,
+        bot_name: str,
+        session_id: str,
+        query: str,
+        memory_ids: list[str],
+        limit: int = 5,
+        exclude_ids: set[str] | None = None,
+        history_end: int | None = None,
+        text_fallback: bool = True,
+    ) -> list[dict]:
+        """Hydrate semantic hits and supplement them with full-history text matches.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            query: One source message or memory being reviewed.
+            memory_ids: Semantic candidates in relevance order.
+            limit: Maximum number of related records.
+            exclude_ids: Seed records already included in the model input.
+            history_end: Last historical row before the extraction batch.
+            text_fallback: Search text when semantic retrieval is disabled.
+
+        Returns:
+            Current active historical rows, including legacy records.
+        """
+        excluded = sorted(exclude_ids or ())
+        scope = (
+            "bot_name=? AND group_or_user_id=? AND status='active' "
+            "AND (expires_at IS NULL OR julianday(expires_at)>julianday('now'))"
+        )
+        scope_params = [bot_name, session_id]
+        if not text_fallback:
+            scope += " AND indexed_revision=revision"
+        if history_end is not None:
+            scope += " AND id<=?"
+            scope_params.append(history_end)
+        if excluded:
+            scope += f" AND memory_id NOT IN ({','.join('?' for _ in excluded)})"
+            scope_params.extend(excluded)
+        candidates = list(dict.fromkeys(memory_ids))
+        related = []
+        if candidates:
+            placeholders = ",".join("?" for _ in candidates)
+            async with self.conn.execute(
+                f"SELECT * FROM memories WHERE {scope} AND memory_id IN ({placeholders})",
+                (*scope_params, *candidates),
+            ) as cursor:
+                current = {
+                    row["memory_id"]: dict(row) for row in await cursor.fetchall()
+                }
+            related = [current[key] for key in candidates if key in current][:limit]
+        if len(related) >= limit or not text_fallback:
+            return related
+
+        # Overlapping CJK pairs match Chinese text without a tokenizer dependency.
+        # Sample across long queries rather than discarding their final topics.
+        terms = []
+        for word in re.findall(r"[^\W_]+", query.casefold()):
+            if re.search(r"[\u3400-\u9fff]", word):
+                terms.extend(word[index : index + 2] for index in range(len(word) - 1))
+            else:
+                terms.append(word)
+        terms = list(dict.fromkeys(terms))
+        if not terms:
+            return related
+        terms = terms[:: max(1, (len(terms) + 63) // 64)][:64]
+        score = " + ".join("(instr(lower(text), ?) > 0)" for _ in terms)
+        async with self.conn.execute(
+            f"WITH matches AS (SELECT *, ({score}) AS relevance FROM memories WHERE {scope}) "
+            "SELECT * FROM matches WHERE relevance>0 "
+            "ORDER BY relevance DESC, importance DESC, id ASC LIMIT ?",
+            (*terms, *scope_params, limit + len(related)),
+        ) as cursor:
+            matched = [dict(row) for row in await cursor.fetchall()]
+        seen = {row["memory_id"] for row in related}
+        related.extend(row for row in matched if row["memory_id"] not in seen)
+        return related[:limit]
+
+    async def pending_consolidation(
+        self, bot_name: str, session_id: str
+    ) -> dict | None:
+        """Read the oldest durable job created by a successful extraction.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+
+        Returns:
+            Queue key, original value and payload, or None when no job is pending.
+        """
+        async with self.conn.execute(
+            "SELECT key, value FROM kv_store WHERE key LIKE 'atomic_memory:consolidation:%' "
+            "AND json_extract(value, '$.bot_name')=? AND json_extract(value, '$.session_id')=? "
+            "ORDER BY created_at, key LIMIT 1",
+            (bot_name, session_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return (
+            {
+                "key": row["key"],
+                "value": row["value"],
+                "payload": json.loads(row["value"]),
+            }
+            if row
+            else None
+        )
+
     async def apply_changes(
         self,
         bot_name: str,
@@ -59,6 +173,10 @@ class MemoryMaintenanceRepository(BaseRepository):
         batch_key: str = "",
         reviewed: bool = False,
         source_end: int | None = None,
+        reviewed_ids: set[str] | None = None,
+        observer_id: str = "",
+        consolidation_job: dict | None = None,
+        processed_ids: set[str] | None = None,
     ) -> list[str]:
         """Commit a validated batch and its checkpoint in one transaction.
 
@@ -70,6 +188,10 @@ class MemoryMaintenanceRepository(BaseRepository):
             batch_key: Idempotency key for an incremental source interval.
             reviewed: Mark input revisions and derived outputs as consolidated.
             source_end: Last source message handled by an incremental batch.
+            reviewed_ids: Seed records to checkpoint; None checkpoints all inputs.
+            observer_id: Observer persisted with a newly extracted batch.
+            consolidation_job: Exact queued job whose progress is being committed.
+            processed_ids: New records checked by this consolidation attempt.
 
         Returns:
             IDs of inserted, updated, or superseded atoms.
@@ -95,6 +217,20 @@ class MemoryMaintenanceRepository(BaseRepository):
                         if await cursor.fetchone():
                             await writer.rollback()
                             return []
+                if consolidation_job:
+                    async with writer.execute(
+                        "SELECT value FROM kv_store WHERE key=?",
+                        (consolidation_job["key"],),
+                    ) as cursor:
+                        queued = await cursor.fetchone()
+                    payload = consolidation_job["payload"]
+                    if (
+                        queued is None
+                        or queued["value"] != consolidation_job["value"]
+                        or (payload["bot_name"], payload["session_id"])
+                        != (bot_name, session_id)
+                    ):
+                        raise ValueError("Consolidation job changed during inference")
                 for memory_id, revision in expected.items():
                     async with writer.execute(
                         "SELECT revision FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
@@ -114,8 +250,49 @@ class MemoryMaintenanceRepository(BaseRepository):
                             )
                 now = datetime.now(timezone.utc).isoformat()
                 affected = []
+                inserted = []
+                async with writer.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM memories WHERE bot_name=? AND group_or_user_id=?",
+                    (bot_name, session_id),
+                ) as cursor:
+                    history_end = (await cursor.fetchone())[0]
                 for item in changes:
-                    references = [*item["source_memory_ids"], *item["supersedes"]]
+                    if batch_key and (
+                        item["memory_id"]
+                        or item["source_memory_ids"]
+                        or item["supersedes"]
+                    ):
+                        raise ValueError("Extraction may only insert new memories")
+                    memory_id = item["memory_id"] or str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            json.dumps([bot_name, session_id, item["fingerprint"]]),
+                        )
+                    )
+                    async with writer.execute(
+                        "SELECT metadata, revision FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
+                        (memory_id, bot_name, session_id),
+                    ) as cursor:
+                        old = await cursor.fetchone()
+                    if batch_key and old:
+                        continue
+                    try:
+                        previous = json.loads(old["metadata"] or "{}") if old else {}
+                    except (ValueError, TypeError):
+                        previous = {}
+                    if not isinstance(previous, dict):
+                        previous = {}
+                    # Historical provenance survives even when its source atoms
+                    # were not recalled into this particular model input.
+                    inherited = previous.get("source_memory_ids", [])
+                    references = [
+                        *(
+                            ref
+                            for ref in item["source_memory_ids"]
+                            if ref not in inherited
+                        ),
+                        *item["supersedes"],
+                    ]
                     if item["memory_id"]:
                         references.append(item["memory_id"])
                     if any(ref not in expected for ref in references):
@@ -132,17 +309,6 @@ class MemoryMaintenanceRepository(BaseRepository):
                                 raise ValueError(
                                     "A source message disappeared or was recalled"
                                 )
-                    memory_id = item["memory_id"] or str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            json.dumps([bot_name, session_id, item["fingerprint"]]),
-                        )
-                    )
-                    async with writer.execute(
-                        "SELECT metadata, revision FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
-                        (memory_id, bot_name, session_id),
-                    ) as cursor:
-                        old = await cursor.fetchone()
                     metadata = {
                         key: value
                         for key, value in item.items()
@@ -167,13 +333,7 @@ class MemoryMaintenanceRepository(BaseRepository):
                         status=item["status"],
                         expires_at=item["expires_at"],
                     )
-                    if old:
-                        try:
-                            previous = json.loads(old["metadata"] or "{}")
-                        except (ValueError, TypeError):
-                            previous = {}
-                        if isinstance(previous, dict):
-                            metadata = {**previous, **metadata}
+                    metadata = {**previous, **metadata}
                     revision = old["revision"] + 1 if old else 1
                     await writer.execute(
                         "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, importance, "
@@ -199,6 +359,8 @@ class MemoryMaintenanceRepository(BaseRepository):
                         ),
                     )
                     affected.append(memory_id)
+                    if old is None:
+                        inserted.append(memory_id)
                     for old_id in item["supersedes"]:
                         await writer.execute(
                             "UPDATE memories SET status='superseded', revision=revision+1, updated_at=? "
@@ -208,6 +370,8 @@ class MemoryMaintenanceRepository(BaseRepository):
                         affected.append(old_id)
                 if reviewed:
                     for memory_id, revision in expected.items():
+                        if reviewed_ids is not None and memory_id not in reviewed_ids:
+                            continue
                         await writer.execute(
                             "UPDATE memories SET reviewed_revision=revision WHERE memory_id=? "
                             "AND bot_name=? AND group_or_user_id=? AND revision=?",
@@ -219,6 +383,46 @@ class MemoryMaintenanceRepository(BaseRepository):
                         "ON CONFLICT(key) DO UPDATE SET value=1, updated_at=excluded.updated_at",
                         (batch_key, now, now),
                     )
+                    if inserted:
+                        await writer.execute(
+                            "INSERT INTO kv_store (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                            (
+                                f"atomic_memory:consolidation:{batch_key}",
+                                json.dumps(
+                                    {
+                                        "bot_name": bot_name,
+                                        "session_id": session_id,
+                                        "self_id": str(observer_id),
+                                        "memory_ids": inserted,
+                                        "pending_ids": inserted,
+                                        "history_end": history_end,
+                                    }
+                                ),
+                                now,
+                                now,
+                            ),
+                        )
+                if consolidation_job:
+                    payload = consolidation_job["payload"]
+                    remaining = [
+                        key
+                        for key in payload["pending_ids"]
+                        if key not in (processed_ids or ())
+                    ]
+                    if remaining:
+                        await writer.execute(
+                            "UPDATE kv_store SET value=?, updated_at=? WHERE key=?",
+                            (
+                                json.dumps({**payload, "pending_ids": remaining}),
+                                now,
+                                consolidation_job["key"],
+                            ),
+                        )
+                    else:
+                        await writer.execute(
+                            "DELETE FROM kv_store WHERE key=?",
+                            (consolidation_job["key"],),
+                        )
                 if source_end is not None:
                     await writer.execute(
                         "INSERT INTO kv_store (key, value, created_at, updated_at) VALUES (?, ?, ?, ?) "
@@ -254,7 +458,8 @@ class MemoryMaintenanceRepository(BaseRepository):
         cursor = await self.conn.execute(
             "UPDATE memories SET status='expired', revision=revision+1, updated_at=? "
             "WHERE bot_name=? AND group_or_user_id=? AND kind='agreement' AND status='active' "
-            "AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday(?)",
+            "AND expires_at IS NOT NULL AND julianday(expires_at)<=julianday(?) "
+            f"AND {ATOMIC_MEMORY_SQL}",
             (now, bot_name, session_id, now),
         )
         await self.conn.commit()

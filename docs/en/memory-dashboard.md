@@ -20,6 +20,12 @@ Member cards now show the retained information directly, replacing the former **
 
 Historical profile fields remain in storage and compatible report templates. Legacy memories are labelled as legacy records without fabricated evidence. Automatic extraction and consolidation remain controlled by the backend settings and administrator commands `/强制总结` and `/整理记忆`.
 
+Extraction and consolidation run as separate tasks. Extraction only records new events or facts from the current message batch, without recalling or modifying history. Successfully inserted memories create a durable batch and trigger consolidation. Each new memory independently searches historical records, including legacy-format, older and previously reviewed memories. The entire new batch and later batches are excluded from candidates. Only new memories with a historical match and their related records reach the consolidation model; shared historical records are deduplicated. Unmatched memories skip this round and remain available for future recall.
+
+The extraction model references messages by `source_id`, adding `media_id` for media evidence. Code captures the direct speech or media caption with the sender, timestamp and message identifiers; the model does not reproduce the source text. Nested quotations and forwards are excluded from direct speech. Recalled messages, operation logs, commands and unavailable media cannot provide evidence.
+
+Upgrades, startup and scheduled checks never enqueue historical records for consolidation. Legacy records participate only when recalled by newly inserted memories. Failed jobs remain queued for retry every five minutes, or through `/整理记忆`; `/强制总结` still only extracts unprocessed messages. The former consolidation interval setting has been removed: additions trigger consolidation immediately, and the consolidation batch size limits the number of new records checked per attempt. Text matching is used when embeddings are disabled. Retrieval failures retain the batch instead of being treated as no match. Memory writes, queued jobs and checkpoints commit transactionally, so retries do not repeat extraction. Repeated recall never counts as new evidence, and evidence snapshots remain available after source-history cleanup.
+
 The screenshot uses synthetic data to compare self-reported, manually entered and inferred habits.
 
 ![Habit origins and supporting evidence](../images/atomic-memory.jpg)

@@ -397,25 +397,53 @@ class LTM:
         query: str,
         limit: int = 5,
         threshold: float = 0.7,
+        exclude_ids: list[str] | None = None,
+        raise_errors: bool = False,
     ) -> list[dict]:
+        """Search scoped vectors with optional strict failure handling.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            query: Semantic search text.
+            limit: Maximum number of candidates.
+            threshold: Maximum accepted vector distance.
+            exclude_ids: Records excluded before applying the candidate limit.
+            raise_errors: Propagate failures so queued consolidation can retry.
+
+        Returns:
+            Matching vector records in relevance order.
+
+        Raises:
+            Exception: An indexing or embedding failure when raise_errors is true.
+        """
         self._lazy_init()
         if self.embedding_conf.get("use_external_provider", False):
             if not hasattr(self, "embed_provider"):
                 logger.error("Embedding provider not initialized")
+                if raise_errors:
+                    raise RuntimeError("Embedding provider not initialized")
                 return []
             try:
                 query_vector = await self.embed_provider.get_embedding(query)
             except Exception as e:
                 logger.error(f"[Giftia LTM] 外部 Embedding 搜索向量获取失败: {e}")
+                if raise_errors:
+                    raise
                 return []
 
             try:
+                scoped_bot = bot_name.replace("'", "''")
+                scoped_session = group_or_user_id.replace("'", "''")
+                condition = f"bot_name = '{scoped_bot}' AND group_or_user_id = '{scoped_session}'"
+                if exclude_ids:
+                    excluded = ",".join(
+                        "'" + key.replace("'", "''") + "'" for key in exclude_ids
+                    )
+                    condition += f" AND id NOT IN ({excluded})"
                 results = (
                     self.table.search(query_vector)
-                    .where(
-                        f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'",
-                        prefilter=True,
-                    )
+                    .where(condition, prefilter=True)
                     .limit(limit)
                     .to_list()
                 )
@@ -424,6 +452,8 @@ class LTM:
                 return results
             except Exception as e:
                 logger.error(f"Search memory failed: {e}")
+                if raise_errors:
+                    raise
                 return []
         else:
             loop = asyncio.get_running_loop()
@@ -435,6 +465,8 @@ class LTM:
                 query,
                 limit,
                 threshold,
+                exclude_ids,
+                raise_errors,
             )
 
     def _search_memory_sync(
@@ -444,24 +476,35 @@ class LTM:
         query: str,
         limit: int,
         threshold: float,
+        exclude_ids: list[str] | None = None,
+        raise_errors: bool = False,
     ) -> list[dict]:
         """语义搜索相关记忆"""
         self._lazy_init()
         try:
             if not hasattr(self, "embed_model"):
                 logger.error("Embedding model not initialized")
+                if raise_errors:
+                    raise RuntimeError("Embedding model not initialized")
                 return []
             # 手动将搜索文本转换为向量再喂给 LanceDB 查询
             query_vector = list(self.embed_model.embed([query]))[0]
             if hasattr(query_vector, "tolist"):
                 query_vector = query_vector.tolist()
 
+            scoped_bot = bot_name.replace("'", "''")
+            scoped_session = group_or_user_id.replace("'", "''")
+            condition = (
+                f"bot_name = '{scoped_bot}' AND group_or_user_id = '{scoped_session}'"
+            )
+            if exclude_ids:
+                excluded = ",".join(
+                    "'" + key.replace("'", "''") + "'" for key in exclude_ids
+                )
+                condition += f" AND id NOT IN ({excluded})"
             results = (
                 self.table.search(query_vector)
-                .where(
-                    f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'",
-                    prefilter=True,
-                )
+                .where(condition, prefilter=True)
                 .limit(limit)
                 .to_list()
             )
@@ -471,6 +514,8 @@ class LTM:
             return results
         except Exception as e:
             logger.error(f"Search memory failed: {e}")
+            if raise_errors:
+                raise
             return []
 
     async def get_all_memories(
@@ -529,14 +574,27 @@ class LTM:
             return False
 
     async def rerank_memories(
-        self, query: str, memories: list[dict], top_k: int = 5, threshold: float = 0.5
+        self,
+        query: str,
+        memories: list[dict],
+        top_k: int = 5,
+        threshold: float = 0.5,
+        raise_errors: bool = False,
     ) -> list[dict]:
-        """
-        使用重排模型或 AstrBot Rerank 提供商对记忆进行重排序
-        :param query: 用户的查询语句
-        :param memories: 记忆列表，每个元素包含 'text' 字段
-        :param top_k: 返回前 k 个最相关的记忆
-        :return: 按相关性排序后的记忆列表
+        """Rerank candidates with optional strict failure handling.
+
+        Args:
+            query: Semantic search text.
+            memories: Candidates containing text fields.
+            top_k: Maximum number of retained candidates.
+            threshold: Minimum accepted relevance score.
+            raise_errors: Propagate failures to durable consolidation workers.
+
+        Returns:
+            Retained records in relevance order.
+
+        Raises:
+            Exception: A provider failure when raise_errors is true.
         """
         self._lazy_init()
         try:
@@ -545,6 +603,8 @@ class LTM:
             if self.rerank_conf.get("use_external_provider", False):
                 if not hasattr(self, "rerank_provider"):
                     logger.error("Rerank provider not initialized")
+                    if raise_errors:
+                        raise RuntimeError("Rerank provider not initialized")
                     return []
 
                 rerank_results = await self.rerank_provider.rerank(
@@ -571,6 +631,8 @@ class LTM:
 
             if not hasattr(self, "reranker"):
                 logger.error("Reranker not initialized")
+                if raise_errors:
+                    raise RuntimeError("Reranker not initialized")
                 return []
 
             # 使用 Cross-Encoder 计算相关性分数
@@ -593,6 +655,8 @@ class LTM:
 
         except Exception as e:
             logger.error(f"Rerank memories failed: {e}")
+            if raise_errors:
+                raise
             # 如果失败，返回原始记忆（不排序）
             return memories
 

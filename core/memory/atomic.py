@@ -66,9 +66,10 @@ class DirectSpeech(HTMLParser):
 class MemoryEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
-    source_id: StrictInt = Field(gt=0)
-    quote: str = Field(min_length=1, max_length=500)
-    media_id: str = Field(default="", max_length=128)
+    source_id: StrictInt = Field(gt=0, description="new_messages 中消息的 source_id。")
+    media_id: str = Field(
+        default="", max_length=128, description="媒体证据的 media_id；文本证据留空。"
+    )
 
 
 class MemoryChange(BaseModel):
@@ -143,6 +144,7 @@ def validate_memory_changes(
     media: dict,
     self_id: str,
     consolidating: bool = False,
+    new_memory_ids: set[str] | None = None,
 ) -> list[dict]:
     """Validate an entire batch before any memory or cursor is written.
 
@@ -153,6 +155,7 @@ def validate_memory_changes(
         media: Already available captions keyed by media ID.
         self_id: Account of the observing bot.
         consolidating: Whether only existing provenance may be used.
+        new_memory_ids: Newly extracted records providing fresh evidence for closures.
 
     Returns:
         Normalized changes including immutable, verified evidence.
@@ -178,11 +181,20 @@ def validate_memory_changes(
         members.update(str(old.get(key) or "") for key in ("subject_id", "object_id"))
     changes, touched = [], set()
     for change in result.memories:
-        if not change.memory_id and change.kind in {
-            "preference",
-            "habit",
-            "relationship",
-        }:
+        if not consolidating and (
+            change.memory_id or change.source_memory_ids or change.supersedes
+        ):
+            raise ValueError("Extraction may only create new memories")
+        if (
+            consolidating
+            and not change.memory_id
+            and change.kind
+            in {
+                "preference",
+                "habit",
+                "relationship",
+            }
+        ):
             matches = [
                 old
                 for old in known.values()
@@ -223,10 +235,23 @@ def validate_memory_changes(
             )
         ):
             raise ValueError("An existing atom cannot change its identity")
-        if change.status != "active" and (
-            not target or change.kind != "agreement" or consolidating
-        ):
-            raise ValueError("Only newly evidenced agreements may be closed")
+        if change.status != "active":
+            fresh_evidence = [
+                ref
+                for memory_id in change.source_memory_ids
+                if memory_id in (new_memory_ids or ())
+                for ref in known.get(memory_id, {}).get("evidence", [])
+                if str(ref.get("user_id") or "")
+                in {change.subject_id, item["object_id"]}
+                and str(ref.get("user_id") or "") != self_id
+            ]
+            if (
+                not target
+                or change.kind != "agreement"
+                or not consolidating
+                or not fresh_evidence
+            ):
+                raise ValueError("Only newly evidenced agreements may be closed")
         if target and target["status"] != "active":
             raise ValueError("A closed memory cannot be reopened by maintenance")
         if consolidating and (change.evidence or not change.source_memory_ids):
@@ -245,17 +270,20 @@ def validate_memory_changes(
             if msg is None:
                 raise ValueError("Evidence is outside the new message batch")
             direct = "".join(DirectSpeech(msg.content or "").parts)
+            if direct.lstrip().startswith("/"):
+                raise ValueError("Commands cannot establish memory evidence")
             if ref.media_id:
                 caption = media.get(ref.media_id)
                 if not caption or ref.media_id not in (msg.media_id_list or []):
                     raise ValueError("Evidence references unavailable media")
                 direct = "\n".join(
-                    str(caption.get(key) or "") for key in ("text", "caption")
+                    str(caption[key]) for key in ("text", "caption") if caption.get(key)
                 )
-            if ref.quote not in direct or direct.lstrip().startswith("/"):
-                raise ValueError("Evidence is not a verbatim direct-source excerpt")
+            if not direct.strip():
+                raise ValueError("Evidence has no direct source content")
             verified = {
                 **ref.model_dump(),
+                "quote": direct,
                 "user_id": str(msg.user_id),
                 "message_id": msg.message_id,
                 "time": msg.time,
@@ -277,8 +305,7 @@ def validate_memory_changes(
                 raise ValueError("Bot output alone cannot establish a memory")
         evidence = list(
             {
-                (ref["source_id"], ref.get("media_id", ""), ref["quote"]): ref
-                for ref in evidence
+                (ref["source_id"], ref.get("media_id", "")): ref for ref in evidence
             }.values()
         )
         if change.kind == "habit":
