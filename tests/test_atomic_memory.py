@@ -58,7 +58,9 @@ async def runtime(tmp_path, monkeypatch):
         await db.close()
 
 
-async def message(runtime, text, user_id="user", day=10, role="message", hour=12):
+async def message(
+    runtime, text, user_id="user", day=10, role="message", hour=12, media_ids=None
+):
     """Persist a source message with an actual database identity.
 
     Args:
@@ -68,6 +70,7 @@ async def message(runtime, text, user_id="user", day=10, role="message", hour=12
         day: Distinct source date.
         role: Stored message role.
         hour: Source hour within the selected day.
+        media_ids: Directly attached media identifiers.
 
     Returns:
         Persisted message including its database ID.
@@ -80,6 +83,7 @@ async def message(runtime, text, user_id="user", day=10, role="message", hour=12
         message_id=f"{user_id}-{day}-{hour}-{text}",
         time=f"2020-01-{day:02}T{hour:02}:00:00+08:00",
         role=role,
+        media_id_list=list(media_ids or []),
     )
     await runtime.db.insert_message("bot", msg)
     rows = await runtime.db.get_messages_by_id_range("bot", "group", 1, 10000)
@@ -99,8 +103,7 @@ def atom(msg, kind="event", **updates):
     """
     return {
         "kind": kind,
-        "subject_id": "user",
-        "object_id": "self" if kind in {"event", "agreement"} else "",
+        "associated_user_ids": [msg.user_id],
         "topic": "game",
         "text": msg.content,
         "evidence": [{"source_id": msg.db_id}],
@@ -108,13 +111,14 @@ def atom(msg, kind="event", **updates):
     }
 
 
-async def extract(runtime, msg, items):
+async def extract(runtime, msg, items, media=None):
     """Run production extraction against a synthetic model response.
 
     Args:
         runtime: Isolated test runtime.
         msg: New source message.
         items: Proposed memories from the mock model.
+        media: Available completed media captions.
 
     Returns:
         Extraction success status.
@@ -127,7 +131,7 @@ async def extract(runtime, msg, items):
         "group",
         "self",
         "Giftia",
-        {"alias_observation_messages": [msg], "memory_media": {}},
+        {"alias_observation_messages": [msg], "memory_media": media or {}},
     )
 
 
@@ -177,6 +181,7 @@ async def test_extraction_without_embeddings_retains_provenance_and_atomic_check
     assert metadata["evidence"][0]["message_id"] == msg.message_id
     assert metadata["evidence"][0]["time"] == msg.time
     assert metadata["evidence"][0]["quote"] == msg.content
+    assert metadata["occurred_at"] == ""
     assert saved["indexed_revision"] == 0
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
@@ -195,14 +200,20 @@ async def test_extraction_without_embeddings_retains_provenance_and_atomic_check
 
 
 @pytest.mark.asyncio
-async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(runtime):
-    first_text = '  我喜欢简短回复，保留原来的标点“🙂”。\n  ' + "这是一条较长的原始发言。" * 60
+async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
+    runtime,
+):
+    first_text = (
+        "  我喜欢简短回复，保留原来的标点“🙂”。\n  " + "这是一条较长的原始发言。" * 60
+    )
     first = await message(
         runtime,
         '<quote sender_id="other"><quote>嵌套转述</quote>他人的发言</quote>'
         + first_text,
     )
-    second = await message(runtime, "没错，长篇回复看起来累，简洁些就好。\n谢谢。", day=11)
+    second = await message(
+        runtime, "没错，长篇回复看起来累，简洁些就好。\n谢谢。", day=11
+    )
     proposal = atom(
         first,
         "preference",
@@ -227,7 +238,7 @@ async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
     assert metadata["evidence"] == [
         {
             "source_id": msg.db_id,
-            "media_id": "",
+            "media_ids": [],
             "quote": direct,
             "user_id": msg.user_id,
             "message_id": msg.message_id,
@@ -239,7 +250,6 @@ async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
     schema = json.loads(system_prompt.rsplit("JSON Schema:\n", 1)[1])
     assert set(schema["$defs"]["MemoryEvidence"]["properties"]) == {
         "source_id",
-        "media_id",
     }
 
 
@@ -261,8 +271,7 @@ async def test_only_new_memories_with_historical_matches_enter_consolidation(
                 json.dumps(
                     {
                         "schema_version": 2,
-                        "subject_id": "user",
-                        "object_id": "self",
+                        "associated_user_ids": ["user"],
                         "topic": "astronomy",
                     }
                 ),
@@ -458,7 +467,7 @@ async def test_invalid_evidence_rejects_entire_batch(runtime, fault):
         outside = await message(runtime, "这条消息不在归纳输入中", user_id="other")
         invalid["evidence"][0]["source_id"] = outside.db_id
     elif fault == "participant":
-        invalid["subject_id"] = "stranger"
+        invalid["associated_user_ids"] = ["stranger"]
     elif fault == "third_party":
         msg.user_id = "other"
     elif fault == "command":
@@ -474,7 +483,9 @@ async def test_invalid_evidence_rejects_entire_batch(runtime, fault):
 
 
 @pytest.mark.asyncio
-async def test_quoted_only_content_and_unavailable_media_are_not_direct_evidence(runtime):
+async def test_quoted_only_content_and_unavailable_media_are_not_direct_evidence(
+    runtime,
+):
     msg = await message(runtime, '<quote sender_id="other">我喜欢长回复</quote>')
     assert not await extract(
         runtime,
@@ -487,6 +498,7 @@ async def test_quoted_only_content_and_unavailable_media_are_not_direct_evidence
             )
         ],
     )
+    msg.content += "[图片:image]"
     msg.media_id_list = ["image"]
     assert not await extract(
         runtime,
@@ -495,44 +507,22 @@ async def test_quoted_only_content_and_unavailable_media_are_not_direct_evidence
             atom(
                 msg,
                 "preference",
-                evidence=[{"source_id": msg.db_id, "media_id": "image"}],
+                evidence=[{"source_id": msg.db_id}],
             )
         ],
     )
-    runtime.manager._call_summary_llm = AsyncMock(
-        return_value=json.dumps(
-            {
-                "memories": [
-                    atom(
-                        msg,
-                        "preference",
-                        evidence=[
-                            {
-                                "source_id": msg.db_id,
-                                "media_id": "image",
-                            }
-                        ],
-                    )
-                ]
-            }
-        )
-    )
-    assert await runtime.manager._run_memory_summary_task(
-        "bot",
-        "group",
-        "self",
-        "Giftia",
-        {
-            "alias_observation_messages": [msg],
-            "memory_media": {"image": {"text": "图片文字", "caption": "图片内容"}},
-        },
+    assert await extract(
+        runtime,
+        msg,
+        [atom(msg, "preference")],
+        media={"image": {"text": "图片文字", "caption": "图片内容"}},
     )
     evidence = json.loads((await rows(runtime))[0]["metadata"])["evidence"]
     assert evidence == [
         {
             "source_id": msg.db_id,
-            "media_id": "image",
-            "quote": "图片文字\n图片内容",
+            "media_ids": ["image"],
+            "quote": "[图片:image]\n媒体转述：图片文字\n图片内容",
             "user_id": msg.user_id,
             "message_id": msg.message_id,
             "time": msg.time,
@@ -541,7 +531,17 @@ async def test_quoted_only_content_and_unavailable_media_are_not_direct_evidence
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["unattached", "empty_caption", "command"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "unattached",
+        "empty_caption",
+        "command",
+        "quoted",
+        "forwarded",
+        "bare_placeholder",
+    ],
+)
 async def test_media_references_cannot_bypass_source_validation(runtime, fault):
     from xml.etree.ElementTree import fromstring
 
@@ -552,9 +552,15 @@ async def test_media_references_cannot_bypass_source_validation(runtime, fault):
         msg.media_id_list = ["another-image"]
     elif fault == "empty_caption":
         media["image"] = {"caption": "  "}
-    else:
+    elif fault == "command":
         msg.content = "/保存 [图片:image]"
-    proposal = atom(msg, evidence=[{"source_id": msg.db_id, "media_id": "image"}])
+    elif fault == "quoted":
+        msg.content = '<quote sender_id="other">[图片:image]</quote>'
+    elif fault == "forwarded":
+        msg.content = "[合并转发:forward]"
+    elif fault == "bare_placeholder":
+        msg.content = "[图片]"
+    proposal = atom(msg)
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [proposal]})
     )
@@ -574,6 +580,90 @@ async def test_media_references_cannot_bypass_source_validation(runtime, fault):
         user_prompt = runtime.manager._call_summary_llm.call_args.args[2]
         rendered = fromstring(user_prompt).find("new_messages/message")
         assert rendered.attrib["evidence_allowed"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_message_evidence_collects_text_and_direct_media_once(runtime):
+    from xml.etree.ElementTree import fromstring
+
+    msg = await message(
+        runtime,
+        '这是我的近况<quote sender_id="other">[图片:quoted]</quote>'
+        "[图片:image][语音:audio][视频:video][图片:missing][图片:empty]",
+        media_ids=["image", "audio", "video", "image", "missing", "empty", "quoted"],
+    )
+    media = {
+        "image": {"text": "照片文字", "caption": "照片内容"},
+        "audio": {"text": "语音转写"},
+        "video": {"caption": "视频转述"},
+        "empty": {"caption": "  "},
+        "quoted": {"caption": "引用中的媒体内容"},
+        "unattached": {"caption": "其他消息的媒体内容"},
+    }
+    assert await extract(
+        runtime,
+        msg,
+        [atom(msg, evidence=[{"source_id": msg.db_id}, {"source_id": msg.db_id}])],
+        media=media,
+    )
+
+    evidence = json.loads((await rows(runtime))[0]["metadata"])["evidence"]
+    assert len(evidence) == 1
+    assert evidence[0]["media_ids"] == ["image", "audio", "video"]
+    assert evidence[0]["source_id"] == msg.db_id
+    for text in ("这是我的近况", "照片文字", "照片内容", "语音转写", "视频转述"):
+        assert text in evidence[0]["quote"]
+    assert "引用中的媒体内容" not in evidence[0]["quote"]
+    assert "其他消息的媒体内容" not in evidence[0]["quote"]
+    prompt = fromstring(runtime.manager._call_summary_llm.call_args.args[2])
+    available = {item.attrib["id"] for item in prompt.findall("available_media/media")}
+    assert "quoted" not in available and "unattached" not in available
+    attached = json.loads(prompt.find("new_messages/message").attrib["media_ids"])
+    assert "quoted" not in attached
+
+
+@pytest.mark.asyncio
+async def test_message_evidence_merges_full_messages_with_multiple_attachments(runtime):
+    first = await message(
+        runtime,
+        "我和你一起玩游戏[图片:first][图片:second]",
+        media_ids=["first", "second"],
+    )
+    assert await extract(
+        runtime,
+        first,
+        [atom(first)],
+        media={"first": {"caption": "第一张图"}, "second": {"caption": "第二张图"}},
+    )
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+    old = (await rows(runtime))[0]
+    metadata = json.loads(old["metadata"])
+    latest = await message(
+        runtime, "我记得和你一起玩过游戏[图片:latest]", day=11, media_ids=["latest"]
+    )
+    assert await extract(
+        runtime, latest, [atom(latest)], media={"latest": {"caption": "新的图"}}
+    )
+    newest = (await rows(runtime))[-1]
+    proposal = atom(
+        latest,
+        memory_id=old["memory_id"],
+        evidence=[],
+        source_memory_ids=[old["memory_id"], newest["memory_id"]],
+        supersedes=[newest["memory_id"]],
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": [proposal]})
+    )
+
+    assert await runtime.manager.consolidate_memories("bot", "group", "self")
+
+    evidence = json.loads((await rows(runtime))[0]["metadata"])["evidence"]
+    assert len(evidence) == 2
+    assert evidence[:1] == metadata["evidence"]
+    assert evidence[0]["media_ids"] == ["first", "second"]
+    assert evidence[-1]["media_ids"] == ["latest"]
+    assert "新的图" in evidence[-1]["quote"]
 
 
 @pytest.mark.asyncio
@@ -637,10 +727,9 @@ async def test_derived_habit_preserves_independent_sources_and_events(runtime):
     original = await rows(runtime)
     proposal = {
         "kind": "habit",
-        "subject_id": "user",
+        "associated_user_ids": ["user"],
         "topic": "evening_games",
         "text": "经常晚上找我玩游戏",
-        "origin": "derived",
         "source_memory_ids": [row["memory_id"] for row in original],
     }
     await leave_latest_batch_pending(runtime)
@@ -662,6 +751,7 @@ async def test_derived_habit_preserves_independent_sources_and_events(runtime):
     assert await extract(runtime, new, [atom(new)])
     latest = (await rows(runtime))[-1]
     proposal["source_memory_ids"] = [habit["memory_id"], latest["memory_id"]]
+    proposal["memory_id"] = habit["memory_id"]
     proposal["text"] = "持续在晚上找我玩游戏"
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [proposal]})
@@ -683,11 +773,9 @@ async def test_consolidation_recalls_reviewed_habit_and_keeps_unrecalled_provena
     sources = await rows(runtime)
     proposal = {
         "kind": "habit",
-        "subject_id": "user",
-        "object_id": "self",
+        "associated_user_ids": ["user"],
         "topic": "evening_games",
         "text": "我留意到 user 经常晚上找我玩游戏",
-        "origin": "derived",
         "source_memory_ids": [row["memory_id"] for row in sources],
     }
     await leave_latest_batch_pending(runtime)
@@ -795,10 +883,9 @@ async def test_summary_rejects_legacy_sources_without_advancing_progress(runtime
         [
             {
                 "kind": "habit",
-                "subject_id": "user",
+                "associated_user_ids": ["user"],
                 "topic": "evening_games",
                 "text": "我留意到 user 每天晚上玩游戏",
-                "origin": "derived",
                 "source_memory_ids": [f"legacy-{index}" for index in range(3)],
             }
         ],
@@ -812,7 +899,11 @@ async def test_summary_rejects_legacy_sources_without_advancing_progress(runtime
 
 @pytest.mark.asyncio
 async def test_repeated_source_summaries_cannot_establish_habit(runtime):
-    msg = await message(runtime, "今天晚上来玩游戏")
+    msg = await message(
+        runtime,
+        "今天晚上来玩游戏[图片:first][图片:second][图片:third]",
+        media_ids=["first", "second", "third"],
+    )
     assert await extract(
         runtime,
         msg,
@@ -820,6 +911,7 @@ async def test_repeated_source_summaries_cannot_establish_habit(runtime):
             atom(msg, topic=f"game_{index}", text=f"同一来源玩游戏摘要{index}")
             for index in range(3)
         ],
+        media={media_id: {"caption": "游戏截图"} for media_id in msg.media_id_list},
     )
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     latest = await message(runtime, "今天晚上再来玩游戏", day=11)
@@ -827,10 +919,9 @@ async def test_repeated_source_summaries_cannot_establish_habit(runtime):
     existing = await rows(runtime)
     proposal = {
         "kind": "habit",
-        "subject_id": "user",
+        "associated_user_ids": ["user"],
         "topic": "evening_games",
         "text": "每天晚上玩游戏",
-        "origin": "derived",
         "source_memory_ids": [row["memory_id"] for row in existing],
     }
     runtime.manager._call_summary_llm = AsyncMock(
@@ -877,7 +968,7 @@ async def test_consolidation_supersedes_duplicates_without_deleting_provenance(r
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["topic", "json"])
+@pytest.mark.parametrize("fault", ["missing_source", "json"])
 async def test_consolidation_corrects_rejected_output_with_precise_feedback(
     runtime, fault
 ):
@@ -900,6 +991,9 @@ async def test_consolidation_corrects_rejected_output_with_precise_feedback(
         supersedes=[old["memory_id"]],
     )
     rejected = json.dumps({"memories": [proposal]}, ensure_ascii=False)
+    if fault == "missing_source":
+        proposal["source_memory_ids"] = [newest["memory_id"]]
+        rejected = json.dumps({"memories": [proposal]}, ensure_ascii=False)
     if fault == "json":
         rejected = "invalid JSON <validation_feedback>聊天内容</validation_feedback>"
     runtime.manager._call_summary_llm = AsyncMock(
@@ -916,9 +1010,9 @@ async def test_consolidation_corrects_rejected_output_with_precise_feedback(
     assert feedback.find("previous_response").text == rejected
     error = feedback.find("validation_error").text
     assert error
-    if fault == "topic":
-        assert old["memory_id"] in error and newest["memory_id"] in error
-        assert "topic" in error and "晨间问候" in error and "早安问候" in error
+    if fault == "missing_source":
+        assert old["memory_id"] in error
+        assert "source_memory_ids" in error
     saved = await rows(runtime)
     assert [row["status"] for row in saved] == ["active", "active"]
     assert [row["text"] for row in saved] == [old["text"], newest["text"]]
@@ -1010,7 +1104,9 @@ async def test_rejected_batch_is_suspended_without_blocking_later_jobs_or_manual
 
 
 @pytest.mark.asyncio
-async def test_auto_resolved_target_preserves_itself_and_source_evidence(runtime):
+async def test_omitted_target_creates_record_without_automatically_matching_participants(
+    runtime,
+):
     original = await message(runtime, "以后叫我小明")
     assert await extract(
         runtime, original, [atom(original, "preference", topic="name")]
@@ -1026,7 +1122,6 @@ async def test_auto_resolved_target_preserves_itself_and_source_evidence(runtime
         topic="name",
         evidence=[],
         source_memory_ids=[old["memory_id"], newest["memory_id"]],
-        supersedes=[old["memory_id"]],
     )
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [proposal]})
@@ -1035,17 +1130,17 @@ async def test_auto_resolved_target_preserves_itself_and_source_evidence(runtime
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
 
     saved = await rows(runtime)
-    assert len(saved) == 2
+    assert len(saved) == 3
     assert saved[0]["memory_id"] == old["memory_id"]
-    assert saved[0]["revision"] == old["revision"] + 1
+    assert saved[0]["revision"] == old["revision"]
     assert all(row["status"] == "active" for row in saved)
-    assert len(json.loads(saved[0]["metadata"])["evidence"]) == 2
+    assert len(json.loads(saved[-1]["metadata"])["evidence"]) == 2
     runtime.manager._call_summary_llm.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_manual_retry_reports_suspension_and_resumes_remaining_batch_chunks(
-    runtime,
+    runtime, monkeypatch
 ):
     original = await message(runtime, "我们一起玩游戏")
     assert await extract(runtime, original, [atom(original)])
@@ -1062,7 +1157,7 @@ async def test_manual_retry_reports_suspension_and_resumes_remaining_batch_chunk
     new = (await rows(runtime))[1:]
     repo = runtime.db.memory_maintenance_repo
     job = await repo.pending_consolidation("bot", "group")
-    runtime.plugin.conf["memory_config"]["memory_consolidation_batch_size"] = 1
+    monkeypatch.setattr("core.memory.maintenance.MEMORY_CONSOLIDATION_BATCH_SIZE", 1)
     proposal = atom(
         latest,
         memory_id=new[0]["memory_id"],
@@ -1096,24 +1191,25 @@ async def test_manual_retry_reports_suspension_and_resumes_remaining_batch_chunk
 
 @pytest.mark.parametrize(
     "fault",
-    ["subject_id", "object_id", "topic", "missing_id", "self_id", "repeated_id"],
+    ["kind", "closed", "missing_source", "missing_id", "self_id", "repeated_id"],
 )
-def test_supersession_rejections_identify_records_and_field_conflicts(fault):
+def test_supersession_rejections_identify_invalid_records(fault):
     from core.memory.atomic import MemoryChanges, validate_memory_changes
 
-    identity = {"subject_id": "user", "object_id": "self", "topic": "game"}
-    other_identity = dict(identity)
-    if fault in identity:
-        other_identity[fault] = "different"
+    identity = {"associated_user_ids": ["user"], "topic": "game"}
     existing = [
         {
             "memory_id": memory_id,
-            "kind": "event",
-            "status": "active",
+            "kind": "preference"
+            if memory_id == "retire" and fault == "kind"
+            else "event",
+            "status": "completed"
+            if memory_id == "retire" and fault == "closed"
+            else "active",
             "text": "示例记忆",
-            "metadata": json.dumps({"schema_version": 2, **fields}),
+            "metadata": json.dumps({"schema_version": 2, **identity}),
         }
-        for memory_id, fields in [("keep", identity), ("retire", other_identity)]
+        for memory_id in ("keep", "retire")
     ]
     ref = (
         "missing"
@@ -1127,13 +1223,14 @@ def test_supersession_rejections_identify_records_and_field_conflicts(fault):
         "kind": "event",
         **identity,
         "text": "我记得 user 和我一起玩游戏",
-        "source_memory_ids": ["keep"],
+        "source_memory_ids": ["keep"]
+        if fault == "missing_source"
+        else ["keep", "retire"],
         "supersedes": [ref],
     }
     changes = [proposal]
     if fault == "repeated_id":
         changes.append({**proposal, "memory_id": ""})
-
     with pytest.raises(ValueError) as error:
         validate_memory_changes(
             MemoryChanges.model_validate({"memories": changes}),
@@ -1143,11 +1240,7 @@ def test_supersession_rejections_identify_records_and_field_conflicts(fault):
             "self",
             consolidating=True,
         )
-
     assert ref in str(error.value)
-    if fault in identity:
-        assert "keep" in str(error.value)
-        assert fault in str(error.value) and "different" in str(error.value)
 
 
 @pytest.mark.asyncio
@@ -1250,8 +1343,10 @@ async def test_vector_failure_does_not_lose_memory_and_index_can_retry(runtime):
 
 
 @pytest.mark.asyncio
-async def test_bounded_batches_report_real_committed_source_range(runtime):
-    runtime.plugin.conf["memory_config"]["memory_summary_batch_size"] = 2
+async def test_bounded_batches_report_real_committed_source_range(runtime, monkeypatch):
+    monkeypatch.setattr("core.memory.passive_tasks.MEMORY_SUMMARY_BATCH_SIZE", 2)
+    # Removed configuration keys must not override the internal batch limits.
+    runtime.plugin.conf["memory_config"]["memory_summary_batch_size"] = 1
     for day in (10, 11, 12):
         await message(runtime, f"第{day}天有新的对话", day=day)
     assert "到 2" in await runtime.manager.force_trigger_passive_memory(
@@ -1332,26 +1427,30 @@ async def test_manual_memory_save_read_and_delete_work_without_embeddings(runtim
 
 
 @pytest.mark.asyncio
-async def test_existing_memory_migration_preserves_text_and_index_state(tmp_path):
-    async with aiosqlite.connect(tmp_path / "old.db") as conn:
+async def test_memory_table_initialization_has_current_fields_and_preserves_index_state(
+    tmp_path,
+):
+    async with aiosqlite.connect(tmp_path / "memory.db") as conn:
         conn.row_factory = aiosqlite.Row
+        await initialize_database(conn)
         await conn.execute(
-            "CREATE TABLE memories (id INTEGER PRIMARY KEY, bot_name TEXT, group_or_user_id TEXT, "
-            "memory_id TEXT, text TEXT, vector BLOB, metadata TEXT, created_at DATETIME, updated_at DATETIME)"
-        )
-        await conn.execute(
-            "INSERT INTO memories VALUES (1, 'bot', 'group', 'old', '旧记忆', X'01', '{}', '2020-01-01', '2020-01-01')"
+            "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, vector) "
+            "VALUES ('bot', 'group', 'saved', '已有记忆', X'01')"
         )
         await conn.commit()
         await initialize_database(conn)
-        await initialize_database(conn)
         async with conn.execute("SELECT * FROM memories") as cursor:
             saved = await cursor.fetchone()
-        assert saved["text"] == "旧记忆"
+        assert saved["text"] == "已有记忆"
         assert saved["kind"] == "event"
         assert saved["status"] == "active"
-        assert saved["indexed_revision"] == 1
+        assert saved["expires_at"] is None
+        assert saved["revision"] == 1
+        assert saved["indexed_revision"] == 0
         assert saved["reviewed_revision"] == 0
+        async with conn.execute("PRAGMA index_list(memories)") as cursor:
+            indexes = {row["name"] for row in await cursor.fetchall()}
+        assert "idx_memory_maintenance" in indexes
 
 
 @pytest.mark.asyncio
@@ -1423,8 +1522,11 @@ async def test_cross_bot_source_cannot_be_committed_to_another_partition(runtime
 
 
 @pytest.mark.asyncio
-async def test_consolidation_batches_exclude_all_siblings_and_have_no_interval(runtime):
-    runtime.plugin.conf["memory_config"]["memory_consolidation_batch_size"] = 10
+async def test_consolidation_batches_exclude_all_siblings_and_have_no_interval(
+    runtime, monkeypatch
+):
+    monkeypatch.setattr("core.memory.maintenance.MEMORY_CONSOLIDATION_BATCH_SIZE", 10)
+    runtime.plugin.conf["memory_config"]["memory_consolidation_batch_size"] = 1
     msg = await message(runtime, "这是同一批中的一些独立事件")
     assert await extract(
         runtime,
@@ -1640,7 +1742,6 @@ async def test_partial_agreement_update_preserves_identity_deadline_and_importan
         evidence=[],
         source_memory_ids=[before["memory_id"], newest["memory_id"]],
     )
-    update.pop("object_id")
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [update]})
     )
@@ -1649,7 +1750,7 @@ async def test_partial_agreement_update_preserves_identity_deadline_and_importan
     assert after["status"] == "completed"
     assert after["importance"] == 9
     assert after["expires_at"] == before["expires_at"]
-    assert json.loads(after["metadata"])["object_id"] == "self"
+    assert json.loads(after["metadata"])["associated_user_ids"] == ["user"]
 
 
 @pytest.mark.asyncio
@@ -1662,20 +1763,14 @@ async def test_same_day_directed_emoji_habit_from_group_events(runtime):
             '<quote sender_id="B" message_id="old">B的旧消息</quote>[图片:smirk]',
             user_id="A",
             hour=hour,
+            media_ids=["smirk"],
         )
-        msg.media_id_list = ["smirk"]
-        await runtime.db.conn.execute(
-            "UPDATE chat_history SET media_ids=? WHERE id=?",
-            (json.dumps(["smirk"]), msg.db_id),
-        )
-        await runtime.db.conn.commit()
         item = {
             "kind": "event",
-            "subject_id": "A",
-            "object_id": "B",
+            "associated_user_ids": ["A", "B"],
             "topic": "smirk_teasing",
             "text": "A回复B时用坏笑表情开玩笑",
-            "evidence": [{"source_id": msg.db_id, "media_id": "smirk"}],
+            "evidence": [{"source_id": msg.db_id}],
         }
         runtime.manager._call_summary_llm = AsyncMock(
             return_value=json.dumps({"memories": [item]})
@@ -1698,11 +1793,9 @@ async def test_same_day_directed_emoji_habit_from_group_events(runtime):
     original = await rows(runtime)
     proposal = {
         "kind": "habit",
-        "subject_id": "A",
-        "object_id": "B",
+        "associated_user_ids": ["A", "B"],
         "topic": "smirk_teasing",
         "text": "近期A在本群经常用坏笑表情调侃B",
-        "origin": "derived",
         "source_memory_ids": [row["memory_id"] for row in original],
     }
     await leave_latest_batch_pending(runtime)
@@ -1716,38 +1809,28 @@ async def test_same_day_directed_emoji_habit_from_group_events(runtime):
         row["kind"] == "event" and row["status"] == "active" for row in stored[:3]
     )
     habit = json.loads(stored[-1]["metadata"])
-    assert habit["origin"] == "derived"
-    assert habit["subject_id"] == "A"
-    assert habit["object_id"] == "B"
+    assert not {"subject_id", "object_id", "origin"} & habit.keys()
     assert habit["associated_user_ids"] == ["A", "B"]
     assert {ref["user_id"] for ref in habit["evidence"]} == {"A"}
-    assert {ref["media_id"] for ref in habit["evidence"]} == {"smirk"}
+    assert {tuple(ref["media_ids"]) for ref in habit["evidence"]} == {("smirk",)}
     assert habit["observed_from"] == "2020-01-10T00:00:00+00:00"
     assert habit["observed_until"] == "2020-01-10T12:00:00+00:00"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mismatch", ["actor", "target"])
-async def test_directed_habit_rejects_mixed_actors_or_targets(runtime, mismatch):
-    for index, hour in enumerate((8, 14, 20)):
-        actor = "other" if mismatch == "actor" and index == 2 else "user"
-        target = "C" if mismatch == "target" and index == 2 else "B"
-        msg = await message(
-            runtime, f"@群友({target}) 嘿嘿，第{index}次互动", user_id=actor, hour=hour
-        )
+@pytest.mark.parametrize("source_kind", ["preference", "relationship", "agreement"])
+async def test_habit_inference_rejects_nonbehavioral_sources(runtime, source_kind):
+    for day in (10, 11, 12):
+        msg = await message(runtime, "我和@群友(B)聊过游戏", day=day)
         assert await extract(
-            runtime,
-            msg,
-            [atom(msg, subject_id=actor, object_id=target, topic="teasing")],
+            runtime, msg, [atom(msg, source_kind, associated_user_ids=["user", "B"])]
         )
     original = await rows(runtime)
     proposal = {
         "kind": "habit",
-        "subject_id": "user",
-        "object_id": "B",
-        "topic": "teasing",
-        "text": "经常调侃B",
-        "origin": "derived",
+        "associated_user_ids": ["user", "B"],
+        "topic": "game",
+        "text": "我观察到 user 经常和 B 玩游戏",
         "source_memory_ids": [row["memory_id"] for row in original],
     }
     await leave_latest_batch_pending(runtime)
@@ -1763,26 +1846,35 @@ async def test_directed_habit_rejects_mixed_actors_or_targets(runtime, mismatch)
 
 
 @pytest.mark.asyncio
-async def test_self_reported_habit_preserves_observed_origin_during_cleanup(runtime):
+async def test_self_reported_habit_keeps_narrative_and_evidence_during_cleanup(runtime):
     msg = await message(runtime, "我平时经常和@小B(B)互发表情开玩笑")
     assert await extract(
-        runtime, msg, [atom(msg, "habit", object_id="B", topic="emoji_teasing")]
+        runtime,
+        msg,
+        [atom(msg, "habit", associated_user_ids=["user", "B"], topic="emoji_teasing")],
     )
     original = (await rows(runtime))[0]
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     latest = await message(runtime, "我平时还是经常和@小B(B)互发表情开玩笑", day=11)
     assert await extract(
-        runtime, latest, [atom(latest, "habit", object_id="B", topic="emoji_teasing")]
+        runtime,
+        latest,
+        [
+            atom(
+                latest,
+                "habit",
+                associated_user_ids=["user", "B"],
+                topic="emoji_teasing",
+            )
+        ],
     )
     newest = (await rows(runtime))[-1]
     proposal = {
         "kind": "habit",
-        "subject_id": "user",
-        "object_id": "B",
+        "associated_user_ids": ["user", "B"],
         "topic": "emoji_teasing",
         "memory_id": original["memory_id"],
         "text": "本人自述经常与B互发表情开玩笑",
-        "origin": "derived",
         "source_memory_ids": [original["memory_id"], newest["memory_id"]],
         "supersedes": [newest["memory_id"]],
     }
@@ -1792,7 +1884,8 @@ async def test_self_reported_habit_preserves_observed_origin_during_cleanup(runt
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     current = await rows(runtime)
     assert len(current) == 2 and current[1]["status"] == "superseded"
-    assert json.loads(current[0]["metadata"])["origin"] == "observed"
+    assert current[0]["text"] == "本人自述经常与B互发表情开玩笑"
+    assert "origin" not in json.loads(current[0]["metadata"])
     assert len(json.loads(current[0]["metadata"])["evidence"]) == 2
 
 
@@ -1808,10 +1901,18 @@ def test_interaction_target_metadata_excludes_nested_quoted_mentions():
 
 
 @pytest.mark.asyncio
-async def test_target_identity_does_not_establish_targets_personal_traits(runtime):
-    msg = await message(runtime, "@小B(B) 我猜你喜欢这个表情", user_id="A")
-    assert not await extract(runtime, msg, [atom(msg, "preference", subject_id="B")])
-    assert await rows(runtime) == []
+async def test_multiple_participants_keep_their_roles_in_the_narrative(runtime):
+    msg = await message(runtime, "@小B(B)邀请@小C(C)参加活动，我负责记录", user_id="A")
+    text = "我看到 B 邀请 C 参加活动，A 负责记录"
+    assert await extract(
+        runtime, msg, [atom(msg, text=text, associated_user_ids=["A", "B", "C"])]
+    )
+    saved = (await rows(runtime))[0]
+    metadata = json.loads(saved["metadata"])
+    assert saved["text"] == text
+    assert metadata["associated_user_ids"] == ["A", "B", "C"]
+    assert metadata["evidence"][0]["quote"] == msg.content
+    assert not {"subject_id", "object_id", "origin"} & metadata.keys()
 
 
 @pytest.mark.asyncio
@@ -2028,10 +2129,9 @@ async def test_cleaned_source_history_still_supports_habit_consolidation(runtime
                 "memories": [
                     {
                         "kind": "habit",
-                        "subject_id": "user",
+                        "associated_user_ids": ["user"],
                         "topic": "evening_games",
                         "text": "近期常在晚上找我玩游戏",
-                        "origin": "derived",
                         "source_memory_ids": [row["memory_id"] for row in original],
                     }
                 ]
@@ -2119,8 +2219,10 @@ async def test_wakeup_after_failed_forced_summary_cannot_release_pending_history
 
 
 @pytest.mark.asyncio
-async def test_wakeup_preserves_unfinished_summary_backlog_during_cleanup(runtime):
-    runtime.plugin.conf["memory_config"]["memory_summary_batch_size"] = 1
+async def test_wakeup_preserves_unfinished_summary_backlog_during_cleanup(
+    runtime, monkeypatch
+):
+    monkeypatch.setattr("core.memory.passive_tasks.MEMORY_SUMMARY_BATCH_SIZE", 1)
     original = [
         await message(runtime, f"积压消息 {index}", day=10 + index)
         for index in range(3)
@@ -2220,7 +2322,18 @@ async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
 
     msg = await message(runtime, source)
     assert await extract(
-        runtime, msg, [atom(msg, kind, text=narrative, object_id=target)]
+        runtime,
+        msg,
+        [
+            atom(
+                msg,
+                kind,
+                text=narrative,
+                associated_user_ids=[
+                    uid for uid in ("user", target) if uid and uid != "self"
+                ],
+            )
+        ],
     )
     _, system_prompt, user_prompt = runtime.manager._call_summary_llm.call_args.args
     assert system_prompt.startswith("你是 Giftia（ID：self）。\n")
@@ -2232,11 +2345,12 @@ async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
     saved = (await rows(runtime))[0]
     metadata = json.loads(saved["metadata"])
     assert saved["text"] == narrative
-    assert metadata["subject_id"] == "user"
-    assert metadata["object_id"] == target
+    assert metadata["associated_user_ids"] == sorted(
+        uid for uid in ("user", target) if uid and uid != "self"
+    )
     assert metadata["evidence"][0]["quote"] == source
     assert metadata["evidence"][0]["user_id"] == "user"
-    assert metadata["origin"] == "observed"
+    assert not {"subject_id", "object_id", "origin"} & metadata.keys()
     injected = fromstring(
         "<context>"
         + build_reply_prompt(
@@ -2273,18 +2387,36 @@ async def test_consolidation_can_rephrase_old_text_without_changing_memory_ident
 ):
     runtime.plugin.bot_map["bot"]["nickname"] = "流萤"
     msg = await message(runtime, source)
-    assert await extract(runtime, msg, [atom(msg, text=old_text, object_id=target)])
+    assert await extract(
+        runtime,
+        msg,
+        [
+            atom(
+                msg,
+                text=old_text,
+                associated_user_ids=[uid for uid in ("user", target) if uid != "self"],
+            )
+        ],
+    )
     before = (await rows(runtime))[0]
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     latest = await message(runtime, source, day=11)
     assert await extract(
-        runtime, latest, [atom(latest, text=old_text, object_id=target)]
+        runtime,
+        latest,
+        [
+            atom(
+                latest,
+                text=old_text,
+                associated_user_ids=[uid for uid in ("user", target) if uid != "self"],
+            )
+        ],
     )
     proposal = atom(
         msg,
         memory_id=before["memory_id"],
         text=new_text,
-        object_id=target,
+        associated_user_ids=[uid for uid in ("user", target) if uid != "self"],
         evidence=[],
         source_memory_ids=[before["memory_id"]],
     )
@@ -2306,8 +2438,6 @@ async def test_consolidation_can_rephrase_old_text_without_changing_memory_ident
     assert after["revision"] == before["revision"] + 1
     old_meta, new_meta = json.loads(before["metadata"]), json.loads(after["metadata"])
     for field in [
-        "subject_id",
-        "object_id",
         "topic",
         "associated_user_ids",
         "evidence",
@@ -2348,7 +2478,14 @@ async def test_shared_legacy_match_is_updated_once_only_after_new_additions(runt
     await runtime.db.conn.execute(
         "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata, created_at) "
         "VALUES ('bot', 'group', 'legacy-tea', 'user 喜欢绿茶', ?, '2019-01-01')",
-        (json.dumps({"user_id": "user", "old_note": "preserved"}),),
+        (
+            json.dumps(
+                {
+                    "user_id": "user",
+                    "old_note": "preserved",
+                }
+            ),
+        ),
     )
     await runtime.db.conn.commit()
     await runtime.manager.maintain_memories()
@@ -2372,7 +2509,7 @@ async def test_shared_legacy_match_is_updated_once_only_after_new_additions(runt
     proposal = {
         "memory_id": "legacy-tea",
         "kind": "preference",
-        "subject_id": "user",
+        "associated_user_ids": ["user"],
         "topic": "tea",
         "text": "我记得 user 喜欢喝绿茶",
         "source_memory_ids": ["legacy-tea", *[row["memory_id"] for row in new]],
@@ -2391,6 +2528,7 @@ async def test_shared_legacy_match_is_updated_once_only_after_new_additions(runt
     assert saved[0]["revision"] == 2 and saved[0]["created_at"] == "2019-01-01"
     metadata = json.loads(saved[0]["metadata"])
     assert metadata["schema_version"] == 2 and metadata["old_note"] == "preserved"
+    assert not {"subject_id", "object_id", "origin"} & metadata.keys()
     assert len(metadata["evidence"]) == 1
     assert (
         await runtime.db.memory_maintenance_repo.pending_consolidation("bot", "group")

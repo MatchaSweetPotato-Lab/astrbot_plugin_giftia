@@ -6,13 +6,13 @@ import aiosqlite
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI, Request
-
-from astrbot.api.web import PluginRequest, bind_request_context
 from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
 from core.web.memory_api import MemoryApi
+from fastapi import FastAPI, Request
+
+from astrbot.api.web import PluginRequest, bind_request_context
 
 
 @pytest_asyncio.fixture
@@ -71,9 +71,7 @@ async def seed_memory(plugin, memory_id, **fields):
         "metadata": json.dumps(
             {
                 "schema_version": 2,
-                "subject_id": "1",
                 "associated_user_ids": ["1"],
-                "origin": "observed",
                 "topic": "game",
                 "evidence": [
                     {
@@ -109,15 +107,13 @@ async def test_atomic_filters_counts_and_effective_expiration(memory_api):
         plugin,
         "habit",
         kind="habit",
-        metadata=json.dumps({"origin": "derived", "subject_id": "1"}),
+        metadata=json.dumps({"associated_user_ids": ["1"]}),
     )
     await seed_memory(plugin, "legacy", metadata="{malformed")
     await seed_memory(
         plugin,
         "other",
-        metadata=json.dumps(
-            {"subject_id": "11", "associated_user_ids": ["11"], "text": "1"}
-        ),
+        metadata=json.dumps({"associated_user_ids": ["11"], "text": "1"}),
     )
     params = {
         "bot_name": "bot",
@@ -147,10 +143,8 @@ async def test_atomic_filters_counts_and_effective_expiration(memory_api):
     assert (
         await client.get("/memories", params={"kind": "habit' OR 1=1"})
     ).status_code == 400
-    derived = (await client.get("/memories", params={"origin": "derived"})).json()[
-        "data"
-    ]
-    assert [item["memory_id"] for item in derived["items"]] == ["habit"]
+    habits = (await client.get("/memories", params={"kind": "habit"})).json()["data"]
+    assert [item["memory_id"] for item in habits["items"]] == ["habit"]
     clean = (
         await client.post(
             "/memories/clean/candidates",
@@ -184,42 +178,34 @@ async def test_memory_names_are_scoped_to_selected_session(memory_api):
 
 
 @pytest.mark.asyncio
-async def test_manual_atom_keeps_explicit_origin_without_forged_evidence(memory_api):
+async def test_manual_memory_supports_multiple_participants_without_forged_evidence(
+    memory_api,
+):
     client, plugin = memory_api
     body = {
         "bot_name": "bot",
         "group_or_user_id": "group",
         "kind": "habit",
-        "subject_id": "A",
-        "object_id": "B",
         "topic": "emoji",
         "text": "A 最近常用某个表情与 B 互动",
-        "associated_user_ids": "C",
+        "associated_user_ids": "A,B,C",
         "evidence": [{"source_id": 9999, "quote": "forged"}],
         "origin": "derived",
     }
     result = (await client.post("/memories/add", json=body)).json()
     assert result["status"] == "success"
-    item = (
-        await client.get("/memories", params={"origin": "manual", "kind": "habit"})
-    ).json()["data"]["items"][0]
+    item = (await client.get("/memories", params={"kind": "habit"})).json()["data"][
+        "items"
+    ][0]
     assert item["metadata"]["evidence"] == []
     assert item["metadata"]["manual_entry"] is True
-    assert item["metadata"]["origin"] == "observed"
+    assert not {"subject_id", "object_id", "origin"} & item["metadata"].keys()
     assert item["metadata"]["associated_user_ids"] == ["A", "B", "C"]
-    assert item["metadata"]["subject_id"] == "A"
-    assert item["metadata"]["object_id"] == "B"
     plugin.passive_memory_manager._sync_memory_vectors.assert_awaited_once_with(
         "bot", "group"
     )
-    derived = (await client.get("/memories", params={"origin": "derived"})).json()[
-        "data"
-    ]
-    assert derived["total"] == 0
     assert (
-        await client.post(
-            "/memories/add", json={**body, "kind": "relationship", "object_id": ""}
-        )
+        await client.post("/memories/add", json={**body, "associated_user_ids": []})
     ).status_code == 400
     assert (
         await client.post("/memories/add", json={**body, "expires_at": "2999-01-01"})
@@ -251,8 +237,8 @@ async def test_agreement_edit_preserves_provenance_and_checks_revision(memory_ap
     assert after["status"] == "completed"
     assert after["created_at"] == item["created_at"]
     assert after["metadata"]["evidence"] == item["metadata"]["evidence"]
-    assert after["metadata"]["subject_id"] == "1"
-    assert after["metadata"]["associated_user_ids"] == ["1", "B"]
+    assert not {"subject_id", "object_id", "origin"} & after["metadata"].keys()
+    assert after["metadata"]["associated_user_ids"] == ["B"]
     assert after["metadata"]["manually_edited"] is True
     assert after["revision"] == item["revision"] + 1
     assert await plugin.data_cache.get_memories("bot", "group") == []
@@ -300,14 +286,24 @@ async def test_expiry_edits_are_validated_and_historical_rows_stay_closed(memory
 @pytest.mark.asyncio
 async def test_scoped_delete_rejects_another_conversation(memory_api):
     client, plugin = memory_api
-    await seed_memory(plugin, 'event')
-    result = await client.post('/memories/delete', json={
-        'memory_id': 'event', 'bot_name': 'bot', 'group_or_user_id': 'other',
-    })
+    await seed_memory(plugin, "event")
+    result = await client.post(
+        "/memories/delete",
+        json={
+            "memory_id": "event",
+            "bot_name": "bot",
+            "group_or_user_id": "other",
+        },
+    )
     assert result.status_code == 400
-    assert (await client.get('/memories')).json()['data']['total'] == 1
-    result = await client.post('/memories/delete', json={
-        'memory_id': 'event', 'bot_name': 'bot', 'group_or_user_id': 'group',
-    })
-    assert result.json()['status'] == 'success'
-    assert (await client.get('/memories')).json()['data']['total'] == 0
+    assert (await client.get("/memories")).json()["data"]["total"] == 1
+    result = await client.post(
+        "/memories/delete",
+        json={
+            "memory_id": "event",
+            "bot_name": "bot",
+            "group_or_user_id": "group",
+        },
+    )
+    assert result.json()["status"] == "success"
+    assert (await client.get("/memories")).json()["data"]["total"] == 0

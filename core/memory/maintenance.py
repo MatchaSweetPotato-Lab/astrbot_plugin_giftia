@@ -17,6 +17,8 @@ from ..llm.json_parse import parse_markdown_json
 from ..llm.preset_prompts import DEFAULT_MEMORY_CONSOLIDATION_PROMPT
 from .atomic import DirectSpeech, MemoryChanges, memory_input, validate_memory_changes
 
+MEMORY_CONSOLIDATION_BATCH_SIZE = 60
+
 
 class MemoryMaintenanceMixin:
     def _memory_user_prompt(
@@ -80,14 +82,22 @@ class MemoryMaintenanceMixin:
                     item, ensure_ascii=False
                 )
         captions = SubElement(root, "available_media")
-        for media_id, caption in media.items():
-            SubElement(captions, "media", {"id": media_id}).text = json.dumps(
-                caption, ensure_ascii=False
-            )
+        rendered_media = set()
         history = SubElement(root, "new_messages")
         for msg in messages:
             speech = DirectSpeech(msg.content or "")
             direct = "".join(speech.parts)
+            media_ids = [
+                media_id
+                for media_id in dict.fromkeys(msg.media_id_list or [])
+                if media_id in speech.media_ids
+            ]
+            for media_id in media_ids:
+                if media_id in media and media_id not in rendered_media:
+                    SubElement(captions, "media", {"id": media_id}).text = json.dumps(
+                        media[media_id], ensure_ascii=False
+                    )
+                    rendered_media.add(media_id)
             allowed = (
                 not msg.is_recalled
                 and msg.role != "operation_log"
@@ -106,7 +116,7 @@ class MemoryMaintenanceMixin:
                     "sender_is_bot": str(str(msg.user_id) == self_id).lower(),
                     "mentioned_user_ids": json.dumps(speech.mentioned_user_ids),
                     "reply_user_ids": json.dumps(speech.reply_user_ids),
-                    "media_ids": json.dumps(msg.media_id_list or []),
+                    "media_ids": json.dumps(media_ids),
                 },
             ).text = direct
         indent(root, space="  ")
@@ -310,9 +320,7 @@ class MemoryMaintenanceMixin:
         self_id = str(batch.get("self_id") or self_id)
         if batch["history_end"]:
             await self._sync_memory_vectors(bot_name, session_id)
-        config = self.plugin.conf.get("memory_config", {})
-        limit = max(1, min(200, int(config.get("memory_consolidation_batch_size", 60))))
-        pending = set(batch["pending_ids"][:limit])
+        pending = set(batch["pending_ids"][:MEMORY_CONSOLIDATION_BATCH_SIZE])
         placeholders = ",".join("?" for _ in pending)
         async with self.plugin.db.conn.execute(
             "SELECT * FROM memories WHERE bot_name=? AND group_or_user_id=? "

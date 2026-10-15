@@ -85,25 +85,10 @@ class MemoryApi:
         if user_id:
             conditions.append(
                 f"(CAST(json_extract({metadata}, '$.user_id') AS TEXT)=? "
-                f"OR CAST(json_extract({metadata}, '$.subject_id') AS TEXT)=? "
-                f"OR CAST(json_extract({metadata}, '$.object_id') AS TEXT)=? "
                 f"OR EXISTS (SELECT 1 FROM json_each({metadata}, '$.associated_user_ids') "
                 "WHERE CAST(value AS TEXT)=?))"
             )
-            params.extend([user_id] * 4)
-        origin = str(values.get("origin") or "").strip()
-        manual = f"COALESCE(json_extract({metadata}, '$.manual_entry'), 0)"
-        if origin == "manual":
-            conditions.append(f"{manual}=1")
-        elif origin in {"observed", "derived"}:
-            conditions.append(f"{manual}=0 AND json_extract({metadata}, '$.origin')=?")
-            params.append(origin)
-        elif origin == "legacy":
-            conditions.append(
-                f"{manual}=0 AND json_extract({metadata}, '$.origin') IS NULL"
-            )
-        elif origin:
-            raise ValueError("不支持的记忆来源")
+            params.extend([user_id] * 2)
         search = str(values.get("search") or "").strip()
         if search:
             conditions.append("text LIKE ?")
@@ -236,10 +221,6 @@ class MemoryApi:
                         for auid in associated:
                             if auid:
                                 user_ids.add(str(auid))
-                    for key in ("subject_id", "object_id"):
-                        if meta.get(key):
-                            user_ids.add(str(meta[key]))
-
                 if user_ids:
                     placeholders = ",".join(["?"] * len(user_ids))
                     sql = f"""
@@ -357,18 +338,12 @@ class MemoryApi:
                 ]
             item = MemoryChange(
                 kind=body.get("kind", "event"),
-                subject_id=body.get("subject_id") or body.get("user_id") or "admin",
-                object_id=body.get("object_id") or "",
                 topic=body.get("topic") or "人工记录",
                 text=body.get("text"),
                 associated_user_ids=associated,
                 importance=normalize_memory_importance(body.get("importance"), 5),
                 expires_at=body.get("expires_at") or "",
             )
-            if item.kind == "relationship" and (
-                not item.object_id or item.object_id == item.subject_id
-            ):
-                return error_response("关系记忆需要两个不同的用户账号")
             if item.expires_at:
                 if item.kind != "agreement":
                     return error_response("只有约定可以设置到期时间")
@@ -378,8 +353,10 @@ class MemoryApi:
                     .isoformat()
                 )
             item.associated_user_ids = sorted(
-                {uid for uid in [item.subject_id, item.object_id, *associated] if uid}
+                {uid.strip() for uid in associated if uid.strip()}
             )
+            if not item.associated_user_ids:
+                return error_response("请填写关联群友账号")
             created_ids = await self.giftia.db.memory_maintenance_repo.apply_changes(
                 bot_name,
                 group_or_user_id,
@@ -458,12 +435,10 @@ class MemoryApi:
                     )
                 if effective_status != "active" and expires_at != old["expires_at"]:
                     return error_response("历史约定的到期时间不能修改")
-            for field in ("kind", "subject_id", "object_id", "topic"):
+            for field in ("kind", "topic"):
                 existing = old["kind"] if field == "kind" else metadata.get(field, "")
                 if field in body and body[field] != existing:
-                    return error_response(
-                        "类型、主体、对象和主题不能改写，请新增一条记忆"
-                    )
+                    return error_response("类型和主题不能改写，请新增一条记忆")
             associated = body.get("associated_user_ids")
             if isinstance(associated, str):
                 associated = [
@@ -475,16 +450,14 @@ class MemoryApi:
                 ):
                     return error_response("关联用户必须是账号列表")
                 metadata["associated_user_ids"] = sorted(
-                    {
-                        uid.strip()
-                        for uid in [
-                            *associated,
-                            metadata.get("subject_id", ""),
-                            metadata.get("object_id", ""),
-                        ]
-                        if uid.strip()
-                    }
+                    {uid.strip() for uid in associated if uid.strip()}
                 )
+                if (
+                    not metadata["associated_user_ids"]
+                    or len(metadata["associated_user_ids"]) > 20
+                ):
+                    return error_response("关联群友账号需为 1 到 20 个")
+                metadata["user_id"] = metadata["associated_user_ids"][0]
             importance = normalize_memory_importance(
                 body.get("importance"), old["importance"]
             )

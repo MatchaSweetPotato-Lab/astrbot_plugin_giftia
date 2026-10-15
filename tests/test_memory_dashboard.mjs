@@ -45,8 +45,7 @@ beforeEach(() => {
         getScopedFilterParams: () => ({
             bot_name: get('memory-bot-name').value,
             kind: get('memory-kind').value,
-            status: get('memory-status').value,
-            origin: get('memory-origin').value
+            status: get('memory-status').value
         }),
         resetPagination: () => {},
         refreshScopedFilters: async () => {},
@@ -60,14 +59,14 @@ test('memory cards use authoritative state and escape evidence and account IDs',
         memory_id: "id');throw Error('injection')", kind: 'habit', status: 'completed',
         text: '<img src=x onerror=alert(1)>',
         metadata: {
-            status: 'active', origin: 'derived', subject_id: "A' onclick='alert(1)", object_id: 'B',
+            status: 'active', associated_user_ids: ["A' onclick='alert(1)", 'B', 'C'],
             evidence: [{ source_id: 1, quote: '<script>attack</script>', user_id: 'A' }],
             observed_from: '2026-10-01', observed_until: '2026-10-12'
         }
     }]);
     const html = get('memory-list').innerHTML;
     assert.match(html, /已完成/);
-    assert.match(html, /整理归纳/);
+    assert.doesNotMatch(html, /主体|对象|整理归纳|本人自述/);
     assert.match(html, /观察时间/);
     assert.match(html, /&lt;script&gt;attack/);
     assert.match(html, /&lt;img/);
@@ -88,6 +87,20 @@ test('edits pass the exact atom object without executable inline arguments', () 
     } finally {
         window.openEditMemoryModal = original;
     }
+});
+
+test('evidence displays all attachments from one source message', () => {
+    renderMemories([{
+        kind: 'event', status: 'active', text: 'message evidence',
+        metadata: {
+            evidence: [
+                { source_id: 1, quote: 'whole message', media_ids: ['image-a', '<image-b>'] }
+            ]
+        }
+    }]);
+    const html = get('memory-list').innerHTML;
+    assert.match(html, /媒体 image-a、&lt;image-b&gt;/);
+    assert.doesNotMatch(html, /<image-b>/);
 });
 
 test('slower responses cannot replace the newly selected conversation', async () => {
@@ -126,20 +139,18 @@ test('historical agreement edits omit displayed expiration state and preserve pr
     assert.deepEqual(item.metadata.evidence, [{ quote: 'original' }]);
 });
 
-test('manual creation selects its saved type, scope and source even from historical filters', async () => {
+test('manual creation saves all participants and selects its type and scope from historical filters', async () => {
     get('memory-status').value = 'completed';
-    get('memory-origin').value = 'derived';
     window.openAddMemoryModal();
-    const values = { bot: 'new-bot', group: 'new-group', kind: 'habit', subject: 'A', object: 'B', topic: 'emoji', text: 'A often teases B' };
+    const values = { bot: 'new-bot', group: 'new-group', kind: 'habit', 'associated-ids': 'A,B,C', topic: 'emoji', text: 'A often teases B' };
     for (const [field, value] of Object.entries(values)) get(`add-mem-${field}`).value = value;
     let saved;
     window.apiPost = async (path, body) => { saved = body; return { status: 'success' }; };
     await window.submitAddMemory();
     assert.equal(saved.kind, 'habit');
-    assert.equal(saved.subject_id, 'A');
-    assert.equal(saved.object_id, 'B');
+    assert.equal(saved.associated_user_ids, 'A,B,C');
+    for (const field of ['subject_id', 'object_id', 'origin']) assert.equal(Object.hasOwn(saved, field), false);
     assert.equal(get('memory-status').value, 'active');
-    assert.equal(get('memory-origin').value, 'manual');
     assert.equal(get('memory-bot-name').value, 'new-bot');
     assert.equal(get('memory-group-id').value, 'new-group');
 });

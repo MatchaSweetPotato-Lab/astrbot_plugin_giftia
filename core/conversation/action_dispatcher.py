@@ -1017,23 +1017,6 @@ class ActionDispatcher:
 
         if is_aiocqhttp or is_qq_official:
             success_logs = list(common_logs)
-            # 1. 删除长期记忆
-            if llm_result.delete_memories and self.plugin.embedding_conf.get(
-                "enabled", False
-            ):
-                for memory_id in llm_result.delete_memories:
-                    result = await self.plugin.data_cache.delete_memory(
-                        memory_id=memory_id
-                    )
-                    if result:
-                        success_logs.append(
-                            f"<delete_memory memory_id={memory_id} result='success'/>"
-                        )
-                    else:
-                        success_logs.append(
-                            f"<delete_memory memory_id={memory_id} result='failed'/>"
-                        )
-
             # 8. 添加定时任务
             if llm_result.schedule_tasks:
                 for item in llm_result.schedule_tasks:

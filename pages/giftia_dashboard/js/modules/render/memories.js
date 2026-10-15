@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { MEMORY_KINDS, MEMORY_STATUSES, memoryOriginLabel } from '../memory_types.js';
+import { MEMORY_KINDS, MEMORY_STATUSES } from '../memory_types.js';
 
 let loadVersion = 0;
 
@@ -55,11 +55,9 @@ export function renderMemories(items, userIdToName = {}) {
         const meta = item.metadata || {};
         const userIds = [...new Set([
             ...(Array.isArray(meta.associated_user_ids) ? meta.associated_user_ids : []),
-            meta.subject_id, meta.object_id,
-            ...(!meta.associated_user_ids?.length && !meta.subject_id ? [meta.user_id] : [])
+            ...(!meta.associated_user_ids?.length ? [meta.user_id] : [])
         ].filter(Boolean).map(String))];
-        const subject = meta.subject_id;
-        const object = meta.object_id;
+        const notes = [meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : '', meta.topic].filter(Boolean);
         const participant = uid => escape(userIdToName[uid] || String(uid));
         const importance = Number(item.importance || 5);
         const importanceCategory = importance <= 3 ? 'low' : importance >= 8 ? 'high' : 'medium';
@@ -73,11 +71,7 @@ export function renderMemories(items, userIdToName = {}) {
                     <span class="memory-kind-badge">${escape(MEMORY_KINDS[item.kind] || '事件')}</span>
                     <span class="memory-status-badge memory-status-${knownStatus}">${escape(MEMORY_STATUSES[item.status] || item.status || '有效')}</span>
                 </div>
-                <div class="memory-context">
-                    <span>${escape(memoryOriginLabel(item))}${meta.manually_edited ? ' · 人工修订' : ''}</span>
-                    ${meta.topic ? `<span>${escape(meta.topic)}</span>` : ''}
-                </div>
-                ${subject ? `<div class="memory-participants"><span>主体 ${participant(subject)}</span>${object ? `<span>→ 对象 ${participant(object)}</span>` : ''}</div>` : ''}
+                ${notes.length ? `<div class="memory-context">${notes.map(note => `<span>${escape(note)}</span>`).join('')}</div>` : ''}
                 <div class="memory-card-body">
                     <div class="memory-text-container collapsed">${escape(item.text || '').replace(/\n/g, '<br>')}</div>
                     ${isLong ? '<button type="button" class="btn-text-toggle" data-memory-action="toggle">展开全部</button>' : ''}
@@ -92,7 +86,7 @@ export function renderMemories(items, userIdToName = {}) {
                         <li>
                             <div class="memory-evidence-meta">${escape(ref.user_id || '未知用户')} · ${escape(window.formatDate(ref.time))}</div>
                             <blockquote>${escape(ref.quote || '')}</blockquote>
-                            <div class="memory-evidence-meta">消息 ${escape(String(ref.message_id || ref.source_id || '未知'))}${ref.media_id ? ` · 媒体 ${escape(ref.media_id)}` : ''}</div>
+                            <div class="memory-evidence-meta">消息 ${escape(String(ref.message_id || ref.source_id || '未知'))}${Array.isArray(ref.media_ids) && ref.media_ids.length ? ` · 媒体 ${escape(ref.media_ids.join('、'))}` : ''}</div>
                         </li>`).join('')}</ol>` : `<p class="muted-text">${meta.manual_entry ? '管理员手动录入，无聊天原话证据。' : '此记录没有保存原话证据。'}</p>`}
                     ${sources.length ? `<div class="memory-source-ids">来源记忆：${sources.map(id => `<code>${escape(String(id))}</code>`).join('、')}</div>` : ''}
                 </details>

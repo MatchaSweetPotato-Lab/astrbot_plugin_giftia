@@ -33,7 +33,6 @@ class ReplyPipeline:
             "kick",
             "leave",
             "search_memories",
-            "delete_memories",
             "tools_to_call",
             "native_tools_called",
             "schedule_tasks",
@@ -62,20 +61,6 @@ class ReplyPipeline:
             self._conf_int(conf, "inject_limit", 20),
             self._conf_int(conf, "session_recall_ttl_seconds", 1800),
         )
-
-    @staticmethod
-    def _append_relevant_memory_texts(
-        relevant_memories: list[str],
-        memories: list[dict] | None,
-    ) -> None:
-        if not memories:
-            return
-        seen = set(relevant_memories)
-        for memory in memories:
-            text = str(memory.get("text") or "").strip()
-            if text and text not in seen:
-                relevant_memories.append(text)
-                seen.add(text)
 
     def commit_pending_session_recalled_memories(
         self,
@@ -149,7 +134,7 @@ class ReplyPipeline:
         group_or_user_id: str,
         reply_messages: list[MessageData] | None = None,
         remind_message: str | None = None,
-        relevant_memories: list[str] | None = None,
+        relevant_memories: list[dict] | None = None,
         pending_recall_memories: list[dict] | None = None,
         tool_results: list[dict[str, str]] | None = None,
         other_data: list[str] | None = None,
@@ -218,9 +203,7 @@ class ReplyPipeline:
             )
             if current_recall_memories:
                 pending_recall_memories.extend(current_recall_memories)
-                self._append_relevant_memory_texts(
-                    relevant_memories, current_recall_memories
-                )
+                relevant_memories.extend(current_recall_memories)
 
         session_recalled_memories = []
         if self.plugin.embedding_conf.get("session_recall_enabled", True):

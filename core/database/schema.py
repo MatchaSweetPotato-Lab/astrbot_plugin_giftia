@@ -265,34 +265,16 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 importance INTEGER DEFAULT 5,
                 hit_count INTEGER DEFAULT 0,
                 last_hit_at DATETIME,
+                kind TEXT NOT NULL DEFAULT 'event',
+                status TEXT NOT NULL DEFAULT 'active',
+                expires_at TEXT,
+                revision INTEGER NOT NULL DEFAULT 1,
+                reviewed_revision INTEGER NOT NULL DEFAULT 0,
+                indexed_revision INTEGER NOT NULL DEFAULT 0,
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """)
-        for sql, column_name in (
-            (
-                "ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 5",
-                "importance",
-            ),
-            (
-                "ALTER TABLE memories ADD COLUMN hit_count INTEGER DEFAULT 0",
-                "hit_count",
-            ),
-            (
-                "ALTER TABLE memories ADD COLUMN last_hit_at DATETIME",
-                "last_hit_at",
-            ),
-        ):
-            try:
-                await cursor.execute(sql)
-            except aiosqlite.OperationalError as e:
-                if (
-                    "duplicate" not in str(e).lower()
-                    and "already exists" not in str(e).lower()
-                ):
-                    logger.warning(
-                        f"Failed to add {column_name} column to memories: {e}"
-                    )
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_id_unique ON memories (memory_id)"
@@ -303,24 +285,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_group_bot_importance ON memories (group_or_user_id, bot_name, importance)"
         )
-        async with conn.execute("PRAGMA table_info(memories)") as columns:
-            memory_columns = {row[1] for row in await columns.fetchall()}
-        for name, definition in (
-            ("kind", "TEXT NOT NULL DEFAULT 'event'"),
-            ("status", "TEXT NOT NULL DEFAULT 'active'"),
-            ("expires_at", "TEXT"),
-            ("revision", "INTEGER NOT NULL DEFAULT 1"),
-            ("reviewed_revision", "INTEGER NOT NULL DEFAULT 0"),
-            ("indexed_revision", "INTEGER NOT NULL DEFAULT 0"),
-        ):
-            if name not in memory_columns:
-                await cursor.execute(
-                    f"ALTER TABLE memories ADD COLUMN {name} {definition}"
-                )
-        if "indexed_revision" not in memory_columns:
-            await cursor.execute(
-                "UPDATE memories SET indexed_revision=revision WHERE vector IS NOT NULL"
-            )
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_maintenance ON memories "
             "(bot_name, group_or_user_id, status, reviewed_revision, id)"

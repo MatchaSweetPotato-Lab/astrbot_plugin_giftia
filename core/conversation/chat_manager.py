@@ -846,7 +846,7 @@ class ChatManager:
         group_or_user_id: str,
         state: SessionState,
         recent_messages: list[MessageData],
-        relevant_memories: list[str] | None,
+        relevant_memories: list[dict] | None,
         pending_recall_memories: list[dict] | None,
         meme_tags: str | None,
     ) -> bool:
@@ -858,7 +858,7 @@ class ChatManager:
             group_or_user_id: Stored conversation identifier.
             state: Current batch and side-effect tracking.
             recent_messages: Frozen history at reply start.
-            relevant_memories: Decision-selected memory texts.
+            relevant_memories: Decision-selected memory records.
             pending_recall_memories: Memory records to commit on completion.
             meme_tags: Decision-selected sticker search tags.
 

@@ -9,6 +9,7 @@ from .maintenance import MemoryMaintenanceMixin
 from .passive_context import PassiveContextMixin
 
 RELATION_DELTA_LIMIT = 5
+MEMORY_SUMMARY_BATCH_SIZE = 100
 
 
 class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
@@ -244,14 +245,12 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         """
         key = f"{bot_name}:{group_or_user_id}"
         try:
-            config = self.plugin.conf.get("memory_config", {})
-            limit = max(1, min(200, int(config.get("memory_summary_batch_size", 100))))
             messages = await self.plugin.db.get_messages_by_id_range(
                 bot_name,
                 group_or_user_id,
                 start_id,
                 end_id,
-                limit=limit,
+                limit=MEMORY_SUMMARY_BATCH_SIZE,
             )
             if not messages:
                 return True

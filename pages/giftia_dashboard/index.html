@@ -219,8 +219,8 @@
                             <select id="memory-group-id"></select>
                         </div>
                         <div class="filter-group">
-                            <label>关联用户ID</label>
-                            <input type="text" id="memory-associated-user-id" placeholder="筛选关联用户">
+                            <label>关联群友账号</label>
+                            <input type="text" id="memory-associated-user-id" placeholder="筛选关联群友">
                         </div>
                         <div class="filter-group">
                             <label for="memory-kind">记忆类型</label>
@@ -242,16 +242,6 @@
                                 <option value="cancelled">已取消</option>
                                 <option value="expired">已过期</option>
                                 <option value="superseded">已被替代</option>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label for="memory-origin">来源</label>
-                            <select id="memory-origin">
-                                <option value="">全部来源</option>
-                                <option value="observed">原话记录 / 本人自述</option>
-                                <option value="derived">整理归纳</option>
-                                <option value="manual">人工录入</option>
-                                <option value="legacy">旧版记录</option>
                             </select>
                         </div>
                         <div class="filter-group flex-grow">
@@ -609,16 +599,6 @@
                         <option value="habit">习惯</option>
                     </select>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="add-mem-subject">主体用户ID <span class="required">*</span></label>
-                        <input type="text" id="add-mem-subject" maxlength="128" placeholder="行为或描述属于谁">
-                    </div>
-                    <div class="form-group">
-                        <label for="add-mem-object">对象用户ID</label>
-                        <input type="text" id="add-mem-object" maxlength="128" placeholder="行为针对谁（关系必填）">
-                    </div>
-                </div>
                 <div class="form-group">
                     <label for="add-mem-topic">主题 <span class="required">*</span></label>
                     <input type="text" id="add-mem-topic" maxlength="80" placeholder="例如：使用某个表情互动">
@@ -628,7 +608,7 @@
                     <input type="datetime-local" id="add-mem-expires" step="1">
                 </div>
                 <div class="form-group">
-                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>
                     <input type="text" id="add-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">
@@ -637,7 +617,7 @@
                 </div>
                 <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>
-                    <textarea id="add-mem-text" rows="5" maxlength="300" placeholder="一条记忆只描述一件事，习惯请保留适用时间和互动对象。"></textarea>
+                    <textarea id="add-mem-text" rows="5" maxlength="300" placeholder="写清参与群友、各自行为及互动方向，自述和观察推断在正文中区分。"></textarea>
                 </div>
                 <p class="muted-text">保存后标记为“人工录入”。从聊天归纳的记录会另外保留原话证据。</p>
             </div>
@@ -676,7 +656,7 @@
                                     </div>
                                     <div class="form-row">
                                         <div class="form-group flex-grow">
-                                            <label>关联用户ID</label>
+                                            <label>关联群友账号</label>
                                             <input type="text" id="clean-mem-associated-user-id" placeholder="可选">
                                         </div>
                                         <div class="form-group flex-grow">
@@ -692,10 +672,6 @@
                                         <div class="form-group flex-grow">
                                             <label for="clean-mem-status">状态</label>
                                             <select id="clean-mem-status"></select>
-                                        </div>
-                                        <div class="form-group flex-grow">
-                                            <label for="clean-mem-origin">来源</label>
-                                            <select id="clean-mem-origin"></select>
                                         </div>
                                     </div>
                                     <div class="clean-filter-grid">
@@ -821,7 +797,7 @@
                     <input type="datetime-local" id="edit-mem-expires" step="1">
                 </div>
                 <div class="form-group">
-                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>
                     <input type="text" id="edit-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">

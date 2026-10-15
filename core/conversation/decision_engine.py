@@ -265,7 +265,7 @@ class DecisionEngine:
         recent_messages: list[MessageData],
         *,
         force_reply: bool = False,
-    ) -> tuple[bool, list[str] | None, list[dict] | None, str | None]:
+    ) -> tuple[bool, list[dict] | None, list[dict] | None, str | None]:
         """Evaluate a frozen batch; admission and scheduling belong to the caller.
 
         Args:
@@ -278,7 +278,7 @@ class DecisionEngine:
             force_reply: Whether a batch member requests a direct reply.
 
         Returns:
-            Reply choice, recalled texts, recalled records, and optional meme tags.
+            Reply choice, prompt records, pending cache records, and optional meme tags.
 
         Raises:
             RuntimeError: All model attempts failed; this is not a silent decision.
@@ -435,7 +435,7 @@ class DecisionEngine:
                 recent_messages=recent_messages,
                 log_context="决策 RAG 记忆召回",
             )
-            relevant_memories = [m["text"] for m in memory_results]
+            relevant_memories = list(memory_results)
             return True, relevant_memories, memory_results, result.meme_tags
 
         return True, relevant_memories, None, result.meme_tags

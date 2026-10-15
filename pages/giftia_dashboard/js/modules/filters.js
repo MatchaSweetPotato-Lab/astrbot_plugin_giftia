@@ -64,7 +64,6 @@ export function getScopedFilterParams(viewKey) {
                 associated_user_id: document.getElementById("memory-associated-user-id").value,
                 kind: document.getElementById("memory-kind").value,
                 status: document.getElementById("memory-status").value,
-                origin: document.getElementById("memory-origin").value,
                 search: document.getElementById("memory-search").value
             };
         case "forwards":

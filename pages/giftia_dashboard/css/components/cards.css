@@ -729,7 +729,6 @@ html[data-theme="dark"] .media-caption-text {
 .memory-status-cancelled { color: var(--danger); background: var(--danger-bg); }
 
 .memory-context,
-.memory-participants,
 .memory-metrics {
     display: flex;
     flex-wrap: wrap;
@@ -739,11 +738,6 @@ html[data-theme="dark"] .media-caption-text {
     font-size: 12px;
     color: var(--font-secondary);
     overflow-wrap: anywhere;
-}
-
-.memory-participants {
-    color: var(--font-color);
-    font-weight: 500;
 }
 
 .memory-observation,

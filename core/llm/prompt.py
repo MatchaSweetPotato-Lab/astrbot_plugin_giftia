@@ -1,3 +1,4 @@
+import json
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -314,7 +315,7 @@ def build_reply_prompt(
     tool_results: list[dict[str, str]] | None = None,
     long_memories: list[MemoryItem] | None = None,
     session_recalled_memories: list[SessionRecallMemory] | None = None,
-    relevant_memories: list[str] | None = None,
+    relevant_memories: list[dict] | None = None,
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
     active_user_briefs: list[dict] | None = None,
@@ -354,6 +355,11 @@ def build_reply_prompt(
     )
     copied_reply = processed_messages[len(recent_messages) :]
 
+    # Current results take precedence over copies from earlier turns.
+    seen_memory_ids = set()
+    relevant_block = build_memory_items(relevant_memories or [], seen_memory_ids)
+    session_block = build_memory_items(session_recalled_memories or [], seen_memory_ids)
+    long_block = build_memory_items(long_memories or [], seen_memory_ids)
     user_prompt = []
 
     # Keep rules, tasks, and member summaries in the stable prefix.
@@ -371,15 +377,13 @@ def build_reply_prompt(
         user_prompt.append(active_user_briefs_block)
 
     # 2. 长期记忆背景：全量长期记忆库与会话累计召回记忆
-    if long_memories:
-        user_prompt.append(
-            f"<long_memories>\n{build_long_memories(long_memories)}\n</long_memories>"
-        )
+    if long_block:
+        user_prompt.append(f"<long_memories>\n{long_block}\n</long_memories>")
     # 当前会话累计召回的相关长期记忆
-    if session_recalled_memories:
+    if session_block:
         user_prompt.append(
             "<session_recalled_memories>\n"
-            f"{build_session_recalled_memories(session_recalled_memories)}\n"
+            f"{session_block}\n"
             "</session_recalled_memories>"
         )
 
@@ -421,9 +425,9 @@ def build_reply_prompt(
     if bot_sticker:
         user_prompt.append(f"<stickers>\n{bot_sticker}\n</stickers>")
     # 相关记忆
-    if relevant_memories:
+    if relevant_block:
         user_prompt.append(
-            f"<relevant_memories>\n{build_rag_results(relevant_memories)}\n</relevant_memories>"
+            f"<relevant_memories>\n{relevant_block}\n</relevant_memories>"
         )
     # 提醒消息
     if remind_message:
@@ -654,33 +658,6 @@ def build_persistent_status_block(status: Status | None) -> str:
     return f"<bot_persistent_status>\n{status_content}\n</bot_persistent_status>"
 
 
-def build_memory_attrs(
-    memory_id: str,
-    created_at: str = "",
-    updated_at: str = "",
-) -> str:
-    memory_time = format_memory_time(select_memory_time(created_at, updated_at))
-    attrs = [f"id={quoteattr(memory_id)}"]
-    if memory_time:
-        attrs.append(f"time={quoteattr(memory_time)}")
-    return " " + " ".join(attrs)
-
-
-def select_memory_time(created_at: str, updated_at: str) -> str:
-    """Return the latest meaningful timestamp for a memory item."""
-    if not updated_at:
-        return created_at or ""
-    if not created_at:
-        return updated_at
-
-    try:
-        created_dt = datetime.fromisoformat(str(created_at).strip())
-        updated_dt = datetime.fromisoformat(str(updated_at).strip())
-        return updated_at if updated_dt >= created_dt else created_at
-    except (TypeError, ValueError):
-        return updated_at
-
-
 def format_memory_time(value: str) -> str:
     """Format memory timestamps to minute precision for prompt injection."""
     if not value:
@@ -690,7 +667,11 @@ def format_memory_time(value: str) -> str:
         return ""
 
     try:
-        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
+        return (
+            datetime.fromisoformat(text.replace("Z", "+00:00"))
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M %z")
+        )
     except ValueError:
         normalized = text.replace("T", " ")
         if "." in normalized:
@@ -698,35 +679,72 @@ def format_memory_time(value: str) -> str:
         return normalized[:16] if len(normalized) >= 16 else normalized
 
 
-def build_memory_items(memories) -> str:
-    """构建长期记忆 XML，兼容数据库记忆和会话召回记忆。"""
+def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
+    """Render compact memory context without exposing maintenance identifiers.
+
+    Args:
+        memories: Recalled dictionaries or persisted memory records.
+        seen_ids: Shared internal identifiers already rendered in this prompt.
+
+    Returns:
+        Escaped memory XML with semantic type and available time fields.
+    """
+    if seen_ids is None:
+        seen_ids = set()
     xmls = []
     for memory in memories:
-        attrs = build_memory_attrs(
-            memory_id=memory.memory_id,
-            created_at=memory.created_at,
-            updated_at=memory.updated_at,
+        item = (
+            memory
+            if isinstance(memory, dict)
+            else {
+                "memory_id": memory.memory_id,
+                "text": memory.text,
+                "metadata": memory.metadata,
+                "created_at": memory.created_at,
+            }
         )
-        xmls.append(f"<memory{attrs}>{memory.text}</memory>")
+        text = str(item.get("text") or "").strip()
+        key = str(item.get("memory_id") or item.get("id") or "") or f"text:{text}"
+        if not text or key in seen_ids:
+            continue
+        metadata = item.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, ValueError):
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        attrs = []
+        kind = item.get("kind") or metadata.get("kind")
+        if isinstance(kind, str) and kind in {
+            "event",
+            "agreement",
+            "relationship",
+            "preference",
+            "habit",
+        }:
+            attrs.append(f"kind={quoteattr(kind)}")
+        times = {
+            field: item.get(field) or metadata.get(field)
+            for field in (
+                "occurred_at",
+                "observed_from",
+                "observed_until",
+                "expires_at",
+            )
+        }
+        if not any(
+            times[field] for field in ("occurred_at", "observed_from", "observed_until")
+        ):
+            times["recorded_at"] = item.get("created_at")
+        for field, value in times.items():
+            if isinstance(value, str) and value.strip():
+                attrs.append(f"{field}={quoteattr(format_memory_time(value))}")
+        attributes = " " + " ".join(attrs) if attrs else ""
+        xmls.append(f"<memory{attributes}>{escape(text)}</memory>")
+        seen_ids.add(key)
     return "\n".join(xmls)
-
-
-def build_long_memories(long_memories: list[MemoryItem]) -> str:
-    """构建长期记忆的提示词"""
-    return build_memory_items(long_memories)
-
-
-def build_session_recalled_memories(
-    session_recalled_memories: list[SessionRecallMemory],
-) -> str:
-    """构建当前会话累计召回记忆的提示词"""
-    return build_memory_items(session_recalled_memories)
-
-
-def build_rag_results(rag_memories: list[str]) -> str:
-    """构建RAG提示词，用于提示词传递聊天记录"""
-    rag_memories_str = "\n".join(rag_memories)
-    return rag_memories_str
 
 
 def normalize_profile_text(profile: str | None) -> str:

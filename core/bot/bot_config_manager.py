@@ -23,7 +23,7 @@ INTERACTIVE_FEATURES_METADATA = [
         "note": "",
     },
     {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
-    {"key": FeatureKey.MEMORY_QUERY_DELETE, "label": "记忆查询与删除", "note": ""},
+    {"key": FeatureKey.MEMORY_QUERY, "label": "记忆查询", "note": ""},
     {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},
     {
         "key": FeatureKey.SET_AVATAR,
@@ -312,6 +312,8 @@ class BotConfigManager:
                     continue
                 s = str(f).strip()
                 key = s.split("(")[0].strip() if "(" in s else s
+                if key == "memory_query_delete":
+                    key = FeatureKey.MEMORY_QUERY
                 if key and key not in normalized_features:
                     normalized_features.append(key)
             bot["enabled_interactive_features"] = normalized_features
