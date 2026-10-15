@@ -14,6 +14,10 @@ Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-t
 | Personality, interests, miscellaneous notes and relationship titles | Fixed fields retired; evidenced facts belong to event, relationship, preference or habit memories |
 | Names, aliases, attitude, affinity and avatar descriptions | Remain in profile management |
 
+Member cards now show the retained information directly, replacing the former **画像 / 关系 (Profile / Relationship)** subtabs. They do not display recent memories; filter **长期记忆 (Long-term memory)** by the member's account ID to view related records.
+
+![Member cards with the retained information shown directly](../images/member-profile.jpg)
+
 Historical profile fields remain in storage and compatible report templates. Legacy memories are labelled as legacy records without fabricated evidence. Automatic extraction and consolidation remain controlled by the backend settings and administrator commands `/强制总结` and `/整理记忆`.
 
 The screenshot uses synthetic data to compare self-reported, manually entered and inferred habits.

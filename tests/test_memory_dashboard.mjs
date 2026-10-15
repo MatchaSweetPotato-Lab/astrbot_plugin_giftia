@@ -151,7 +151,7 @@ test('profile rendering and saves exclude retired fields without clearing stored
         personality: 'retired personality', interests: 'retired interests',
         agreements: 'retired agreement', extra: 'retired extra', title: 'retired title'
     };
-    const html = window.renderProfileCard('', profile);
+    const html = window.renderProfileCard(profile);
     assert.doesNotMatch(html, /retired/);
     assert.match(html, /local name/);
     window.openEditUserProfileModal(profile);
