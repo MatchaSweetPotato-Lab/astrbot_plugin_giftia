@@ -80,7 +80,11 @@ class MemoryChange(BaseModel):
     object_id: str = Field(default="", max_length=128)
     associated_user_ids: list[str] = Field(default_factory=list, max_length=20)
     topic: str = Field(min_length=1, max_length=80)
-    text: str = Field(min_length=1, max_length=300)
+    text: str = Field(
+        min_length=1,
+        max_length=300,
+        description="第一人称回忆正文。",
+    )
     status: Literal["active", "completed", "cancelled"] = "active"
     occurred_at: str = ""
     expires_at: str = ""

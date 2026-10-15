@@ -201,8 +201,11 @@ class MemoryMaintenanceMixin:
             bot_name, session_id, limit=20, reviewed_only=True
         )
         existing.extend(row for row in related if row["memory_id"] not in pending)
+        nickname = self.plugin.bot_map.get(bot_name, {}).get("nickname", bot_name)
         prompt = (
-            DEFAULT_MEMORY_CONSOLIDATION_PROMPT
+            self._format_prompt_template(
+                DEFAULT_MEMORY_CONSOLIDATION_PROMPT, nickname, str(self_id)
+            )
             + "\n\nJSON Schema:\n"
             + json.dumps(MemoryChanges.model_json_schema(), ensure_ascii=False)
         )

@@ -1446,3 +1446,120 @@ async def test_wakeup_cursor_update_serializes_with_forced_extraction(
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
         == wakeup.db_id - 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,source,narrative,target",
+    [
+        ("event", "@B 我给你发了个坏笑表情", "我留意到小明给小白发了坏笑表情", "B"),
+        (
+            "agreement",
+            "就这么说定了，周五我和你一起整理照片",
+            "我和小明约好周五一起整理照片",
+            "self",
+        ),
+        ("preference", "我喜欢简短回复，以后不用写太长", "我记得小明喜欢简短回复", ""),
+        ("habit", "我平时习惯深夜画画", "我记得小明说过，他平时习惯深夜画画", ""),
+        ("relationship", "我和 @B 是同学", "我记得小明和小白是同学", "B"),
+    ],
+)
+async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
+    runtime, kind, source, narrative, target
+):
+    from xml.etree.ElementTree import fromstring
+
+    from core.llm.prompt import build_reply_prompt
+
+    msg = await message(runtime, source)
+    assert await extract(
+        runtime, msg, [atom(msg, kind, text=narrative, object_id=target)]
+    )
+    _, system_prompt, user_prompt = runtime.manager._call_summary_llm.call_args.args
+    assert "Giftia（账号 self）" in system_prompt
+    assert "{nickname}" not in system_prompt and "{self_id}" not in system_prompt
+    owner = fromstring(user_prompt)
+    assert owner.attrib["self_id"] == "self"
+    assert owner.find("new_messages/message").attrib["user_id"] == "user"
+    assert owner.find("new_messages/message").text == source
+    saved = (await rows(runtime))[0]
+    metadata = json.loads(saved["metadata"])
+    assert saved["text"] == narrative
+    assert metadata["subject_id"] == "user"
+    assert metadata["object_id"] == target
+    assert metadata["evidence"][0]["quote"] == source
+    assert metadata["evidence"][0]["user_id"] == "user"
+    assert metadata["origin"] == "observed"
+    injected = fromstring(
+        "<context>"
+        + build_reply_prompt(
+            recent_messages=[],
+            media_captions=[],
+            bot_status=None,
+            long_memories=await runtime.db.get_memories("group", "bot"),
+        )
+        + "</context>"
+    )
+    assert injected.find("long_memories/memory").text == narrative
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source,old_text,new_text,target",
+    [
+        (
+            "就这么说定了，周五我和你一起整理照片",
+            "流萤与用户约好周五一起整理照片",
+            "我和小明约好周五一起整理照片",
+            "self",
+        ),
+        (
+            "@B 我给你发了个坏笑表情",
+            "用户给 B 发了坏笑表情",
+            "我留意到小明给小白发了坏笑表情",
+            "B",
+        ),
+    ],
+)
+async def test_consolidation_can_rephrase_old_text_without_changing_memory_identity(
+    runtime, source, old_text, new_text, target
+):
+    runtime.plugin.bot_map["bot"]["nickname"] = "流萤"
+    msg = await message(runtime, source)
+    assert await extract(runtime, msg, [atom(msg, text=old_text, object_id=target)])
+    before = (await rows(runtime))[0]
+    proposal = atom(
+        msg,
+        memory_id=before["memory_id"],
+        text=new_text,
+        object_id=target,
+        evidence=[],
+        source_memory_ids=[before["memory_id"]],
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": [proposal]})
+    )
+    assert await runtime.manager.consolidate_memories(
+        "bot", "group", "self", force=True
+    )
+    _, system_prompt, _ = runtime.manager._call_summary_llm.call_args.args
+    assert "流萤（账号 self）" in system_prompt
+    assert "{nickname}" not in system_prompt and "{self_id}" not in system_prompt
+    stored = await rows(runtime)
+    assert len(stored) == 1
+    after = stored[0]
+    assert after["memory_id"] == before["memory_id"]
+    assert after["created_at"] == before["created_at"]
+    assert after["kind"] == before["kind"]
+    assert after["status"] == "active"
+    assert after["text"] == new_text
+    assert after["revision"] == before["revision"] + 1
+    old_meta, new_meta = json.loads(before["metadata"]), json.loads(after["metadata"])
+    for field in [
+        "subject_id",
+        "object_id",
+        "topic",
+        "associated_user_ids",
+        "evidence",
+    ]:
+        assert new_meta[field] == old_meta[field]
