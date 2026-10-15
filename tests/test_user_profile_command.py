@@ -23,7 +23,13 @@ def command(tmp_path):
             get_user_profile_record=AsyncMock(
                 return_value={
                     "call_name": "小明",
+                    "aliases": "阿明",
+                    "attitude": "友好\n认真回应",
+                    "avatar_description": "蓝天下的白猫",
                     "personality": "温和\n细心",
+                    "interests": "摄影",
+                    "agreements": "下次交流照片",
+                    "extra": "周末散步",
                     "relation": 0,
                     "title": "朋友",
                 }
@@ -57,10 +63,13 @@ async def test_profile_id_lookup_is_scoped_and_defaults_to_text(
     )
     text = event.send.call_args.args[0].chain[0].text
     assert f"用户 ID：{user_id}" in text
-    assert "性格风格：温和\n细心" in text
+    assert "称呼：小明" in text
+    assert "其他外号：阿明" in text
+    assert "互动态度：友好\n认真回应" in text
+    assert "头像描述：蓝天下的白猫" in text
     assert "好感度：0" in text
-    assert "关系称谓：朋友" in text
-    assert "兴趣话题：暂无记录" in text
+    for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
+        assert label not in text
     plugin.html_render.assert_not_awaited()
 
 
@@ -196,22 +205,43 @@ def test_report_normalizes_missing_fields_without_mutating_record(command, relat
     _, plugin, _ = command
     record = {
         "call_name": "<小明>",
-        "personality": "  ",
+        "aliases": "  ",
+        "attitude": None,
+        "avatar_description": "",
+        "personality": "Retired personality",
+        "interests": "Retired interests",
+        "agreements": "Retired agreements",
+        "extra": "Retired notes",
         "relation": relation,
-        "title": "",
+        "title": "Retired relationship title",
     }
+    original = record.copy()
     data = build_user_profile_report("bot", "小吉", "group", "00123", record)
     assert data["user_id"] == "00123"
     assert data["relation"] == ("暂无记录" if relation is None else relation)
-    assert data["relation_title"] == "暂无记录"
-    assert data["personality"] == "暂无记录"
     assert data["title"] == "用户画像"
-    assert record["personality"] == "  "
+    assert data["profile_fields"] == {
+        "称呼": "<小明>",
+        "其他外号": "暂无记录",
+        "互动态度": "暂无记录",
+        "头像描述": "暂无记录",
+    }
+    assert record == original
+    assert not {
+        "personality",
+        "interests",
+        "agreements",
+        "extra",
+        "relation_title",
+    }.intersection(data)
     for field, label in USER_PROFILE_FIELDS.items():
         assert data[field] == data["profile_fields"][label]
     rendered = plugin.reports.render_html("user_profile", data)
     assert "&lt;小明&gt;" in rendered
     assert "<小明>" not in rendered
+    assert "Retired" not in rendered
+    for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
+        assert label not in rendered
 
 
 @pytest.mark.asyncio

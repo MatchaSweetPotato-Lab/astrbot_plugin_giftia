@@ -7,7 +7,7 @@ body { margin: 0; padding: 44px; background: #edf4f1; color: #183c32; font-famil
 .eyebrow { color: #49806a; font-size: 18px; letter-spacing: 3px; }
 h1 { margin: 18px 0 10px; font-size: 44px; }
 .subtitle, footer { color: #72867d; font-size: 18px; line-height: 1.7; }
-.relationship { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 30px 0; }
+.relationship { margin: 30px 0; }
 .metric { padding: 22px; background: #f1f8f4; border-radius: 18px; }
 .metric span { display: block; color: #49806a; font-size: 18px; margin-bottom: 10px; }
 .metric strong { font-size: 28px; }
@@ -16,7 +16,7 @@ h1 { margin: 18px 0 10px; font-size: 44px; }
 .field p { margin: 0; font-size: 23px; line-height: 1.65; white-space: pre-wrap; }
 .report * { min-width: 0; overflow-wrap: anywhere; }
 footer { margin-top: 28px; }
-@media (max-width: 600px) { body { padding: 20px; } .report { padding: 26px; } .relationship { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { body { padding: 20px; } .report { padding: 26px; } }
 </style>
 </head>
 <body>
@@ -26,7 +26,6 @@ footer { margin-top: 28px; }
   <div class="subtitle">用户 ID · {{ user_id }}<br>机器人 · {{ nickname }} ({{ bot_name }})</div>
   <section class="relationship">
     <div class="metric"><span>好感度</span><strong>{{ relation }}</strong></div>
-    <div class="metric"><span>关系称谓</span><strong>{{ relation_title }}</strong></div>
   </section>
   {% for label, value in profile_fields.items() %}
   <section class="field"><h2>{{ label }}</h2><p>{{ value }}</p></section>

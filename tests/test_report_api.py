@@ -52,6 +52,23 @@ async def test_editor_save_preview_and_validation(api_app):
             "status",
             "user_profile",
         ]
+        profile = response.json()["data"][1]
+        retired_fields = {
+            "personality",
+            "interests",
+            "agreements",
+            "extra",
+            "relation_title",
+        }
+        assert not retired_fields.intersection(profile["fields"])
+        assert not retired_fields.intersection(profile["sample_data"])
+        assert profile["sample_data"]["relation"] == 68
+        assert set(profile["sample_data"]["profile_fields"]) == {
+            "称呼",
+            "其他外号",
+            "互动态度",
+            "头像描述",
+        }
         body = {
             "report_type": "status",
             "html": "<b>{{ nickname }}</b>",
@@ -150,6 +167,9 @@ async def test_user_profile_template_save_preview_and_restart(api_app, tmp_path)
         assert preview.status_code == 200
         assert "用户画像" in preview.json()["data"]["html"]
         assert "小明" in preview.json()["data"]["html"]
+        assert "68" in preview.json()["data"]["html"]
+        for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
+            assert label not in preview.json()["data"]["html"]
         body = {
             "report_type": "user_profile",
             "html": "<h1>{{ user_id }} · {{ call_name }}</h1>",

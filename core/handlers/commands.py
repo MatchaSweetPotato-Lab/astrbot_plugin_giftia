@@ -645,8 +645,7 @@ caption: {media_caption.caption}"""
             f"【{report['title']}】\n"
             f"🤖 机器人：{report['nickname']} ({report['bot_name']})\n"
             f"👤 用户 ID：{report['user_id']}\n"
-            f"🤝 好感度：{report['relation']}\n"
-            f"🏷️ 关系称谓：{report['relation_title']}\n\n"
+            f"🤝 好感度：{report['relation']}\n\n"
             f"{profile_lines}"
         )
         yield await event.send(MessageChain([Plain(msg)]))

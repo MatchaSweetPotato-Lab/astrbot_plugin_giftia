@@ -3,11 +3,7 @@ from datetime import datetime
 USER_PROFILE_FIELDS = {
     "call_name": "称呼",
     "aliases": "其他外号",
-    "personality": "性格风格",
-    "interests": "兴趣话题",
     "attitude": "互动态度",
-    "agreements": "关键约定",
-    "extra": "其他补充",
     "avatar_description": "头像描述",
 }
 
@@ -43,7 +39,6 @@ def build_user_profile_report(
         "relation": record["relation"]
         if record.get("relation") is not None
         else "暂无记录",
-        "relation_title": str(record.get("title") or "").strip() or "暂无记录",
         "profile_fields": {
             label: fields[field] for field, label in USER_PROFILE_FIELDS.items()
         },
