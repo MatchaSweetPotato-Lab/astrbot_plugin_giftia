@@ -1923,7 +1923,7 @@ async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
         runtime, msg, [atom(msg, kind, text=narrative, object_id=target)]
     )
     _, system_prompt, user_prompt = runtime.manager._call_summary_llm.call_args.args
-    assert "Giftia（账号 self）" in system_prompt
+    assert system_prompt.startswith("你是 Giftia（ID：self）。\n")
     assert "{nickname}" not in system_prompt and "{self_id}" not in system_prompt
     owner = fromstring(user_prompt)
     assert owner.attrib["self_id"] == "self"
@@ -1993,7 +1993,7 @@ async def test_consolidation_can_rephrase_old_text_without_changing_memory_ident
     )
     assert await runtime.manager.consolidate_memories("bot", "group", "self")
     _, system_prompt, _ = runtime.manager._call_summary_llm.call_args.args
-    assert "流萤（账号 self）" in system_prompt
+    assert system_prompt.startswith("你是 流萤（ID：self）。\n")
     assert "{nickname}" not in system_prompt and "{self_id}" not in system_prompt
     stored = await rows(runtime)
     assert len(stored) == 2
