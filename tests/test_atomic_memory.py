@@ -682,6 +682,49 @@ async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runt
 
 
 @pytest.mark.asyncio
+async def test_context_failure_keeps_pending_sources_for_periodic_retry(runtime, monkeypatch):
+    source = await message(runtime, "以后用中文和我交流")
+    await runtime.db.upsert_user_profile(
+        "bot", "group", "user", relation=12, profile_fields={"attitude": "友好"}
+    )
+    with monkeypatch.context() as broken_context:
+        broken_context.setattr(
+            runtime.manager,
+            "_format_user_profile_record_for_summary",
+            Mock(side_effect=TypeError("sequence item 0: expected str instance, list found")),
+        )
+        assert not await runtime.manager._run_background_summarize(
+            "bot", "group", "self", source.db_id, source.db_id
+        )
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    assert await rows(runtime) == []
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (source.db_id, source.db_id, 1)
+    assert await runtime.db.get_kv_data(
+        "passive_memory:last_summarized_id:bot:group", 0
+    ) == 0
+
+    runtime.manager._call_summary_llm.side_effect = [
+        json.dumps({"memories": [atom(source)]}),
+        "<summary_user_profile>无</summary_user_profile>",
+    ]
+    await runtime.manager.maintain_memories()
+    saved = await rows(runtime)
+    assert len(saved) == 1
+    assert saved[0]["text"] == source.content
+    assert json.loads(saved[0]["metadata"])["evidence"][0]["source_id"] == source.db_id
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    assert await runtime.db.get_kv_data(
+        "passive_memory:last_summarized_id:bot:group"
+    ) == source.db_id
+    profile_prompt = runtime.manager._call_summary_llm.await_args_list[1].args[2]
+    assert "互动态度：友好\n好感度: 12" in profile_prompt
+
+
+@pytest.mark.asyncio
 async def test_manual_memory_save_read_and_delete_work_without_embeddings(runtime):
     memory_id = await runtime.plugin.data_cache.add_memory(
         "bot", "group", "人工记忆", "user", ["user"]

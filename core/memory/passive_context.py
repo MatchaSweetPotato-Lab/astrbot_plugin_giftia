@@ -55,7 +55,6 @@ class PassiveContextMixin:
         record = record or {}
 
         parts = []
-        structured_lines = []
         allowed_fields = (
             set(allowed_fields)
             if allowed_fields is not None
@@ -66,15 +65,10 @@ class PassiveContextMixin:
                 continue
             value = normalize_profile_value(record.get(field))
             if value:
-                structured_lines.append(f"{label}：{value}")
-        if structured_lines:
-            parts.append(structured_lines)
+                parts.append(f"{label}：{value}")
 
-        relation_parts = []
         if include_relation_score:
-            relation_parts.append(f"好感度: {record.get('relation') or 0}")
-        if relation_parts:
-            parts.append(relation_parts)
+            parts.append(f"好感度: {record.get('relation') or 0}")
 
         return "\n".join(parts) if parts else "无"
 
