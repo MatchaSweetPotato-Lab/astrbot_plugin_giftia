@@ -139,6 +139,9 @@ async def test_actions_follow_xml_order(runtime, platform, xml, expected):
     )
     assert logs.count("<poke ") == expected.count("group_poke")
     assert logs.count("<emoji_like ") == expected.count("msg_emoji_like")
+    for entry in runtime.plugin.data_cache.add_message.await_args_list:
+        if entry.args[2].role == "message":
+            assert entry.kwargs["observed_by_bot"] is True
 
 
 @pytest.mark.asyncio
@@ -287,6 +290,11 @@ async def test_history_timestamps_follow_completed_actions(runtime):
     assert "<poke " in rows[1].content
     assert "<emoji_like " in rows[3].content
     assert rows == sorted(rows, key=lambda row: row.time)
+    assert all(
+        entry.kwargs["observed_by_bot"]
+        for entry in runtime.plugin.data_cache.add_message.await_args_list
+        if entry.args[2].role == "message"
+    )
 
 
 @pytest.fixture
@@ -350,6 +358,11 @@ async def test_signature_quote_attaches_to_first_content(
     assert str(chains[0][0].id) == "400"
     assert isinstance(chains[0][1], Record if first_kind == "tts" else Plain)
     assert sum(isinstance(c, Reply) for chain in chains for c in chain) == 1
+    assert all(
+        entry.kwargs["observed_by_bot"]
+        for entry in runtime.plugin.data_cache.add_message.await_args_list
+        if entry.args[2].role == "message"
+    )
     if first_kind == "tts":
         assert (
             'quote="400"'

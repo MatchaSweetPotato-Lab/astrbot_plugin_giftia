@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import aiosqlite
@@ -327,6 +328,36 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             await cursor.execute(
                 "DELETE FROM kv_store WHERE key LIKE 'passive_memory:silence_armed:%' "
                 "OR key LIKE 'passive_memory:silent_count:%'"
+            )
+        await cursor.execute(
+            "SELECT 1 FROM kv_store WHERE key='bot_output_observation_migration_done'"
+        )
+        if not await cursor.fetchone():
+            # Repair only known observer accounts; never infer that other senders were seen.
+            async with conn.execute(
+                "SELECT value FROM kv_store WHERE key LIKE 'atomic_memory:session:%'"
+            ) as routes_cursor:
+                routes = await routes_cursor.fetchall()
+            for (value,) in routes:
+                try:
+                    route = json.loads(value)
+                    bot_name = route["bot_name"]
+                    session_id = route["session_id"]
+                    self_id = str(route["self_id"] or "").strip()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not bot_name or not session_id or not self_id:
+                    continue
+                await cursor.execute(
+                    "UPDATE chat_history SET memory_status='pending' "
+                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
+                    "AND memory_status='unseen' AND COALESCE(is_recalled, 0)=0 "
+                    "AND COALESCE(role, 'message')='message'",
+                    (bot_name, session_id, self_id),
+                )
+            await cursor.execute(
+                "INSERT INTO kv_store (key, value) "
+                "VALUES ('bot_output_observation_migration_done', 1)"
             )
         await cursor.execute(
             "SELECT value FROM kv_store WHERE key = ? LIMIT 1",

@@ -138,9 +138,21 @@ class DataCache:
                         break
 
     async def add_message(
-        self, bot_name: str, group_id: str, msg_data: MessageData
+        self,
+        bot_name: str,
+        group_id: str,
+        msg_data: MessageData,
+        *,
+        observed_by_bot: bool = False,
     ) -> None:
-        """添加消息，先加入缓存，再写入数据库"""
+        """Cache and persist a message, then queue confirmed bot output as observed.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_id: Owning conversation.
+            msg_data: Message to store, assigning a local ID when necessary.
+            observed_by_bot: Whether this is the bot's successfully sent output.
+        """
         import time
 
         self._intercept_message(msg_data)
@@ -181,6 +193,10 @@ class DataCache:
         self.recent_messages[fmt_key].append(msg_data)
         # 将消息写入数据库
         await self.db.insert_message(bot_name=bot_name, message=msg_data)
+        if observed_by_bot and getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name, group_id, msg_data.user_id, [msg_data]
+            )
 
     async def add_cache_message(
         self, bot_name: str, group_id: str, msg_data: MessageData

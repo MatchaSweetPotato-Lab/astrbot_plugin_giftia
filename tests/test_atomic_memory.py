@@ -1582,3 +1582,90 @@ async def test_memory_observation_migration_preserves_legacy_progress_once(runti
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (unknown.db_id, unknown.db_id, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_id", ["sent-platform-id", ""])
+async def test_own_sent_output_is_observed_without_waiting_for_another_request(
+    runtime, message_id
+):
+    unseen = await message(runtime, "尚未进入上下文的用户消息", observed=False)
+    output = MessageData(
+        user_id="self",
+        nickname="Giftia",
+        group_or_user_id="group",
+        message_id=message_id,
+        content="我刚刚发送的回复",
+        time="2020-01-11T12:00:00+08:00",
+    )
+    # The first reply is sent before its active-window counter is refreshed.
+    assert runtime.plugin.active_reply_counters == {}
+    await runtime.plugin.data_cache.add_message(
+        "bot", "group", output, observed_by_bot=True
+    )
+    assert output.message_id
+    if not message_id:
+        assert output.message_id.startswith("local_")
+    async with runtime.db.conn.execute(
+        "SELECT user_id, memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [tuple(row) for row in await cursor.fetchall()] == [
+            (unseen.user_id, "unseen"),
+            ("self", "pending"),
+        ]
+    await runtime.manager.maintain_memories()
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    assert await rows(runtime) == []
+    async with runtime.db.conn.execute(
+        "SELECT memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [row[0] for row in await cursor.fetchall()] == ["unseen", "summarized"]
+
+
+@pytest.mark.asyncio
+async def test_own_output_repair_preserves_user_observation_and_scope(runtime):
+    output = await message(runtime, "错误标为未见的自身回复", user_id="self", observed=False)
+    user = await message(runtime, "未见的群友发言", observed=False)
+    processed = await message(runtime, "已处理的自身回复", user_id="self", observed=False)
+    await runtime.db.conn.execute(
+        "UPDATE chat_history SET memory_status='summarized' WHERE id=?",
+        (processed.db_id,),
+    )
+    await runtime.db.insert_message(
+        "other-bot",
+        MessageData(
+            user_id="self",
+            group_or_user_id="group",
+            message_id="other-bot-output",
+            content="另一个 Bot 的记录",
+        ),
+    )
+    await runtime.db.insert_message(
+        "bot",
+        MessageData(
+            user_id="self",
+            group_or_user_id="other-group",
+            message_id="other-group-output",
+            content="没有已知观察者身份的会话",
+        ),
+    )
+    await runtime.manager._remember_session("bot", "group", "self")
+    await runtime.db.delete_kv_data("bot_output_observation_migration_done")
+    await initialize_database(runtime.db.conn)
+    async with runtime.db.conn.execute(
+        "SELECT id, memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        states = {row[0]: row[1] for row in await cursor.fetchall()}
+    assert states[output.db_id] == "pending"
+    assert states[user.db_id] == "unseen"
+    assert states[processed.db_id] == "summarized"
+    assert list(states.values())[3:] == ["unseen", "unseen"]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (output.db_id, output.db_id, 1)
+    await runtime.manager.maintain_memories()
+    await initialize_database(runtime.db.conn)
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    runtime.manager._call_summary_llm.assert_not_awaited()

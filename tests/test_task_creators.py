@@ -27,7 +27,7 @@ def runtime():
         ),
     ]
 
-    async def add_message(bot, session, message):
+    async def add_message(bot, session, message, **kwargs):
         history.append(message)
 
     bot_conf = {"llm_reply_conf": {"provider_ids": ["reply"]}}

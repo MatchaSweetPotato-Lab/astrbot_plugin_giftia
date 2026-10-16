@@ -433,7 +433,7 @@ class ActionDispatcher:
                     forward_messages=list(target_msg.forward_messages or []),
                 )
                 await self.plugin.data_cache.add_message(
-                    bot_name, group_or_user_id, msg_data
+                    bot_name, group_or_user_id, msg_data, observed_by_bot=True
                 )
                 return True
             else:
@@ -725,7 +725,7 @@ class ActionDispatcher:
                         forward_messages=forward_messages,
                     )
                 await self.plugin.data_cache.add_message(
-                    bot_name, group_or_user_id, msg_data
+                    bot_name, group_or_user_id, msg_data, observed_by_bot=True
                 )
 
     async def _dispatch_generic_outputs(
@@ -857,7 +857,7 @@ class ActionDispatcher:
                         forward_messages=forward_messages,
                     )
                 await self.plugin.data_cache.add_message(
-                    bot_name, group_or_user_id, msg_data
+                    bot_name, group_or_user_id, msg_data, observed_by_bot=True
                 )
                 sent_index += 1
             except Exception as e:

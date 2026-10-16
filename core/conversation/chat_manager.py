@@ -331,6 +331,7 @@ class ChatManager:
                             media_id_list=parsed_msg.media_id_list,
                             forward_messages=parsed_msg.forward_messages,
                         ),
+                        observed_by_bot=True,
                     )
                     logger.debug(
                         "[Giftia] intercepted_send successfully logged to database"
