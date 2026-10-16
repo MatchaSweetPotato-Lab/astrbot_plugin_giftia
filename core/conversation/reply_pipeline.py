@@ -1,5 +1,6 @@
 import asyncio
 import random
+import re
 from copy import deepcopy
 
 from astrbot.api import logger
@@ -8,9 +9,9 @@ from astrbot.api.event import AstrMessageEvent
 from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt
 from ..utils.anti_drool import filter_duplicate_replies
-from ..utils.schemas import MessageData
+from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
-from .memory_recall import conf_int, search_memories_with_rerank
+from .memory_recall import conf_float, conf_int, search_memories_with_rerank
 from .tool_executor import ToolExecutor
 
 
@@ -68,9 +69,7 @@ class ReplyPipeline:
         group_or_user_id: str,
         pending_recall_memories: list[dict] | None,
     ) -> None:
-        if not pending_recall_memories or not self.plugin.embedding_conf.get(
-            "session_recall_enabled", True
-        ):
+        if not pending_recall_memories:
             return
         deduped_memories = {}
         fallback_index = 0
@@ -97,34 +96,84 @@ class ReplyPipeline:
         reply_messages: list[MessageData],
         remind_message: str | None,
         recent_messages: list[MessageData],
+        media_captions: list[MediaCaption] | None = None,
     ) -> list[dict]:
+        """Recall each participant's batch using text and completed media captions.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            reply_messages: Frozen pending messages in their original order.
+            remind_message: Reminder text used when no pending messages exist.
+            recent_messages: History identifying the active participants.
+            media_captions: Already cached media descriptions; only caption is used.
+
+        Returns:
+            Ranked, deduplicated records within the automatic injection limit.
+        """
         conf = self.plugin.embedding_conf
-        if not conf.get("enabled", False) or not conf.get(
-            "session_recall_enabled", True
-        ):
+        max_items, _ = self._session_recall_limits()
+        if not conf.get("enabled", False) or max_items <= 0:
             return []
 
-        query = ""
-        if reply_messages:
-            query = "\n".join(
-                f"{msg.nickname} ({msg.user_id}): {msg.content}"
-                for msg in reply_messages
-                if msg.content
+        captions = {
+            caption.hash_val: (caption.caption or "").strip()
+            for caption in media_captions or []
+            if caption.is_captioned and (caption.caption or "").strip()
+        }
+        messages = reply_messages or [MessageData(content=remind_message or "")]
+        user_queries: dict[str, list[str]] = {}
+        for message in messages:
+            if message.is_recalled or message.role != "message":
+                continue
+            # Uncaptioned media never contributes a placeholder or an identifier.
+            content = re.sub(
+                r"\[(?:图片|语音|视频|合并转发)(?::([^\]\s]+))?\]",
+                lambda match: (
+                    "\n" + captions[match[1]] + "\n" if match[1] in captions else ""
+                ),
+                message.content or "",
             ).strip()
-        elif remind_message:
-            query = remind_message.strip()
-        if not query:
-            return []
+            if not content:
+                continue
+            if message.user_id:
+                content = f"{message.nickname} ({message.user_id}): {content}"
+            user_queries.setdefault(str(message.user_id), []).append(content)
 
-        return await search_memories_with_rerank(
-            self.plugin,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            query=query,
-            recent_messages=recent_messages,
-            limit_key="session_recall_search_limit",
-            log_context="会话记忆自动召回",
+        candidates = []
+        for parts in user_queries.values():
+            candidates.extend(
+                await search_memories_with_rerank(
+                    self.plugin,
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    query="\n".join(parts),
+                    recent_messages=[*recent_messages, *reply_messages],
+                    limit_key="session_recall_search_limit",
+                    log_context="会话记忆自动召回",
+                    record_hits=False,
+                )
+            )
+        candidates.sort(
+            key=lambda memory: conf_float(
+                memory, "score", 1.0 - conf_float(memory, "_distance", 1.0)
+            ),
+            reverse=True,
         )
+        deduped = {}
+        for memory in candidates:
+            memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
+            if memory_id:
+                deduped.setdefault(memory_id, memory)
+        memories = list(deduped.values())[:max_items]
+        if memories:
+            try:
+                await self.plugin.data_cache.record_memory_hits(memories)
+            except Exception as error:
+                logger.warning(
+                    "[Giftia] Failed to record automatic recall hits: %s", error
+                )
+        return memories
 
     async def dispatch_llm_reply_loop(
         self,
@@ -200,22 +249,36 @@ class ReplyPipeline:
                 reply_messages=reply_messages,
                 remind_message=remind_message,
                 recent_messages=recent_messages,
+                media_captions=media_captions,
             )
             if current_recall_memories:
                 pending_recall_memories.extend(current_recall_memories)
-                relevant_memories.extend(current_recall_memories)
 
         session_recalled_memories = []
-        if self.plugin.embedding_conf.get("session_recall_enabled", True):
+        if self.plugin.embedding_conf.get("enabled", False):
             max_items, ttl_seconds = self._session_recall_limits()
-            session_recalled_memories = (
-                self.plugin.data_cache.get_session_recalled_memories(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    max_items=max_items,
-                    ttl_seconds=ttl_seconds,
-                )
+            cached_memories = self.plugin.data_cache.get_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                max_items=max_items,
+                ttl_seconds=ttl_seconds,
             )
+            seen_ids = {
+                str(memory.get("memory_id") or memory.get("id") or "")
+                for memory in relevant_memories
+            }
+            # Pending recalls survive tool turns without mutating the pool before success.
+            for memory in [*pending_recall_memories, *cached_memories]:
+                if len(session_recalled_memories) >= max_items:
+                    break
+                memory_id = (
+                    str(memory.get("memory_id") or memory.get("id") or "")
+                    if isinstance(memory, dict)
+                    else memory.memory_id
+                )
+                if memory_id and memory_id not in seen_ids:
+                    seen_ids.add(memory_id)
+                    session_recalled_memories.append(memory)
 
         # 2. 读取画像、关系与状态数据
         bot_status = await self.plugin.data_cache.get_bot_status(
@@ -277,20 +340,6 @@ class ReplyPipeline:
                 )
             task_creator_names[str(event.get_self_id())] = nickname
 
-        # 读取长期记忆
-        long_memories = []
-        inject_limit = self._conf_int(self.plugin.embedding_conf, "inject_limit", 20)
-        if (
-            self.plugin.embedding_conf.get("enabled", False)
-            and not self.plugin.embedding_conf.get("session_recall_enabled", True)
-            and inject_limit > 0
-        ):
-            long_memories = await self.plugin.data_cache.get_memories(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                limit=inject_limit,
-            )
-
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
         persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
 
@@ -335,7 +384,6 @@ class ReplyPipeline:
             nickname=event.get_sender_name() or "",
             bot_status=bot_status,
             tool_results=tool_results,
-            long_memories=long_memories,
             session_recalled_memories=session_recalled_memories,
             relevant_memories=relevant_memories,
             user_profile=user_profile,

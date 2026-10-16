@@ -471,7 +471,7 @@ async def test_xml_tool_outputs_and_results_follow_order(
     result = await runtime.parser.decode_llm_xml(xml, "100")
     plugin = runtime.plugin
     plugin.bot_map = {"bot": {"llm_reply_conf": {"provider_id": "mock"}}}
-    plugin.embedding_conf = {"enabled": False, "session_recall_enabled": False}
+    plugin.embedding_conf = {"enabled": False}
     plugin.msg_number = 10
     plugin.emoji_manager = SimpleNamespace(
         get_random_stickers=AsyncMock(return_value=[])

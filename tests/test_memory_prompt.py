@@ -15,7 +15,6 @@ from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     Decision,
     FeatureKey,
-    MemoryItem,
     MessageData,
     SessionRecallMemory,
     XmlLlmResult,
@@ -51,10 +50,9 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
             ),
         ),
     ]
-    legacy = MemoryItem(
+    legacy = SessionRecallMemory(
         memory_id="internal-legacy",
         text="旧记录 & 原文",
-        vector=b"",
         metadata="broken json",
         created_at="2020-01-01T00:00:00+00:00",
         updated_at="2099-01-01T00:00:00+00:00",
@@ -64,8 +62,7 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
         media_captions=[],
         bot_status=None,
         relevant_memories=[current, current],
-        session_recalled_memories=cached,
-        long_memories=[legacy],
+        session_recalled_memories=[*cached, legacy],
     )
     root = fromstring("<context>" + prompt + "</context>")
     assert len(root.findall(".//memory")) == 3
@@ -75,7 +72,7 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
     assert relevant.attrib["status"] == "active"
     habit = root.find("session_recalled_memories/memory")
     assert set(habit.attrib) == {"kind", "status", "observed_from", "observed_until"}
-    old = root.find("long_memories/memory")
+    old = root.findall("session_recalled_memories/memory")[-1]
     assert set(old.attrib) == {"status", "recorded_at"}
     assert old.attrib["recorded_at"].startswith("2020-01-01")
     assert old.text == legacy.text
@@ -125,9 +122,7 @@ def test_agreement_context_preserves_deadline_and_does_not_invent_event_time():
         ("superseded", "invalid", None),
     ],
 )
-@pytest.mark.parametrize(
-    "source", ["relevant_memories", "session_recalled_memories", "long_memories"]
-)
+@pytest.mark.parametrize("source", ["relevant_memories", "session_recalled_memories"])
 def test_reply_context_shows_historical_status_and_excludes_replaced_versions(
     status, expires_at, expected, source
 ):
@@ -148,20 +143,11 @@ def test_reply_context_shows_historical_status_and_excludes_replaced_versions(
                 "expires_at": "2000-01-01T00:00:00Z",
             },
         }
-    elif source == "session_recalled_memories":
+    else:
         record = SessionRecallMemory(
             memory_id="promise",
             text="我和甲之前的约定。",
             metadata=json.dumps(metadata),
-        )
-    else:
-        record = MemoryItem(
-            memory_id="promise",
-            text="我和甲之前的约定。",
-            vector=b"",
-            metadata=json.dumps(metadata),
-            created_at="2000-01-01T00:00:00Z",
-            updated_at="2000-01-01T00:00:00Z",
         )
     prompt = build_reply_prompt(
         recent_messages=[], media_captions=[], bot_status=None, **{source: [record]}

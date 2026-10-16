@@ -406,7 +406,7 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     plugin = SimpleNamespace(
         bot_map={"bot": {"llm_reply_conf": {"provider_ids": ["reply"]}}},
         tools_config={"max_loop": 3},
-        embedding_conf={"enabled": False, "session_recall_enabled": False},
+        embedding_conf={"enabled": False},
         msg_number=20,
         data_cache=SimpleNamespace(
             get_recent_message=AsyncMock(return_value=[original, later, own]),

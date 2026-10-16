@@ -2705,11 +2705,11 @@ async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
             recent_messages=[],
             media_captions=[],
             bot_status=None,
-            long_memories=await runtime.db.get_memories("group", "bot"),
+            relevant_memories=[saved],
         )
         + "</context>"
     )
-    assert injected.find("long_memories/memory").text == narrative
+    assert injected.find("relevant_memories/memory").text == narrative
 
 
 @pytest.mark.asyncio

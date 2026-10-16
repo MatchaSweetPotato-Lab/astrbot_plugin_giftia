@@ -6,7 +6,6 @@ from xml.sax.saxutils import escape, quoteattr
 from ..memory.atomic import recall_memory_metadata
 from ..utils.schemas import (
     MediaCaption,
-    MemoryItem,
     MessageData,
     SessionRecallMemory,
     ShortTask,
@@ -313,8 +312,7 @@ def build_reply_prompt(
     reply_messages: list[MessageData] | None = None,
     remind_message: str | None = None,
     tool_results: list[dict[str, str]] | None = None,
-    long_memories: list[MemoryItem] | None = None,
-    session_recalled_memories: list[SessionRecallMemory] | None = None,
+    session_recalled_memories: list[SessionRecallMemory | dict] | None = None,
     relevant_memories: list[dict] | None = None,
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
@@ -359,7 +357,6 @@ def build_reply_prompt(
     seen_memory_ids = set()
     relevant_block = build_memory_items(relevant_memories or [], seen_memory_ids)
     session_block = build_memory_items(session_recalled_memories or [], seen_memory_ids)
-    long_block = build_memory_items(long_memories or [], seen_memory_ids)
     user_prompt = []
 
     # Keep rules, tasks, and member summaries in the stable prefix.
@@ -376,10 +373,7 @@ def build_reply_prompt(
     if active_user_briefs_block:
         user_prompt.append(active_user_briefs_block)
 
-    # 2. 长期记忆背景：全量长期记忆库与会话累计召回记忆
-    if long_block:
-        user_prompt.append(f"<long_memories>\n{long_block}\n</long_memories>")
-    # 当前会话累计召回的相关长期记忆
+    # Recalled context includes this batch and memories retained by the session pool.
     if session_block:
         user_prompt.append(
             "<session_recalled_memories>\n"

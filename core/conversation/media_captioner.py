@@ -61,7 +61,11 @@ class MediaCaptioner:
                     continue
                 # 仅添加已经成功转述完成的记录
                 if getattr(media_caption, "is_captioned", False):
-                    if await self.plugin.emoji_manager.has_sticker(bot_name, hash_val):
+                    if (
+                        media_caption.caption or ""
+                    ).strip() and await self.plugin.emoji_manager.has_sticker(
+                        bot_name, hash_val
+                    ):
                         media_caption = copy.copy(media_caption)
                         media_caption.caption = (
                             media_caption.caption or ""
