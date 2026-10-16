@@ -21,6 +21,12 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         bot_name: str = "",
         group_or_user_id: str = "",
     ) -> str | None:
+        logger.debug(
+            f"[Giftia Passive Memory] Final prompts: task={task_name}, "
+            f"bot={bot_name}, session={group_or_user_id}\n"
+            f"=== System prompt ===\n{system_prompt}\n"
+            f"=== User prompt ===\n{user_prompt}"
+        )
         provider_ids = self.plugin.passive_memory_provider_ids
         if not provider_ids:
             logger.warning(
@@ -33,12 +39,6 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                 try:
                     logger.info(
                         f"[Giftia Passive Memory] 尝试使用提供商 {provider_id} (第 {attempt + 1} 次) 进行{task_name}"
-                    )
-                    logger.debug(
-                        f"[Giftia Passive Memory] {task_name} system_prompt:\n{system_prompt}"
-                    )
-                    logger.debug(
-                        f"[Giftia Passive Memory] {task_name} user_prompt:\n{user_prompt}"
                     )
                     llm_resp = await asyncio.wait_for(
                         self.plugin.context.llm_generate(
@@ -92,7 +92,6 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         sys_prompt = self._format_prompt_template(
             self._get_profile_summary_prompt(), nickname=nickname, self_id=self_id
         )
-        logger.debug(f"[Giftia Passive Memory] 关系画像维护系统提示词:\n{sys_prompt}")
         user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
             "关系画像维护",
