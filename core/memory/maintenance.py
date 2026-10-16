@@ -25,6 +25,7 @@ class MemoryMaintenanceMixin:
         self_id,
         messages,
         media,
+        active_users_text: str = "",
     ):
         """Render bounded model inputs with explicit provenance boundaries.
 
@@ -34,9 +35,10 @@ class MemoryMaintenanceMixin:
             self_id: Observing bot account.
             messages: New message batch with database IDs.
             media: Previously completed captions.
+            active_users_text: Scoped account, nickname, and preferred-name mapping.
 
         Returns:
-            Escaped source messages and their available media captions.
+            Escaped participant names, source messages, and available media captions.
         """
         root = Element(
             "memory_input",
@@ -48,6 +50,7 @@ class MemoryMaintenanceMixin:
                 "now": datetime.now().astimezone().isoformat(),
             },
         )
+        SubElement(root, "active_users").text = active_users_text or "无"
         captions = SubElement(root, "available_media")
         rendered_media = set()
         history = SubElement(root, "new_messages")
@@ -128,6 +131,7 @@ class MemoryMaintenanceMixin:
                 self_id,
                 messages,
                 media,
+                active_users_text=context.get("active_users_text", ""),
             ),
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,

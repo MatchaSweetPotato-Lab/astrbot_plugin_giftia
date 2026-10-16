@@ -233,6 +233,103 @@ async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "call_name,nickname,display_name",
+    [
+        ("小明", "平台昵称A", "小明"),
+        ("小明 & <朋友>", "平台昵称A", "小明 & <朋友>"),
+        (None, "平台昵称A", "平台昵称A"),
+        (None, "", "11111"),
+    ],
+)
+async def test_summary_receives_scoped_call_names_without_rewriting_sources(
+    runtime, call_name, nickname, display_name
+):
+    from xml.etree.ElementTree import fromstring
+
+    first = await message(runtime, "我和 @22222 是同学", user_id="11111")
+    second = await message(runtime, "我们是同学", user_id="22222")
+    await runtime.db.conn.executemany(
+        "UPDATE chat_history SET nickname=? WHERE id=?",
+        [(nickname, first.db_id), ("平台昵称B", second.db_id)],
+    )
+    await runtime.db.conn.commit()
+    for bot_name, session_id, user_id, name in [
+        ("bot", "group", "11111", call_name),
+        ("bot", "group", "22222", "小白"),
+        ("other-bot", "group", "11111", "其他Bot的称呼"),
+        ("bot", "other-group", "11111", "其他会话的称呼"),
+        ("bot", "group", "33333", "本批未发言用户的称呼"),
+    ]:
+        await runtime.db.upsert_user_profile(
+            bot_name,
+            session_id,
+            user_id,
+            profile_fields={"call_name": name},
+        )
+    narrative = f"{display_name}和小白是同学。"
+    completion = json.dumps(
+        {
+            "memories": [
+                atom(
+                    first,
+                    text=narrative,
+                    associated_user_ids=["11111", "22222"],
+                    topic="同学关系",
+                )
+            ]
+        }
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=lambda task, *args, **kwargs: (
+            completion
+            if task == "原子记忆归纳"
+            else "<summary_user_profile>无</summary_user_profile>"
+        )
+    )
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", first.db_id, second.db_id
+    )
+    summary_call = next(
+        call
+        for call in runtime.manager._call_summary_llm.await_args_list
+        if call.args[0] == "原子记忆归纳"
+    )
+    system_prompt, user_prompt = summary_call.args[1:]
+    root = fromstring(user_prompt)
+    members = root.find("active_users")
+    assert members is not None and list(members) == []
+    member_line = next(
+        line for line in members.text.splitlines() if line.startswith("- 11111")
+    )
+    if call_name:
+        assert f"你对他的称呼: {call_name}" in member_line
+    else:
+        assert "你对他的称呼" not in member_line
+    if nickname:
+        assert f"群内昵称: {nickname}" in member_line
+    assert "你对他的称呼: 小白" in members.text
+    for omitted in ("其他Bot的称呼", "其他会话的称呼", "本批未发言用户的称呼"):
+        assert omitted not in user_prompt
+    source = root.find("new_messages/message")
+    assert source.attrib["user_id"] == "11111"
+    assert source.attrib["nickname"] == nickname
+    assert source.text == first.content
+    assert "优先使用 active_users" in system_prompt
+    saved = (await rows(runtime))[0]
+    metadata = json.loads(saved["metadata"])
+    assert saved["text"] == narrative
+    assert metadata["associated_user_ids"] == ["11111", "22222"]
+    assert metadata["evidence"][0]["quote"] == first.content
+    assert metadata["evidence"][0]["user_id"] == "11111"
+    originals = await runtime.db.get_messages_by_id_range(
+        "bot", "group", first.db_id, second.db_id
+    )
+    assert originals[0].nickname == nickname
+    assert originals[0].content == first.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "response", ["broken", "{}", '{"memories": [{"kind": "unknown"}]}']
 )
 async def test_invalid_batch_keeps_progress_and_can_retry(runtime, response):
