@@ -57,6 +57,7 @@ test('memory cards show facts and escape evidence and account IDs', () => {
         memory_id: "id');throw Error('injection')", kind: 'habit', status: 'completed',
         text: '<img src=x onerror=alert(1)>',
         metadata: {
+            topic: '<script>topic attack</script>',
             status: 'active', associated_user_ids: ["A' onclick='alert(1)", 'B', 'C'],
             evidence: [{ source_id: 1, quote: '<script>attack</script>', user_id: 'A' }],
             observed_from: '2026-10-01', observed_until: '2026-10-12'
@@ -67,6 +68,7 @@ test('memory cards show facts and escape evidence and account IDs', () => {
     assert.doesNotMatch(html, /主体|对象|整理归纳|本人自述/);
     assert.match(html, /观察时间/);
     assert.match(html, /&lt;script&gt;attack/);
+    assert.match(html, /&lt;script&gt;topic attack/);
     assert.match(html, /&lt;img/);
     assert.doesNotMatch(html, /<script>|<img|onclick=["']|throw Error/);
 });

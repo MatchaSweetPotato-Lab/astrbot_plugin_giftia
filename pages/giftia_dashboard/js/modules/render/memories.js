@@ -56,7 +56,8 @@ export function renderMemories(items, userIdToName = {}) {
             ...(Array.isArray(meta.associated_user_ids) ? meta.associated_user_ids : []),
             ...(!meta.associated_user_ids?.length ? [meta.user_id] : [])
         ].filter(Boolean).map(String))];
-        const notes = [meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : '', meta.topic].filter(Boolean);
+        const topic = String(meta.topic || '').trim();
+        const notes = [meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : ''].filter(Boolean);
         const participant = uid => escape(userIdToName[uid] || String(uid));
         const importance = Number(item.importance || 5);
         const importanceCategory = importance <= 3 ? 'low' : importance >= 8 ? 'high' : 'medium';
@@ -64,7 +65,13 @@ export function renderMemories(items, userIdToName = {}) {
         const isLong = (item.text || '').length > 120 || ((item.text || '').match(/\n/g) || []).length >= 3;
         return `
             <article class="memory-card" data-memory-index="${index}">
-                ${notes.length ? `<div class="memory-context">${notes.map(note => `<span>${escape(note)}</span>`).join('')}</div>` : ''}
+                <header class="memory-card-header">
+                    <div class="memory-heading-content">
+                        <h3 class="memory-topic">${escape(topic || '记忆')}</h3>
+                        ${notes.length ? `<div class="memory-context">${notes.map(note => `<span>${escape(note)}</span>`).join('')}</div>` : ''}
+                    </div>
+                    <span class="memory-importance-badge importance-${importanceCategory}"><span class="importance-dot"></span>重要度 ${importance}</span>
+                </header>
                 <div class="memory-card-body">
                     <div class="memory-text-container collapsed">${escape(item.text || '').replace(/\n/g, '<br>')}</div>
                     ${isLong ? '<button type="button" class="btn-text-toggle" data-memory-action="toggle">展开全部</button>' : ''}
@@ -81,10 +88,6 @@ export function renderMemories(items, userIdToName = {}) {
                             <div class="memory-evidence-meta">消息 ${escape(String(ref.message_id || ref.source_id || '未知'))}${Array.isArray(ref.media_ids) && ref.media_ids.length ? ` · 媒体 ${escape(ref.media_ids.join('、'))}` : ''}</div>
                         </li>`).join('')}</ol>` : `<p class="muted-text">${meta.manual_entry ? '管理员手动录入，无聊天原话证据。' : '此记录没有保存原话证据。'}</p>`}
                 </details>
-                <div class="memory-metrics">
-                    <span class="memory-importance-badge importance-${importanceCategory}"><span class="importance-dot"></span>重要度 ${importance}</span>
-                    <span class="memory-activity-badge" title="上次命中: ${escape(item.last_hit_at ? window.formatDate(item.last_hit_at) : '从未命中')}">${Number(item.hit_count || 0)} 次命中</span>
-                </div>
                 <div class="memory-card-footer">
                     <div class="memory-associated-users">${userIds.map(uid => `<button type="button" class="user-pill" data-memory-user="${escape(uid)}" title="用户 ID: ${escape(uid)}，点击筛选">${participant(uid)}</button>`).join('') || '<span class="muted-text">无关联用户</span>'}</div>
                     <div class="memory-actions">
@@ -92,7 +95,10 @@ export function renderMemories(items, userIdToName = {}) {
                         <button type="button" class="btn btn-danger btn-small" data-memory-action="delete">删除</button>
                     </div>
                 </div>
-                <div class="memory-time-details"><span>创建于 ${escape(window.formatDate(item.created_at))}</span></div>
+                <div class="memory-time-details">
+                    <span>创建于 ${escape(window.formatDate(item.created_at))}</span>
+                    <span title="上次命中: ${escape(item.last_hit_at ? window.formatDate(item.last_hit_at) : '从未命中')}">${Number(item.hit_count || 0)} 次命中</span>
+                </div>
             </article>`;
     }).join('');
 

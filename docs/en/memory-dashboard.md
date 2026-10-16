@@ -3,10 +3,12 @@
 Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-term memory)**. Each record stores one fact, without memory categories or lifecycle states.
 
 1. Select a bot and conversation, then filter by an associated member or text. Member filters match complete account IDs; member chips on a card apply the same filter.
-2. Narratives describe participants, actions, interaction direction and how a fact was learned. Cards retain topics, factual timestamps, importance and hit statistics. Expand the evidence section to inspect direct speech and media captions.
+2. Narratives describe participants, actions, interaction direction and how a fact was learned. Cards show the topic as a bold heading, with importance at the top right and manual-entry or edit markers below the heading. Factual timestamps follow the narrative; creation time and hit counts appear at the bottom. Expand the evidence section to inspect direct speech and media captions.
 3. Add a memory with all associated accounts, a topic, importance and text. Multiple participants are supported. Saving selects its conversation and marks it as a manual entry without fabricating chat evidence.
 4. Edit text, importance and associated accounts. Topics and original evidence remain unchanged; edits are marked as manual revisions. Refresh before editing a record changed by another request.
 5. Memory cleanup inherits the selected scope, member and text filters. Preview candidates before choosing records to delete.
+
+![Memory cards with prominent topic headings](../images/memory-cards.png)
 
 | Previous entry | Current entry |
 | --- | --- |
