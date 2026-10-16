@@ -282,10 +282,6 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     bot_name, group_or_user_id, self_id, nickname, context
                 ):
                     return False
-                if context.get("new_memory_ids"):
-                    self._schedule_memory_consolidation(
-                        bot_name, group_or_user_id, self_id
-                    )
             processed_end = selected[-1].db_id
             await self.plugin.db.upsert_kv_data(
                 f"passive_memory:last_summarized_id:{key}", processed_end

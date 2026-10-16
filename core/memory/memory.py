@@ -410,7 +410,7 @@ class LTM:
             limit: Maximum number of candidates.
             threshold: Maximum accepted vector distance.
             exclude_ids: Records excluded before applying the candidate limit.
-            raise_errors: Propagate failures so queued consolidation can retry.
+            raise_errors: Propagate search failures to the caller.
             include_ids: Allow only these records before limiting; None allows all.
 
         Returns:
@@ -623,7 +623,7 @@ class LTM:
             memories: Candidates containing text fields.
             top_k: Maximum number of retained candidates.
             threshold: Minimum accepted relevance score.
-            raise_errors: Propagate failures to durable consolidation workers.
+            raise_errors: Propagate provider failures to the caller.
 
         Returns:
             Retained records in relevance order.

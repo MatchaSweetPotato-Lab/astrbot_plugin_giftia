@@ -1,35 +1,27 @@
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
-from ..memory.atomic import MemoryChange
+from ..memory.atomic import MemoryRecord, memory_metadata
 from ..utils.schemas import normalize_memory_importance
-from .web_helpers import optional_bool, optional_int, safe_json_dict
+from .web_helpers import optional_bool, optional_int
 
 
 class MemoryApi:
     """Long-term memory APIs: CRUD, preview candidates, batch clean, auto clean configs/triggers."""
 
     def _memory_row_to_dict(self, row) -> dict:
-        status = row["status"]
-        if status == "active" and row["expires_at"]:
-            expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
-            if expires.astimezone(timezone.utc) <= datetime.now(timezone.utc):
-                status = "expired"
         return {
             "id": row["id"],
             "bot_name": row["bot_name"],
             "group_or_user_id": row["group_or_user_id"],
             "memory_id": row["memory_id"],
             "text": row["text"],
-            "metadata": safe_json_dict(row["metadata"]),
+            "metadata": memory_metadata(dict(row)),
             "importance": normalize_memory_importance(row["importance"]),
-            "kind": row["kind"],
-            "status": status,
-            "expires_at": row["expires_at"],
             "revision": row["revision"],
             "hit_count": int(row["hit_count"] or 0),
             "last_hit_at": row["last_hit_at"],
@@ -42,43 +34,18 @@ class MemoryApi:
         """Build shared list, session-count, and cleanup filters.
 
         Args:
-            values: Query or body fields, with optional scope and atom filters.
+            values: Query or body fields with optional scope, participant and text filters.
 
         Returns:
             SQL predicates and their bound parameters.
-
-        Raises:
-            ValueError: An atom filter is unsupported.
         """
         conditions, params = [], []
-        for key in ("bot_name", "group_or_user_id", "kind"):
+        for key in ("bot_name", "group_or_user_id"):
             value = str(values.get(key) or "").strip()
             if not value:
                 continue
-            if key == "kind" and value not in {
-                "event",
-                "agreement",
-                "relationship",
-                "preference",
-                "habit",
-            }:
-                raise ValueError("不支持的记忆类型")
             conditions.append(f"{key} = ?")
             params.append(value)
-        status = str(values.get("status") or "").strip()
-        if status == "active":
-            conditions.append(
-                "status='active' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now'))"
-            )
-        elif status == "expired":
-            conditions.append(
-                "(status='expired' OR (status='active' AND julianday(expires_at)<=julianday('now')))"
-            )
-        elif status in {"completed", "cancelled", "superseded"}:
-            conditions.append("status = ?")
-            params.append(status)
-        elif status:
-            raise ValueError("不支持的记忆状态")
         # Guard legacy malformed metadata before querying exact account IDs.
         metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
         user_id = str(values.get("associated_user_id") or "").strip()
@@ -194,7 +161,7 @@ class MemoryApi:
             # Query data
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, memory_id, text, metadata,
-                       importance, hit_count, last_hit_at, created_at, updated_at, kind, status, expires_at, revision
+                       importance, hit_count, last_hit_at, created_at, updated_at, revision
                 FROM memories
                 {where_clause}
                 ORDER BY created_at DESC, id DESC
@@ -336,28 +303,18 @@ class MemoryApi:
                 associated = [
                     uid.strip() for uid in associated.split(",") if uid.strip()
                 ]
-            item = MemoryChange(
-                kind=body.get("kind", "event"),
+            item = MemoryRecord(
                 topic=body.get("topic") or "人工记录",
                 text=body.get("text"),
                 associated_user_ids=associated,
                 importance=normalize_memory_importance(body.get("importance"), 5),
-                expires_at=body.get("expires_at") or "",
             )
-            if item.expires_at:
-                if item.kind != "agreement":
-                    return error_response("只有约定可以设置到期时间")
-                item.expires_at = (
-                    datetime.fromisoformat(item.expires_at.replace("Z", "+00:00"))
-                    .astimezone(timezone.utc)
-                    .isoformat()
-                )
             item.associated_user_ids = sorted(
                 {uid.strip() for uid in associated if uid.strip()}
             )
             if not item.associated_user_ids:
                 return error_response("请填写关联群友账号")
-            created_ids = await self.giftia.db.memory_maintenance_repo.apply_changes(
+            created_ids = await self.giftia.db.memories_repo.insert_memories(
                 bot_name,
                 group_or_user_id,
                 [
@@ -367,7 +324,6 @@ class MemoryApi:
                         "manual_entry": True,
                     }
                 ],
-                expected={},
             )
             memory_id = created_ids[0]
             self.giftia.data_cache.memories.pop(f"{bot_name}:{group_or_user_id}", None)
@@ -387,7 +343,7 @@ class MemoryApi:
             return error_response(f"添加记忆失败: {str(e)}")
 
     async def update_memory(self):
-        """Edit an atom in place while preserving its identity and evidence."""
+        """Edit a fact in place while preserving its identity and original evidence."""
         try:
             body = await request.json()
             memory_id = body.get("memory_id")
@@ -411,34 +367,9 @@ class MemoryApi:
                 return error_response("当前会话未找到该记忆")
             if body.get("revision", old["revision"]) != old["revision"]:
                 return error_response("记忆已被更新，请刷新列表后重新编辑")
-            metadata = safe_json_dict(old["metadata"])
-            status = body.get("status", old["status"])
-            effective_status = self._memory_row_to_dict(old)["status"]
-            if status != old["status"] and not (
-                old["kind"] == "agreement"
-                and effective_status == "active"
-                and status in {"completed", "cancelled"}
-            ):
-                return error_response(
-                    "只有有效约定可以改为已完成或已取消；历史状态不能重开"
-                )
-            expires_at = old["expires_at"]
-            if "expires_at" in body:
-                expires_at = body["expires_at"] or None
-                if expires_at:
-                    if old["kind"] != "agreement":
-                        return error_response("只有约定可以设置到期时间")
-                    expires_at = (
-                        datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-                        .astimezone(timezone.utc)
-                        .isoformat()
-                    )
-                if effective_status != "active" and expires_at != old["expires_at"]:
-                    return error_response("历史约定的到期时间不能修改")
-            for field in ("kind", "topic"):
-                existing = old["kind"] if field == "kind" else metadata.get(field, "")
-                if field in body and body[field] != existing:
-                    return error_response("类型和主题不能改写，请新增一条记忆")
+            metadata = memory_metadata(dict(old))
+            if "topic" in body and body["topic"] != metadata.get("topic", ""):
+                return error_response("主题不能改写，请新增一条记忆")
             associated = body.get("associated_user_ids")
             if isinstance(associated, str):
                 associated = [
@@ -462,16 +393,14 @@ class MemoryApi:
                 body.get("importance"), old["importance"]
             )
             metadata["importance"] = importance
-            metadata.update(status=status, expires_at=expires_at, manually_edited=True)
+            metadata["manually_edited"] = True
             cursor = await self.giftia.db.conn.execute(
-                "UPDATE memories SET text=?, metadata=?, importance=?, status=?, expires_at=?, revision=revision+1, vector=NULL, updated_at=? "
+                "UPDATE memories SET text=?, metadata=?, importance=?, revision=revision+1, vector=NULL, updated_at=? "
                 "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
                 (
                     text.strip(),
                     json.dumps(metadata, ensure_ascii=False),
                     importance,
-                    status,
-                    expires_at,
                     datetime.now().isoformat(),
                     memory_id,
                     bot_name,
@@ -543,7 +472,7 @@ class MemoryApi:
 
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, memory_id, text, metadata,
-                       importance, hit_count, last_hit_at, created_at, updated_at, kind, status, expires_at, revision
+                       importance, hit_count, last_hit_at, created_at, updated_at, revision
                 FROM memories
                 {where_clause}
                 ORDER BY COALESCE(importance, 5) ASC,

@@ -222,28 +222,6 @@
                             <label>关联群友账号</label>
                             <input type="text" id="memory-associated-user-id" placeholder="筛选关联群友">
                         </div>
-                        <div class="filter-group">
-                            <label for="memory-kind">记忆类型</label>
-                            <select id="memory-kind">
-                                <option value="">全部类型</option>
-                                <option value="event">事件</option>
-                                <option value="agreement">约定</option>
-                                <option value="relationship">关系</option>
-                                <option value="preference">偏好 / 边界</option>
-                                <option value="habit">习惯</option>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label for="memory-status">状态</label>
-                            <select id="memory-status">
-                                <option value="active">有效</option>
-                                <option value="">全部状态</option>
-                                <option value="completed">已完成</option>
-                                <option value="cancelled">已取消</option>
-                                <option value="expired">已过期</option>
-                                <option value="superseded">已被替代</option>
-                            </select>
-                        </div>
                         <div class="filter-group flex-grow">
                             <label>搜索记忆内容</label>
                             <input type="text" id="memory-search" placeholder="搜索关键词...">
@@ -590,22 +568,8 @@
                     <input type="text" id="add-mem-group" placeholder="例如: 123456789">
                 </div>
                 <div class="form-group">
-                    <label for="add-mem-kind">记忆类型</label>
-                    <select id="add-mem-kind" onchange="updateAddMemoryKind()">
-                        <option value="event">事件</option>
-                        <option value="agreement">约定</option>
-                        <option value="relationship">关系</option>
-                        <option value="preference">偏好 / 边界</option>
-                        <option value="habit">习惯</option>
-                    </select>
-                </div>
-                <div class="form-group">
                     <label for="add-mem-topic">主题 <span class="required">*</span></label>
                     <input type="text" id="add-mem-topic" maxlength="80" placeholder="例如：使用某个表情互动">
-                </div>
-                <div class="form-group" id="add-mem-expiry-group" hidden>
-                    <label for="add-mem-expires">到期时间（可选，按本地时间）</label>
-                    <input type="datetime-local" id="add-mem-expires" step="1">
                 </div>
                 <div class="form-group">
                     <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>
@@ -662,16 +626,6 @@
                                         <div class="form-group flex-grow">
                                             <label>搜索记忆内容</label>
                                             <input type="text" id="clean-mem-search" placeholder="可选关键词">
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group flex-grow">
-                                            <label for="clean-mem-kind">记忆类型</label>
-                                            <select id="clean-mem-kind"></select>
-                                        </div>
-                                        <div class="form-group flex-grow">
-                                            <label for="clean-mem-status">状态</label>
-                                            <select id="clean-mem-status"></select>
                                         </div>
                                     </div>
                                     <div class="clean-filter-grid">
@@ -779,7 +733,7 @@
                 <input type="hidden" id="edit-mem-id">
                 <input type="hidden" id="edit-mem-revision">
                 <p id="edit-mem-identity" class="memory-edit-identity"></p>
-                <p class="muted-text">类型、主体、对象和来源依据保留原记录。修改内容会标记为人工修订。</p>
+                <p class="muted-text">主题和原话依据保留。修改内容会标记为人工修订。</p>
                 <div class="form-group">
                     <label>Bot名称</label>
                     <input type="text" id="edit-mem-bot" readonly class="readonly-input">
@@ -787,14 +741,6 @@
                 <div class="form-group">
                     <label>群聊/用户ID</label>
                     <input type="text" id="edit-mem-group" readonly class="readonly-input">
-                </div>
-                <div class="form-group">
-                    <label for="edit-mem-status">状态</label>
-                    <select id="edit-mem-status"></select>
-                </div>
-                <div class="form-group" id="edit-mem-expiry-group" hidden>
-                    <label for="edit-mem-expires">到期时间（可选，按本地时间）</label>
-                    <input type="datetime-local" id="edit-mem-expires" step="1">
                 </div>
                 <div class="form-group">
                     <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>

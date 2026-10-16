@@ -35,7 +35,7 @@ beforeEach(() => {
     fields.clear();
     state.pagination.memories = { page: 1, limit: 15, total: 0 };
     for (const [id, value] of Object.entries({
-        'memory-bot-name': 'bot', 'memory-group-id': 'group', 'memory-status': 'active'
+        'memory-bot-name': 'bot', 'memory-group-id': 'group'
     })) get(id).value = value;
     window.renderPagination = () => {};
     window.openModal = () => {};
@@ -43,9 +43,7 @@ beforeEach(() => {
     window.showToast = () => {};
     window.GiftiaApp = {
         getScopedFilterParams: () => ({
-            bot_name: get('memory-bot-name').value,
-            kind: get('memory-kind').value,
-            status: get('memory-status').value
+            bot_name: get('memory-bot-name').value
         }),
         resetPagination: () => {},
         refreshScopedFilters: async () => {},
@@ -54,7 +52,7 @@ beforeEach(() => {
     };
 });
 
-test('memory cards use authoritative state and escape evidence and account IDs', () => {
+test('memory cards show facts and escape evidence and account IDs', () => {
     renderMemories([{
         memory_id: "id');throw Error('injection')", kind: 'habit', status: 'completed',
         text: '<img src=x onerror=alert(1)>',
@@ -65,7 +63,7 @@ test('memory cards use authoritative state and escape evidence and account IDs',
         }
     }]);
     const html = get('memory-list').innerHTML;
-    assert.match(html, /已完成/);
+    assert.doesNotMatch(html, /已完成|记忆类型|memory-status|memory-kind/);
     assert.doesNotMatch(html, /主体|对象|整理归纳|本人自述/);
     assert.match(html, /观察时间/);
     assert.match(html, /&lt;script&gt;attack/);
@@ -118,15 +116,12 @@ test('slower responses cannot replace the newly selected conversation', async ()
     assert.equal(state.pagination.memories.total, 1);
 });
 
-test('historical agreement edits omit displayed expiration state and preserve provenance', async () => {
+test('fact edits preserve revision and source evidence without classification fields', async () => {
     const item = {
-        memory_id: 'expired', bot_name: 'bot', group_or_user_id: 'group', revision: 7,
-        kind: 'agreement', status: 'expired', expires_at: '2020-01-01T00:00:00Z',
-        text: 'old promise', metadata: { subject_id: 'A', evidence: [{ quote: 'original' }] }
+        memory_id: 'fact', bot_name: 'bot', group_or_user_id: 'group', revision: 7,
+        text: 'original text', metadata: { topic: '角色喜好', evidence: [{ quote: 'original' }] }
     };
     window.openEditMemoryModal(item);
-    assert.equal(get('edit-mem-status').disabled, true);
-    assert.equal(get('edit-mem-expires').disabled, true);
     let body;
     window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
     get('edit-mem-text').value = 'corrected text';
@@ -139,18 +134,15 @@ test('historical agreement edits omit displayed expiration state and preserve pr
     assert.deepEqual(item.metadata.evidence, [{ quote: 'original' }]);
 });
 
-test('manual creation saves all participants and selects its type and scope from historical filters', async () => {
-    get('memory-status').value = 'completed';
+test('manual creation saves all participants and selects the saved conversation', async () => {
     window.openAddMemoryModal();
-    const values = { bot: 'new-bot', group: 'new-group', kind: 'habit', 'associated-ids': 'A,B,C', topic: 'emoji', text: 'A often teases B' };
+    const values = { bot: 'new-bot', group: 'new-group', 'associated-ids': 'A,B,C', topic: 'emoji', text: 'A often teases B' };
     for (const [field, value] of Object.entries(values)) get(`add-mem-${field}`).value = value;
     let saved;
     window.apiPost = async (path, body) => { saved = body; return { status: 'success' }; };
     await window.submitAddMemory();
-    assert.equal(saved.kind, 'habit');
     assert.equal(saved.associated_user_ids, 'A,B,C');
-    for (const field of ['subject_id', 'object_id', 'origin']) assert.equal(Object.hasOwn(saved, field), false);
-    assert.equal(get('memory-status').value, 'active');
+    for (const field of ['kind', 'status', 'expires_at', 'subject_id', 'object_id', 'origin']) assert.equal(Object.hasOwn(saved, field), false);
     assert.equal(get('memory-bot-name').value, 'new-bot');
     assert.equal(get('memory-group-id').value, 'new-group');
 });

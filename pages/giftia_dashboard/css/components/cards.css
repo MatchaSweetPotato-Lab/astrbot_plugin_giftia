@@ -701,33 +701,6 @@ html[data-theme="dark"] .media-caption-text {
     box-shadow: var(--shadow-hover);
 }
 
-.memory-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    gap: 8px;
-}
-
-.memory-kind-badge,
-.memory-status-badge {
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-    background: var(--bg-secondary);
-    color: var(--font-secondary);
-}
-
-.memory-kind-badge {
-    background: var(--primary-light);
-    color: var(--primary);
-}
-
-.memory-status-active { color: var(--success); background: var(--success-bg); }
-.memory-status-completed { color: var(--info); background: var(--info-bg); }
-.memory-status-cancelled { color: var(--danger); background: var(--danger-bg); }
-
 .memory-context,
 .memory-metrics {
     display: flex;
@@ -741,8 +714,7 @@ html[data-theme="dark"] .media-caption-text {
 }
 
 .memory-observation,
-.memory-evidence-meta,
-.memory-source-ids {
+.memory-evidence-meta {
     font-size: 11px;
     line-height: 1.6;
     color: var(--font-secondary);
@@ -771,8 +743,6 @@ html[data-theme="dark"] .media-caption-text {
 .memory-evidence p { margin: 8px 0 0; }
 .memory-edit-identity { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 
-#add-mem-expiry-group[hidden],
-#edit-mem-expiry-group[hidden] { display: none; }
 
 /* Importance badges */
 .memory-importance-badge {

@@ -1,5 +1,3 @@
-import { MEMORY_KINDS, MEMORY_STATUSES } from '../modules/memory_types.js';
-
 // Giftia Dashboard Modals - Memory Actions & Clean
 
 function normalizeMemoryImportance(value) {
@@ -13,22 +11,14 @@ function normalizeMemoryImportance(value) {
 let editingMemory = null;
 
 // 1. Add Memory
-window.updateAddMemoryKind = function() {
-    const agreement = document.getElementById('add-mem-kind').value === 'agreement';
-    document.getElementById('add-mem-expiry-group').hidden = !agreement;
-    if (!agreement) document.getElementById('add-mem-expires').value = '';
-};
-
 window.openAddMemoryModal = function() {
     document.getElementById('add-mem-bot').value = document.getElementById('memory-bot-name').value;
     document.getElementById('add-mem-group').value = document.getElementById('memory-group-id').value;
-    document.getElementById('add-mem-kind').value = document.getElementById('memory-kind').value || 'event';
     document.getElementById('add-mem-associated-ids').value = document.getElementById('memory-associated-user-id').value.trim();
-    for (const field of ['topic', 'expires', 'text']) {
+    for (const field of ['topic', 'text']) {
         document.getElementById(`add-mem-${field}`).value = '';
     }
     document.getElementById('add-mem-importance').value = '5';
-    window.updateAddMemoryKind();
     window.openModal('add-memory-modal');
 };
 
@@ -36,7 +26,6 @@ window.submitAddMemory = async function() {
     const body = {
         bot_name: document.getElementById('add-mem-bot').value.trim(),
         group_or_user_id: document.getElementById('add-mem-group').value.trim(),
-        kind: document.getElementById('add-mem-kind').value,
         topic: document.getElementById('add-mem-topic').value.trim(),
         associated_user_ids: document.getElementById('add-mem-associated-ids').value.trim(),
         importance: normalizeMemoryImportance(document.getElementById('add-mem-importance').value),
@@ -49,8 +38,6 @@ window.submitAddMemory = async function() {
     const button = document.getElementById('add-mem-save');
     button.disabled = true;
     try {
-        const expires = document.getElementById('add-mem-expires').value;
-        if (body.kind === 'agreement' && expires) body.expires_at = new Date(expires).toISOString();
         const res = await window.apiPost('/memories/add', body);
         if (res.status !== 'success') throw new Error(res.message || '保存失败');
         window.showToast('保存成功，已定位到人工录入的记忆');
@@ -60,8 +47,6 @@ window.submitAddMemory = async function() {
             if (!Array.from(select.options).some(option => option.value === value)) select.append(new Option(value, value));
             select.value = value;
         }
-        document.getElementById('memory-kind').value = body.kind;
-        document.getElementById('memory-status').value = body.expires_at && new Date(body.expires_at) <= new Date() ? 'expired' : 'active';
         document.getElementById('memory-search').value = '';
         document.getElementById('memory-associated-user-id').value = '';
         window.GiftiaApp.resetPagination('memories');
@@ -83,32 +68,13 @@ window.openEditMemoryModal = function(item) {
     document.getElementById('edit-mem-bot').value = item.bot_name;
     document.getElementById('edit-mem-group').value = item.group_or_user_id;
     document.getElementById('edit-mem-identity').textContent = [
-        MEMORY_KINDS[item.kind] || '事件', meta.manual_entry ? '人工录入' : '',
+        meta.manual_entry ? '人工录入' : '',
         meta.topic || ''
     ].filter(Boolean).join(' · ');
     document.getElementById('edit-mem-associated-ids').value = Array.isArray(meta.associated_user_ids)
         ? meta.associated_user_ids.join(',') : (meta.user_id || '');
     document.getElementById('edit-mem-importance').value = normalizeMemoryImportance(item.importance);
     document.getElementById('edit-mem-text').value = item.text;
-    const status = document.getElementById('edit-mem-status');
-    status.replaceChildren(new Option(MEMORY_STATUSES[item.status] || item.status, item.status));
-    const canClose = item.kind === 'agreement' && item.status === 'active';
-    if (canClose) {
-        status.append(new Option('已完成', 'completed'), new Option('已取消', 'cancelled'));
-    }
-    status.disabled = !canClose;
-    document.getElementById('edit-mem-expiry-group').hidden = item.kind !== 'agreement';
-    const expires = document.getElementById('edit-mem-expires');
-    expires.value = '';
-    expires.disabled = !canClose;
-    if (item.expires_at) {
-        const date = new Date(item.expires_at);
-        if (!isNaN(date.getTime())) {
-            // datetime-local expects wall-clock fields, not UTC fields.
-            const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-            expires.value = local.toISOString().slice(0, 19);
-        }
-    }
     window.openModal('edit-memory-modal');
 };
 
@@ -130,11 +96,6 @@ window.submitEditMemory = async function() {
     const button = document.getElementById('edit-mem-save');
     button.disabled = true;
     try {
-        if (editingMemory.kind === 'agreement' && editingMemory.status === 'active') {
-            body.status = document.getElementById('edit-mem-status').value;
-            const expires = document.getElementById('edit-mem-expires').value;
-            body.expires_at = expires ? new Date(expires).toISOString() : '';
-        }
         const res = await window.apiPost('/memories/update', body);
         if (res.status !== 'success') throw new Error(res.message || '更新失败');
         window.showToast('保存成功');
@@ -174,12 +135,6 @@ window.openMemoryCleanModal = function() {
     document.getElementById("clean-mem-group").value = groupSelect ? groupSelect.value : "";
     document.getElementById("clean-mem-associated-user-id").value = document.getElementById("memory-associated-user-id")?.value || "";
     document.getElementById("clean-mem-search").value = document.getElementById("memory-search")?.value || "";
-    for (const filter of ['kind', 'status']) {
-        const source = document.getElementById(`memory-${filter}`);
-        const target = document.getElementById(`clean-mem-${filter}`);
-        target.replaceChildren(...Array.from(source.options, option => option.cloneNode(true)));
-        target.value = source.value;
-    }
     document.getElementById("clean-mem-max-importance").value = "3";
     document.getElementById("clean-mem-max-hit-count").value = "1";
     document.getElementById("clean-mem-min-age-days").value = "60";
@@ -241,8 +196,6 @@ function collectMemoryCleanCriteria() {
         group_or_user_id: document.getElementById("clean-mem-group").value.trim(),
         associated_user_id: document.getElementById("clean-mem-associated-user-id").value.trim(),
         search: document.getElementById("clean-mem-search").value.trim(),
-        kind: document.getElementById('clean-mem-kind').value,
-        status: document.getElementById('clean-mem-status').value,
         max_importance: normalizeMemoryCleanNumber(document.getElementById("clean-mem-max-importance").value, 3, 1, 10),
         max_hit_count: normalizeMemoryCleanNumber(document.getElementById("clean-mem-max-hit-count").value, 1, 0),
         min_age_days: normalizeMemoryCleanNumber(document.getElementById("clean-mem-min-age-days").value, 60, 0),
@@ -283,7 +236,6 @@ function renderMemoryCleanCandidates(items, total, truncated) {
                 <div>
                     <div class="memory-clean-candidate-text">${window.escapeHtml(item.text)}</div>
                     <div class="memory-clean-candidate-meta">
-                        <span>${window.escapeHtml(MEMORY_KINDS[item.kind] || '事件')} · ${window.escapeHtml(MEMORY_STATUSES[item.status] || item.status)}</span>
                         ${item.metadata?.manual_entry ? '<span>人工录入</span>' : ''}
                         <span>会话 ${window.escapeHtml(item.group_or_user_id || "-")}</span>
                         <span>重要度 ${item.importance}</span>

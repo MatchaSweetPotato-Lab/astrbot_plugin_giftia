@@ -211,7 +211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let filterTimeout;
     const filterInputIds = [
         "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
-        "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-kind", "memory-status", "memory-search",
+        "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
         "media-type", "media-search",
         "sticker-bot-name", "sticker-category", "sticker-tag", "sticker-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",

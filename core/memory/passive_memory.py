@@ -3,7 +3,7 @@ import json
 
 from astrbot.api import logger
 
-from .atomic import recall_memory_metadata
+from .atomic import memory_metadata
 from .passive_tasks import PassiveSummaryTaskMixin
 
 
@@ -12,9 +12,6 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.plugin = plugin
         self.passive_memory_locks: dict[str, asyncio.Lock] = {}
         self.summary_tasks: dict[str, asyncio.Task] = {}
-        self.consolidation_tasks: dict[str, asyncio.Task] = {}
-        self.consolidation_locks: dict[str, asyncio.Lock] = {}
-        self.consolidation_wakeups: set[str] = set()
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()
@@ -38,63 +35,12 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self._closed = True
         tasks = [
             *self.summary_tasks.values(),
-            *self.consolidation_tasks.values(),
             *self.maintenance_tasks,
         ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.summary_tasks.clear()
-        self.consolidation_tasks.clear()
-        self.consolidation_wakeups.clear()
-
-    def _schedule_memory_consolidation(
-        self, bot_name: str, session_id: str, self_id: str
-    ) -> None:
-        """Start one independent consumer for durable new-memory jobs.
-
-        Args:
-            bot_name: Owning bot configuration.
-            session_id: Owning conversation.
-            self_id: Observing bot account.
-        """
-        key = f"{bot_name}:{session_id}"
-        if self._closed:
-            return
-        if key in self.consolidation_tasks:
-            self.consolidation_wakeups.add(key)
-            return
-        self.consolidation_tasks[key] = asyncio.create_task(
-            self._consolidate_session(bot_name, session_id, self_id)
-        )
-
-    async def _consolidate_session(
-        self, bot_name: str, session_id: str, self_id: str
-    ) -> None:
-        """Consume queued additions without rerunning extraction or scanning history.
-
-        Args:
-            bot_name: Owning bot configuration.
-            session_id: Owning conversation.
-            self_id: Observing bot account.
-        """
-        key = f"{bot_name}:{session_id}"
-        lock = self.consolidation_locks.setdefault(key, asyncio.Lock())
-        try:
-            while not self._closed:
-                self.consolidation_wakeups.discard(key)
-                async with lock:
-                    handled = await self.consolidate_memories(
-                        bot_name, session_id, self_id
-                    )
-                if not handled and key not in self.consolidation_wakeups:
-                    break
-                await asyncio.sleep(0)
-        except Exception:
-            logger.exception("[Giftia Memory] Consolidation worker failed for %s", key)
-        finally:
-            self.consolidation_tasks.pop(key, None)
-            self.consolidation_wakeups.discard(key)
 
     async def _remember_session(
         self, bot_name: str, session_id: str, self_id: str
@@ -210,7 +156,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         threshold: float = 0.7,
         filter_active_users: bool = True,
     ) -> list[dict]:
-        """Recall current memory versions, including historical agreement states.
+        """Recall indexed factual memories from the current conversation.
 
         Args:
             bot_name: Owning bot configuration.
@@ -222,11 +168,11 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             filter_active_users: Limit automatic recall to current participants.
 
         Returns:
-            Non-superseded memories with matching index revisions and current state.
+            Factual memories with matching index revisions.
         """
         async with self.plugin.db.conn.execute(
             "SELECT memory_id FROM memories WHERE bot_name=? AND group_or_user_id=? "
-            "AND status<>'superseded' AND revision=indexed_revision",
+            "AND revision=indexed_revision",
             (bot_name, group_or_user_id),
         ) as cursor:
             eligible_ids = [row[0] for row in await cursor.fetchall()]
@@ -246,9 +192,9 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         ids = [str(memory.get("id") or "") for memory in embedding_memories]
         placeholders = ",".join("?" for _ in ids)
         async with self.plugin.db.conn.execute(
-            "SELECT memory_id, text, metadata, kind, status, expires_at, created_at, updated_at "
+            "SELECT memory_id, text, metadata, created_at, updated_at "
             "FROM memories WHERE bot_name=? AND group_or_user_id=? "
-            f"AND memory_id IN ({placeholders}) AND status<>'superseded' AND revision=indexed_revision",
+            f"AND memory_id IN ({placeholders}) AND revision=indexed_revision",
             (bot_name, group_or_user_id, *ids),
         ) as cursor:
             current = {row["memory_id"]: dict(row) for row in await cursor.fetchall()}
@@ -257,12 +203,11 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             row = current.get(memory.get("id"))
             if row is None:
                 continue
-            metadata = recall_memory_metadata(row)
+            metadata = memory_metadata(row)
             recalled.append(
                 {
                     **memory,
                     **row,
-                    "status": metadata["status"],
                     "metadata": json.dumps(metadata, ensure_ascii=False),
                 }
             )
@@ -434,50 +379,5 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
                     return "记忆归纳失败，未推进处理进度，可稍后重试。"
                 processed_end = await self.plugin.db.get_kv_data(cursor_key, cursor)
                 return f"已归纳消息 id {cursor + 1} 到 {processed_end}；剩余消息会继续分批处理。"
-        finally:
-            self.maintenance_tasks.discard(current)
-
-    async def force_consolidate_memories(
-        self, bot_name: str, session_id: str, self_id: str
-    ) -> str:
-        """Retry a queued new-memory batch on explicit request.
-
-        Args:
-            bot_name: Owning bot.
-            session_id: Owning conversation.
-            self_id: Observing bot account.
-
-        Returns:
-            User-facing maintenance outcome.
-        """
-        if self._closed or not self.plugin.passive_memory_enabled:
-            return "记忆维护未启用。"
-        current = asyncio.current_task()
-        self.maintenance_tasks.add(current)
-        try:
-            await self._remember_session(bot_name, session_id, self_id)
-            key = f"{bot_name}:{session_id}"
-            lock = self.consolidation_locks.setdefault(key, asyncio.Lock())
-            if lock.locked() or key in self.consolidation_tasks:
-                return "当前会话正在进行记忆维护，请稍后再试。"
-            async with lock:
-                job = (
-                    await self.plugin.db.memory_maintenance_repo.pending_consolidation(
-                        bot_name, session_id, include_suspended=True
-                    )
-                )
-                if not job:
-                    return "当前会话暂无待整理的新增记忆批次。"
-                if await self.consolidate_memories(
-                    bot_name, session_id, str(self_id), include_suspended=True
-                ):
-                    self._schedule_memory_consolidation(
-                        bot_name, session_id, str(self_id)
-                    )
-                    remaining = await self.plugin.db.get_kv_data(job["key"])
-                    if remaining and json.loads(remaining).get("status") == "suspended":
-                        return "记忆整理在一次纠正后仍未通过校验，本批已暂挂，原记录与诊断保留；其他批次会继续处理。可执行 /整理记忆 重试。"
-                    return "已处理一批新增记忆；无相关历史记忆的条目已跳过整理，原始来源保留。"
-                return "记忆整理失败，原记录与进度保留，可稍后重试。"
         finally:
             self.maintenance_tasks.discard(current)

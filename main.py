@@ -399,25 +399,6 @@ class Giftia(Star):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
-    @filter.command("整理记忆")
-    async def consolidate_memory(self, event: AstrMessageEvent):
-        """Consolidate one memory batch in the current conversation.
-
-        Args:
-            event: Administrator command event.
-        """
-        bot_name = self.adapter_id_map.get(event.platform_meta.id)
-        if not bot_name:
-            yield event.plain_result("当前机器人未配置 Giftia。")
-            return
-        result = await self.passive_memory_manager.force_consolidate_memories(
-            bot_name,
-            event.get_group_id() or event.get_sender_id(),
-            event.get_self_id(),
-        )
-        yield event.plain_result(result)
-
-    @filter.permission_type(filter.PermissionType.ADMIN, raise_error=False)
     @filter.command("读取近期记忆")
     async def get_early_memory(
         self,

@@ -11,7 +11,7 @@ from cachetools import LRUCache
 
 from astrbot.api import logger
 
-from ..memory.atomic import recall_memory_metadata
+from ..memory.atomic import memory_metadata
 from ..memory.memory import LTM
 from ..utils.http_manager import HttpManager
 from ..utils.schemas import (
@@ -824,11 +824,7 @@ class DataCache:
                 continue
 
             score, distance = self._session_recall_score(raw_memory)
-            state_metadata = recall_memory_metadata(raw_memory)
-            if state_metadata["status"] == "superseded":
-                pool.pop(memory_id, None)
-                continue
-            metadata = json.dumps(state_metadata, ensure_ascii=False)
+            metadata = json.dumps(memory_metadata(raw_memory), ensure_ascii=False)
             updated_at = str(raw_memory.get("updated_at") or "")
             created_at = str(raw_memory.get("created_at") or "")
 
@@ -889,10 +885,7 @@ class DataCache:
         for memory in ranked:
             if len(selected) >= max_items:
                 break
-            metadata = recall_memory_metadata({"metadata": memory.metadata})
-            if metadata["status"] == "superseded":
-                pool.pop(memory.memory_id, None)
-                continue
+            metadata = memory_metadata({"metadata": memory.metadata})
             memory.metadata = json.dumps(metadata, ensure_ascii=False)
             selected.append(memory)
         return selected

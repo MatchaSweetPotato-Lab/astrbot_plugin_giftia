@@ -68,12 +68,11 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
     assert len(root.findall(".//memory")) == 3
     relevant = root.find("relevant_memories/memory")
     assert relevant.text == current["text"]
-    assert set(relevant.attrib) == {"kind", "status", "occurred_at"}
-    assert relevant.attrib["status"] == "active"
+    assert set(relevant.attrib) == {"occurred_at"}
     habit = root.find("session_recalled_memories/memory")
-    assert set(habit.attrib) == {"kind", "status", "observed_from", "observed_until"}
+    assert set(habit.attrib) == {"observed_from", "observed_until"}
     old = root.findall("session_recalled_memories/memory")[-1]
-    assert set(old.attrib) == {"status", "recorded_at"}
+    assert set(old.attrib) == {"recorded_at"}
     assert old.attrib["recorded_at"].startswith("2020-01-01")
     assert old.text == legacy.text
     for omitted in (
@@ -88,7 +87,7 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
         assert omitted not in prompt
 
 
-def test_agreement_context_preserves_deadline_and_does_not_invent_event_time():
+def test_legacy_classification_does_not_enter_context_or_invent_event_time():
     prompt = build_reply_prompt(
         recent_messages=[],
         media_captions=[],
@@ -108,73 +107,7 @@ def test_agreement_context_preserves_deadline_and_does_not_invent_event_time():
     memory = fromstring("<context>" + prompt + "</context>").find(
         "relevant_memories/memory"
     )
-    assert set(memory.attrib) == {"kind", "status", "recorded_at", "expires_at"}
-
-
-@pytest.mark.parametrize(
-    ("status", "expires_at", "expected"),
-    [
-        ("active", None, "active"),
-        ("active", "2000-01-01T00:00:00Z", "expired"),
-        ("completed", "2000-01-01T00:00:00Z", "completed"),
-        ("cancelled", "2000-01-01T00:00:00Z", "cancelled"),
-        ("expired", "2999-01-01T00:00:00Z", "expired"),
-        ("superseded", "invalid", None),
-    ],
-)
-@pytest.mark.parametrize("source", ["relevant_memories", "session_recalled_memories"])
-def test_reply_context_shows_historical_status_and_excludes_replaced_versions(
-    status, expires_at, expected, source
-):
-    metadata = {
-        "kind": "agreement",
-        "status": status,
-        "expires_at": expires_at,
-    }
-    if source == "relevant_memories":
-        record = {
-            "id": "promise",
-            "text": "我和甲之前的约定。",
-            "status": status,
-            "expires_at": expires_at,
-            "metadata": {
-                **metadata,
-                "status": "active",
-                "expires_at": "2000-01-01T00:00:00Z",
-            },
-        }
-    else:
-        record = SessionRecallMemory(
-            memory_id="promise",
-            text="我和甲之前的约定。",
-            metadata=json.dumps(metadata),
-        )
-    prompt = build_reply_prompt(
-        recent_messages=[], media_captions=[], bot_status=None, **{source: [record]}
-    )
-    memories = fromstring("<context>" + prompt + "</context>").findall(".//memory")
-    if expected is None:
-        assert memories == []
-    else:
-        assert len(memories) == 1 and memories[0].attrib["status"] == expected
-        assert memories[0].text == "我和甲之前的约定。"
-
-
-def test_superseded_current_result_suppresses_older_cached_copies():
-    prompt = build_reply_prompt(
-        recent_messages=[],
-        media_captions=[],
-        bot_status=None,
-        relevant_memories=[
-            {"id": "old", "text": "旧版本", "status": "superseded"},
-            {"id": "new", "text": "更新后的事实", "status": "active"},
-        ],
-        session_recalled_memories=[SessionRecallMemory(memory_id="old", text="旧版本")],
-    )
-    memories = fromstring("<context>" + prompt + "</context>").findall(".//memory")
-    assert [(item.text, item.attrib["status"]) for item in memories] == [
-        ("更新后的事实", "active")
-    ]
+    assert set(memory.attrib) == {"recorded_at"}
 
 
 @pytest.mark.asyncio
@@ -182,8 +115,8 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
     monkeypatch,
 ):
     records = [
-        {"id": "m1", "text": "相同正文", "metadata": {"kind": "event"}},
-        {"id": "m2", "text": "相同正文", "metadata": {"kind": "agreement"}},
+        {"id": "m1", "text": "相同正文", "metadata": {"topic": "游戏"}},
+        {"id": "m2", "text": "相同正文", "metadata": {"topic": "观星"}},
     ]
     search = AsyncMock(return_value=records)
     monkeypatch.setattr(
@@ -195,7 +128,7 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
     result = XmlLlmResult(search_memories=[("group", "过往约定")])
     await executor.execute_queries("bot", "group", result, [], relevant, other)
     assert relevant == records
-    assert relevant[1]["metadata"]["kind"] == "agreement"
+    assert relevant[1]["metadata"]["topic"] == "观星"
     search.return_value = []
     relevant.clear()
     await executor.execute_queries("bot", "group", result, [], relevant, other)
@@ -205,7 +138,7 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
 
 @pytest.mark.asyncio
 async def test_decision_passes_records_without_aliasing_pending_cache(monkeypatch):
-    record = {"id": "m1", "text": "甲曾经约我观星。", "metadata": {"kind": "agreement"}}
+    record = {"id": "m1", "text": "甲曾经约我观星。", "metadata": {"topic": "观星"}}
     monkeypatch.setattr(
         "core.conversation.decision_engine.search_memories_with_rerank",
         AsyncMock(return_value=[record]),
