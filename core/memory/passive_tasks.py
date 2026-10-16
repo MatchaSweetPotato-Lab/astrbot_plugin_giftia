@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 
 from astrbot.api import logger
@@ -65,12 +66,19 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                             extra_info={"task_name": task_name},
                         )
                     if llm_resp and llm_resp.completion_text:
+                        completion_text = llm_resp.completion_text
+                        try:
+                            log_text = json.dumps(
+                                json.loads(completion_text), ensure_ascii=False
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            log_text = completion_text
                         logger.debug(
-                            "[Giftia Memory] %s raw response: %s",
+                            "[Giftia Memory] %s response: %s",
                             task_name,
-                            llm_resp.completion_text,
+                            log_text,
                         )
-                        return llm_resp.completion_text
+                        return completion_text
                 except Exception as e:
                     logger.error(
                         f"[Giftia Passive Memory] 提供商 {provider_id} 调用{task_name}报错: {e}"
