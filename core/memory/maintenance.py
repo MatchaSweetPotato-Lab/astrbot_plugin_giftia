@@ -3,12 +3,19 @@
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime
-from xml.etree.ElementTree import Element, SubElement, indent, tostring
+from xml.etree.ElementTree import Element, SubElement, fromstring, indent, tostring
 
 from astrbot.api import logger
 
 from ..llm.json_parse import parse_markdown_json
+from ..llm.prompt import (
+    _apply_call_names_to_messages,
+    parse_caption_to_str,
+    process_media_captions_for_prompt,
+)
+from ..utils.schemas import MediaCaption, MessageData
 from .atomic import (
     DirectSpeech,
     MemoryRecords,
@@ -20,75 +27,78 @@ from .atomic import (
 class MemoryMaintenanceMixin:
     def _memory_user_prompt(
         self,
-        bot_name,
-        session_id,
-        self_id,
-        messages,
-        media,
-        active_users_text: str = "",
+        messages: list[MessageData],
+        media_captions: list[MediaCaption],
+        active_user_briefs: list[dict] | None = None,
     ):
         """Render bounded model inputs with explicit provenance boundaries.
 
         Args:
-            bot_name: Bot configuration owning the records.
-            session_id: Conversation owning the records.
-            self_id: Observing bot account.
             messages: New message batch with database IDs.
-            media: Previously completed captions.
-            active_users_text: Scoped account, nickname, and preferred-name mapping.
+            media_captions: Previously completed captions, including media metadata.
+            active_user_briefs: Scoped preferred names in the reply prompt's format.
 
         Returns:
             Escaped participant names, source messages, and available media captions.
         """
-        root = Element(
-            "memory_input",
-            {
-                "bot_name": bot_name,
-                "session_id": session_id,
-                "self_id": self_id,
-                "task": "extraction",
-                "now": datetime.now().astimezone().isoformat(),
-            },
+        messages = _apply_call_names_to_messages(
+            messages,
+            user_id="",
+            user_profile=None,
+            active_user_briefs=active_user_briefs,
         )
-        SubElement(root, "active_users").text = active_users_text or "无"
-        captions = SubElement(root, "available_media")
-        rendered_media = set()
+        root = Element("memory_input")
+        source_messages = []
+        direct_media_ids = set()
         history = SubElement(root, "new_messages")
         for msg in messages:
+            if msg.is_recalled or msg.role == "operation_log":
+                continue
             speech = DirectSpeech(msg.content or "")
             direct = "".join(speech.parts)
+            if direct.lstrip().startswith("/"):
+                continue
             media_ids = [
                 media_id
-                for media_id in dict.fromkeys(msg.media_id_list or [])
+                for media_id in msg.media_id_list or []
                 if media_id in speech.media_ids
             ]
-            for media_id in media_ids:
-                if media_id in media and media_id not in rendered_media:
-                    SubElement(captions, "media", {"id": media_id}).text = json.dumps(
-                        media[media_id], ensure_ascii=False
-                    )
-                    rendered_media.add(media_id)
-            allowed = (
-                not msg.is_recalled
-                and msg.role != "operation_log"
-                and not direct.lstrip().startswith("/")
+            source_messages.append(
+                replace(msg, content=direct, media_id_list=media_ids)
             )
-            SubElement(
-                history,
-                "message",
-                {
-                    "source_id": str(msg.db_id),
-                    "message_id": msg.message_id,
-                    "user_id": str(msg.user_id),
-                    "nickname": msg.nickname or "",
-                    "time": msg.time or "",
-                    "evidence_allowed": str(allowed).lower(),
-                    "sender_is_bot": str(str(msg.user_id) == self_id).lower(),
-                    "mentioned_user_ids": json.dumps(speech.mentioned_user_ids),
-                    "reply_user_ids": json.dumps(speech.reply_user_ids),
-                    "media_ids": json.dumps(media_ids),
-                },
-            ).text = direct
+            direct_media_ids.update(media_ids)
+            attrs = {"source_id": str(msg.db_id), "user_id": str(msg.user_id)}
+            nickname = msg.nickname
+            if nickname and nickname != str(msg.user_id):
+                attrs["nickname"] = nickname
+            if msg.time:
+                attrs["time"] = msg.time
+            if speech.reply_user_ids:
+                attrs["reply_to"] = ",".join(dict.fromkeys(speech.reply_user_ids))
+            SubElement(history, "message", attrs)
+        # Filter before processing so quoted or ineligible media cannot enter the prompt.
+        available_captions = {
+            caption.hash_val: caption
+            for caption in media_captions
+            if caption.hash_val in direct_media_ids
+            and caption.is_captioned
+            and ((caption.text or "").strip() or (caption.caption or "").strip())
+        }
+        processed_messages, remaining_captions = process_media_captions_for_prompt(
+            source_messages, list(available_captions.values()), threshold=100
+        )
+        for node, msg in zip(history, processed_messages):
+            node.text = msg.content
+        if remaining_captions:
+            captions = Element("media_content")
+            captions.extend(
+                fromstring(parse_caption_to_str(caption))
+                for caption in remaining_captions
+            )
+            root.insert(0, captions)
+        SubElement(root, "time").text = (
+            datetime.now().astimezone().isoformat(timespec="seconds")
+        )
         indent(root, space="  ")
         return tostring(root, encoding="unicode")
 
@@ -115,7 +125,12 @@ class MemoryMaintenanceMixin:
         if await self.plugin.db.get_kv_data(batch_key, 0):
             return True
         repo = self.plugin.db.memories_repo
-        media = context.get("memory_media", {})
+        media_captions = context.get("memory_media_captions", [])
+        media = {
+            caption.hash_val: {"text": caption.text, "caption": caption.caption}
+            for caption in media_captions
+            if caption.is_captioned
+        }
         prompt = self._format_prompt_template(
             self._get_memory_summary_prompt(), nickname, self_id
         )
@@ -126,12 +141,9 @@ class MemoryMaintenanceMixin:
             "原子记忆归纳",
             prompt,
             self._memory_user_prompt(
-                bot_name,
-                group_or_user_id,
-                self_id,
                 messages,
-                media,
-                active_users_text=context.get("active_users_text", ""),
+                media_captions,
+                active_user_briefs=context.get("active_user_briefs"),
             ),
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,

@@ -209,10 +209,16 @@ def process_media_captions_for_prompt(
     threshold: int = 100,
     force_inline_all: bool = False,
 ) -> tuple[list[MessageData], list[MediaCaption]]:
-    """
-    分析消息列表与媒体转述，进行内联判定与替换。
-    force_inline_all: 若为 True，则无视长度和频次限制，将所有已有转述 100% 全部内联替换到正文中。
-    返回: (修改后的消息副本列表, 剩余未内联的媒体转述列表)
+    """Embed captions in message copies or retain them as shared footnotes.
+
+    Args:
+        messages: Source messages with attached media identifiers.
+        media_captions: Available captions and descriptive metadata.
+        threshold: Maximum descriptive length for a unique inline caption.
+        force_inline_all: Inline all supplied captions regardless of length or count.
+
+    Returns:
+        Processed message copies and captions that remain as footnotes.
     """
     from collections import Counter
 
@@ -275,16 +281,14 @@ def process_media_captions_for_prompt(
             for hash_val in msg.media_id_list:
                 if hash_val in inline_hashes:
                     formatted = format_inline_caption(caption_map[hash_val])
-                    if f"[图片:{hash_val}][描述:" not in msg.content:
-                        msg.content = msg.content.replace(
-                            f"[图片:{hash_val}]", f"[图片:{hash_val}][描述:{formatted}]"
-                        )
-                    if f"[语音:{hash_val}][描述:" not in msg.content:
-                        msg.content = msg.content.replace(
-                            f"[语音:{hash_val}]", f"[语音:{hash_val}][描述:{formatted}]"
-                        )
+                    for label in ("图片", "语音", "视频"):
+                        placeholder = f"[{label}:{hash_val}]"
+                        if f"{placeholder}[描述:" not in msg.content:
+                            msg.content = msg.content.replace(
+                                placeholder, f"{placeholder}[描述:{formatted}]"
+                            )
 
-    # 剩余未内联的媒体（仅保留已有转述内容的图片/语音媒体；视频转述不自动注入提示词注脚，以防上下文膨胀）
+    # Caption selection belongs to the caller; supplied videos must not be lost.
     remaining_captions = []
     if media_captions:
         for caption in media_captions:
@@ -540,7 +544,14 @@ def parse_message_to_str(message: MessageData, truncate_limit: int = 500) -> str
 
 
 def parse_caption_to_str(media_caption: MediaCaption) -> str:
-    """构建xml格式的图片等媒体的消息，用于提示词传递聊天记录"""
+    """Render caption data using escaped XML attributes and body text.
+
+    Args:
+        media_caption: Available media description and metadata.
+
+    Returns:
+        A caption element with the media identifier and nonempty metadata.
+    """
     props = ""
     caption_text = ""
     for prop in CAPTION_PROPS:
@@ -551,7 +562,8 @@ def parse_caption_to_str(media_caption: MediaCaption) -> str:
                 continue
             props += f" {prop}={quoteattr(str(value))}"
     return (
-        f'<caption media_id="{media_caption.hash_val}"{props}>{caption_text}</caption>'
+        f"<caption media_id={quoteattr(str(media_caption.hash_val))}{props}>"
+        f"{escape(caption_text)}</caption>"
     )
 
 

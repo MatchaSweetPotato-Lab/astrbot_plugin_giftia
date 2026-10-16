@@ -178,7 +178,7 @@ class PassiveContextMixin:
             )
         chat_history_text = "\n".join(chat_history_lines)
 
-        active_user_lines = []
+        active_user_briefs = []
         user_profile_blocks = []
         for uid in sorted(active_users_in_range):
             nickname = user_id_to_nickname.get(uid, "")
@@ -188,15 +188,10 @@ class PassiveContextMixin:
                 user_id=uid,
             )
 
-            # 获取 Bot 对用户的自定义称呼并注入到 active_users_text 中
+            # Apply preferred names only when rendering, preserving source snapshots.
             call_name = profile_record.get("call_name") if profile_record else None
-            parts = [f"群内昵称: {nickname}" if nickname else None]
             if call_name:
-                parts.append(f"你对他的称呼: {call_name}")
-            info_str = "，".join(p for p in parts if p)
-            active_user_lines.append(
-                f"- {uid} ({info_str})" if info_str else f"- {uid}"
-            )
+                active_user_briefs.append({"user_id": str(uid), "call_name": call_name})
 
             block_lines = [f"用户 {uid} ({nickname})" if nickname else f"用户 {uid}"]
             block_lines.append(
@@ -220,16 +215,14 @@ class PassiveContextMixin:
             "nickname_to_user_id": nickname_to_user_id,
             "user_id_to_nickname": user_id_to_nickname,
             "active_users_in_range": active_users_in_range,
-            "active_users_text": "\n".join(active_user_lines) or "无",
+            "active_user_briefs": active_user_briefs,
             "user_profiles_text": "\n---\n".join(user_profile_blocks) or "无",
             "media_captions_block": media_captions_block,
             "chat_history_text": chat_history_text,
             "alias_observation_messages": db_messages,
-            "memory_media": {
-                caption.hash_val: {"text": caption.text, "caption": caption.caption}
-                for caption in media_captions
-                if caption.is_captioned
-            },
+            "memory_media_captions": [
+                caption for caption in media_captions if caption.is_captioned
+            ],
         }
 
     def _build_profile_user_prompt(self, group_or_user_id: str, context: dict) -> str:
