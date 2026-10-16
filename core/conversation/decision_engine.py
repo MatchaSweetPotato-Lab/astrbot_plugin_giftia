@@ -392,6 +392,13 @@ class DecisionEngine:
         )
 
         # 调用 LLM 决策（纯文本化调用，不传递多模态原始 URL）
+        if getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name,
+                group_or_user_id,
+                event.get_self_id(),
+                [*recent_messages, *pending_messages],
+            )
         result = await self.plugin.call_llm.call_llm_decision(
             provider_ids=provider_ids,
             system_prompt=decision_conf.get("decision_prompt"),

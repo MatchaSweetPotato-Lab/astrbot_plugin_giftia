@@ -1,8 +1,6 @@
 import asyncio
 import json
 
-from astrbot.api import logger
-
 from .atomic import memory_metadata
 from .passive_tasks import PassiveSummaryTaskMixin
 
@@ -15,7 +13,6 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()
-        self.activity_versions: dict[str, int] = {}
         self.vector_locks: dict[str, asyncio.Lock] = {}
         self._closed = False
 
@@ -87,64 +84,36 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         finally:
             self.summary_tasks.pop(key, None)
 
-    async def mark_silence_summary_armed(
-        self, bot_name: str, group_or_user_id: str, trigger_msg_id: str = None
+    async def observe_messages(
+        self, bot_name: str, session_id: str, self_id: str, messages: list
     ) -> None:
-        """Arm silent-session extraction without skipping pending source messages.
+        """Queue the exact message snapshot submitted to a decision or reply model.
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
-            trigger_msg_id: Optional message waking a previously idle bot.
+            session_id: Owning conversation.
+            self_id: Observing bot account.
+            messages: Frozen history and current messages included in the request.
         """
-        if not self.plugin.passive_memory_enabled:
+        if self._closed or not self.plugin.passive_memory_enabled:
             return
-        fmt_key = f"{bot_name}:{group_or_user_id}"
-        self.activity_versions[fmt_key] = self.activity_versions.get(fmt_key, 0) + 1
-        lock = self.passive_memory_locks.setdefault(fmt_key, asyncio.Lock())
-        can_skip = bool(
-            trigger_msg_id and fmt_key not in self.summary_tasks and not lock.locked()
+        # Register the route first so a crash cannot strand newly queued messages.
+        await self._remember_session(bot_name, session_id, self_id)
+        await self.plugin.db.chat_history_repo.mark_messages_observed(
+            bot_name, session_id, [msg.message_id for msg in messages]
         )
-        # Serialize an idle cursor advance with extraction. Busy sessions still
-        # record activity immediately without waiting for a model call to finish.
-        if can_skip:
-            await lock.acquire()
-        try:
-            was_armed = await self.plugin.db.get_kv_data(
-                f"passive_memory:silence_armed:{fmt_key}", 0
-            )
+
+    async def reset_silence_counter(self, bot_name: str, session_id: str) -> None:
+        """Restart silence counting after bot output without changing source eligibility.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+        """
+        if not self._closed and self.plugin.passive_memory_enabled:
             await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silence_armed:{fmt_key}", 1
+                f"passive_memory:silent_count:{bot_name}:{session_id}", 0
             )
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silent_count:{fmt_key}", 0
-            )
-            # An armed session may have failed or unfinished batches. A wake-up
-            # may skip unobserved history only when no such work is pending.
-            if can_skip and not was_armed:
-                db_msg_id = await self.plugin.db.get_database_id_by_message_id(
-                    message_id=trigger_msg_id,
-                    group_or_user_id=group_or_user_id,
-                    bot_name=bot_name,
-                )
-                if db_msg_id:
-                    last_summarized_id = await self.plugin.db.get_kv_data(
-                        f"passive_memory:last_summarized_id:{fmt_key}", 0
-                    )
-                    if db_msg_id - 1 > last_summarized_id:
-                        logger.info(
-                            "[Giftia Passive Memory] Skipping unobserved history for %s: cursor %s -> %s",
-                            fmt_key,
-                            last_summarized_id,
-                            db_msg_id - 1,
-                        )
-                        await self.plugin.db.upsert_kv_data(
-                            f"passive_memory:last_summarized_id:{fmt_key}",
-                            db_msg_id - 1,
-                        )
-        finally:
-            if can_skip:
-                lock.release()
 
     async def search_and_filter_memories(
         self,
@@ -260,55 +229,30 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         if self._closed or not self.plugin.passive_memory_enabled:
             return
         key = f"{bot_name}:{group_or_user_id}"
-        self.activity_versions[key] = self.activity_versions.get(key, 0) + 1
-        await self._remember_session(bot_name, group_or_user_id, self_id)
         if key in self.summary_tasks:
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silence_armed:{key}", 1
-            )
             return
         lock = self.passive_memory_locks.setdefault(key, asyncio.Lock())
         if lock.locked():
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silence_armed:{key}", 1
-            )
             return
         async with lock:
+            repo = self.plugin.db.chat_history_repo
+            first_id, last_id, pending_count = await repo.get_pending_memory_stats(
+                bot_name, group_or_user_id
+            )
+            if not pending_count:
+                return
             active = self.plugin.active_reply_counters.get(key, 0)
-            armed = await self.plugin.db.get_kv_data(
-                f"passive_memory:silence_armed:{key}", 0
-            )
-            if not active and not armed:
-                return
-            max_id = await self.plugin.db.get_max_message_id(bot_name, group_or_user_id)
-            cursor = int(
-                await self.plugin.db.get_kv_data(
-                    f"passive_memory:last_summarized_id:{key}", 0
-                )
-            )
-            if cursor > max_id:
-                cursor = max_id
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:last_summarized_id:{key}", cursor
-                )
-            if not cursor and not armed:
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:last_summarized_id:{key}", max_id
-                )
-                return
-            if max_id <= cursor:
-                return
             boundary = await self.plugin.db.get_boundary_message_id(
                 bot_name, group_or_user_id, self.plugin.msg_number
             )
             end_id = 0
-            if boundary > cursor:
-                overflow = await self.plugin.db.get_message_count_by_id_range(
-                    bot_name, group_or_user_id, cursor + 1, boundary
+            if boundary > first_id:
+                _, overflow_end, overflow = await repo.get_pending_memory_stats(
+                    bot_name, group_or_user_id, end_id=boundary - 1
                 )
                 if overflow >= self.plugin.passive_memory_overflow_threshold:
-                    end_id = boundary
-            if not end_id and not active and armed:
+                    end_id = overflow_end
+            if not end_id and not active:
                 silent_count = (
                     int(
                         await self.plugin.db.get_kv_data(
@@ -321,7 +265,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
                     f"passive_memory:silent_count:{key}", silent_count
                 )
                 if silent_count >= self.plugin.passive_memory_silence_threshold:
-                    end_id = max_id
+                    end_id = last_id
             elif active:
                 await self.plugin.db.upsert_kv_data(
                     f"passive_memory:silent_count:{key}", 0
@@ -329,7 +273,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             if end_id:
                 self.summary_tasks[key] = asyncio.create_task(
                     self._summarize_session(
-                        bot_name, group_or_user_id, str(self_id), cursor + 1, end_id
+                        bot_name, group_or_user_id, str(self_id), first_id, end_id
                     )
                 )
 
@@ -356,28 +300,25 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         current = asyncio.current_task()
         self.maintenance_tasks.add(current)
         try:
-            await self._remember_session(bot_name, group_or_user_id, self_id)
             key = f"{bot_name}:{group_or_user_id}"
             lock = self.passive_memory_locks.setdefault(key, asyncio.Lock())
             if lock.locked() or key in self.summary_tasks:
                 return "当前会话正在进行记忆维护，请稍后再试。"
             async with lock:
-                maximum = await self.plugin.db.get_max_message_id(
+                (
+                    first_id,
+                    last_id,
+                    pending,
+                ) = await self.plugin.db.chat_history_repo.get_pending_memory_stats(
                     bot_name, group_or_user_id
                 )
-                cursor_key = f"passive_memory:last_summarized_id:{key}"
-                cursor = int(await self.plugin.db.get_kv_data(cursor_key, 0))
-                if cursor > maximum:
-                    cursor = maximum
-                    await self.plugin.db.upsert_kv_data(cursor_key, cursor)
-                if maximum <= cursor:
-                    return "当前会话暂无未总结的消息。"
+                if not pending:
+                    return "当前会话暂无已观察且未总结的消息。"
                 success = await self._run_background_summarize(
-                    bot_name, group_or_user_id, str(self_id), cursor + 1, maximum
+                    bot_name, group_or_user_id, str(self_id), first_id, last_id
                 )
                 if not success:
                     return "记忆归纳失败，未推进处理进度，可稍后重试。"
-                processed_end = await self.plugin.db.get_kv_data(cursor_key, cursor)
-                return f"已归纳消息 id {cursor + 1} 到 {processed_end}；剩余消息会继续分批处理。"
+                return "已归纳一批已观察消息；剩余消息会继续分批处理。"
         finally:
             self.maintenance_tasks.discard(current)

@@ -443,6 +443,13 @@ class ReplyPipeline:
             random.shuffle(provider_ids)
 
         # 4. 调用 LLM 进行回复
+        if getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name,
+                group_or_user_id,
+                event.get_self_id(),
+                [*recent_messages, *reply_messages],
+            )
         llm_result = await self.plugin.call_llm.call_llm_reply(
             event=event,
             group_or_user_id=group_or_user_id,

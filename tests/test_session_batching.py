@@ -56,7 +56,7 @@ def runtime(monkeypatch):
             get_recent_message=AsyncMock(side_effect=history),
             is_bot_muted=Mock(return_value=False),
         ),
-        passive_memory_manager=SimpleNamespace(mark_silence_summary_armed=AsyncMock()),
+        passive_memory_manager=SimpleNamespace(reset_silence_counter=AsyncMock()),
     )
     manager = ChatManager(plugin)
     manager.decision_engine.check_whitelists = Mock(return_value=True)
@@ -202,8 +202,8 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
     await runtime.send("102")
     await runtime.drain()
 
-    # Only an idle wake-up may skip history before the first batch member.
-    expected_cursor = 100 if has_reply and active_counter == 0 else 90
+    # Replies never advance memory progress or skip the history they read.
+    expected_cursor = 90
     assert stored[cursor_key] == expected_cursor
 
     await runtime.send("103")
@@ -212,7 +212,6 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
     # A follow-up reply must preserve messages still waiting for summarization.
     assert stored[cursor_key] == expected_cursor
     if has_reply:
-        assert stored["passive_memory:silence_armed:bot:group"] == 1
         assert stored["passive_memory:silent_count:bot:group"] == 0
         assert plugin.active_reply_counters["bot:group"] == 10
     else:
@@ -404,6 +403,8 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     later = MessageData(message_id="B", content="later", user_id="user")
     own = MessageData(message_id="R", content="already sent", user_id="self")
     plugin = SimpleNamespace(
+        passive_memory_enabled=True,
+        passive_memory_manager=SimpleNamespace(observe_messages=AsyncMock()),
         bot_map={"bot": {"llm_reply_conf": {"provider_ids": ["reply"]}}},
         tools_config={"max_loop": 3},
         embedding_conf={"enabled": False},
@@ -460,6 +461,11 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     assert all("later" not in prompt for prompt in prompts)
     assert "already sent" in prompts[1]
     assert all(prompt.count('message_id="A"') == 1 for prompt in prompts)
+    observed = [
+        {msg.message_id for msg in call.args[3]}
+        for call in plugin.passive_memory_manager.observe_messages.await_args_list
+    ]
+    assert observed == [{"A"}, {"A", "R"}]
 
 
 @pytest.mark.asyncio

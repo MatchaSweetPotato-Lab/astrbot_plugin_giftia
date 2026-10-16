@@ -142,6 +142,7 @@ class MemoriesRepository(BaseRepository):
         records: list[dict],
         batch_key: str = "",
         source_end: int | None = None,
+        source_ids: list[int] | None = None,
     ) -> list[str]:
         """Commit new facts, source progress, and replay protection together.
 
@@ -151,6 +152,7 @@ class MemoriesRepository(BaseRepository):
             records: Validated new records and their source snapshots.
             batch_key: Idempotency key for an incremental message batch.
             source_end: Last source message handled by that batch.
+            source_ids: Exact observed messages completed atomically with the facts.
 
         Returns:
             IDs of newly inserted records.
@@ -183,6 +185,18 @@ class MemoriesRepository(BaseRepository):
                         if not await cursor.fetchone():
                             raise ValueError(
                                 "Source interval was removed during inference"
+                            )
+                if source_ids:
+                    placeholders = ",".join("?" for _ in source_ids)
+                    async with writer.execute(
+                        "SELECT COUNT(*) FROM chat_history WHERE bot_name=? "
+                        "AND group_or_user_id=? AND memory_status='pending' "
+                        f"AND id IN ({placeholders})",
+                        (bot_name, session_id, *source_ids),
+                    ) as cursor:
+                        if (await cursor.fetchone())[0] != len(source_ids):
+                            raise ValueError(
+                                "Observed source messages changed during inference"
                             )
                 now = datetime.now(timezone.utc).isoformat()
                 inserted = []
@@ -245,6 +259,13 @@ class MemoriesRepository(BaseRepository):
                             now,
                             now,
                         ),
+                    )
+                if source_ids:
+                    await writer.execute(
+                        "UPDATE chat_history SET memory_status='summarized' "
+                        "WHERE bot_name=? AND group_or_user_id=? "
+                        f"AND id IN ({placeholders})",
+                        (bot_name, session_id, *source_ids),
                     )
                 await writer.commit()
                 return inserted

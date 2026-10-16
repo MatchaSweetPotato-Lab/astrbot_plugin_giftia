@@ -100,9 +100,29 @@ def runtime():
         plugin=plugin,
         cache=cache,
         pipeline=pipeline,
+        event=event,
         search=plugin.passive_memory_manager.search_and_filter_memories,
         run=run,
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_observes_configured_backfill_and_current_batch(runtime):
+    backfill = [
+        MessageData(message_id=f"history-{i}", user_id="alice", content=f"past {i}")
+        for i in range(20)
+    ]
+    wakeup = MessageData(message_id="wakeup", user_id="alice", content="hello")
+    runtime.cache.get_recent_message.return_value = backfill
+    runtime.plugin.passive_memory_enabled = True
+    observe = AsyncMock()
+    runtime.plugin.passive_memory_manager.observe_messages = observe
+    async for _ in runtime.pipeline.dispatch_llm_reply_loop(
+        runtime.event, "bot", "Bot", "group", reply_messages=[wakeup]
+    ):
+        pass
+    runtime.cache.get_recent_message.assert_awaited_once_with("bot", "group", 20)
+    observe.assert_awaited_once_with("bot", "group", "self", [*backfill, wakeup])
 
 
 @pytest.mark.asyncio

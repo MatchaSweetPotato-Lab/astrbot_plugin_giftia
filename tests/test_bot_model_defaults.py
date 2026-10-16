@@ -44,6 +44,8 @@ def runtime():
     plugin = SimpleNamespace(
         bot_map={"bot": {"decision_conf": {"provider_ids": ["decision"]}}},
         active_reply_counters={},
+        passive_memory_enabled=True,
+        passive_memory_manager=SimpleNamespace(observe_messages=AsyncMock()),
         replying_status={},
         tools_config={},
         db=SimpleNamespace(
@@ -137,6 +139,12 @@ async def test_group_decisions_and_direct_reply_policies(
     )
     assert result == (expected_decision == 3, None, None, None)
     assert plugin.call_llm.call_llm_decision.await_count == (expected_decision == 0)
+    if expected_decision == 0:
+        plugin.passive_memory_manager.observe_messages.assert_awaited_once_with(
+            "bot", session, "999", [runtime.message]
+        )
+    else:
+        plugin.passive_memory_manager.observe_messages.assert_not_awaited()
     if expected_decision is None:
         plugin.db.update_message_decision.assert_not_awaited()
     else:
@@ -176,3 +184,15 @@ async def test_failed_decision_is_not_recorded_as_no_reply(runtime):
             runtime.event, "bot", "Bot", "100", [runtime.message], []
         )
     runtime.plugin.db.update_message_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_reply_decision_observes_backfill_and_current_snapshot(runtime):
+    history = MessageData(message_id="history", content="earlier", user_id="other")
+    result = await runtime.engine.evaluate_decision(
+        runtime.event, "bot", "Bot", "100", [runtime.message], [history]
+    )
+    assert result[0] is False
+    runtime.plugin.passive_memory_manager.observe_messages.assert_awaited_once_with(
+        "bot", "100", "999", [history, runtime.message]
+    )

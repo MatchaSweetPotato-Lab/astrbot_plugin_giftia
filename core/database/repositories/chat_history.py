@@ -239,6 +239,85 @@ class ChatHistoryRepository(BaseRepository):
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    async def mark_messages_observed(
+        self, bot_name: str, session_id: str, message_ids: list[str]
+    ) -> int:
+        """Queue previously unseen messages included in a model context.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            message_ids: Exact platform message IDs submitted to the model.
+
+        Returns:
+            Number of messages newly queued for memory extraction.
+        """
+        ids = list(dict.fromkeys(mid for mid in message_ids if mid))
+        if not ids:
+            return 0
+        async with self.conn.executemany(
+            "UPDATE chat_history SET memory_status='pending' "
+            "WHERE bot_name=? AND group_or_user_id=? AND message_id=? "
+            "AND memory_status='unseen' AND COALESCE(is_recalled, 0)=0 "
+            "AND COALESCE(role, 'message')='message'",
+            [(bot_name, session_id, mid) for mid in ids],
+        ) as cursor:
+            changed = cursor.rowcount
+        await self.conn.commit()
+        return changed
+
+    async def get_pending_memory_stats(
+        self, bot_name: str, session_id: str, end_id: int | None = None
+    ) -> tuple[int, int, int]:
+        """Read the bounds and count of observed, unprocessed messages.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            end_id: Optional inclusive upper database ID.
+
+        Returns:
+            First ID, last ID, and message count, or three zeros when empty.
+        """
+        async with self.conn.execute(
+            "SELECT MIN(id), MAX(id), COUNT(*) FROM chat_history "
+            "WHERE bot_name=? AND group_or_user_id=? AND memory_status='pending' "
+            "AND (? IS NULL OR id<=?)",
+            (bot_name, session_id, end_id, end_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0] or 0), int(row[1] or 0), int(row[2])
+
+    async def get_pending_memory_messages(
+        self,
+        bot_name: str,
+        session_id: str,
+        start_id: int,
+        end_id: int,
+        limit: int,
+    ) -> list[MessageData]:
+        """Read an ordered batch without crossing unseen history gaps.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            start_id: Inclusive lower database ID.
+            end_id: Inclusive upper database ID.
+            limit: Maximum batch size.
+
+        Returns:
+            Only observed messages still awaiting extraction in this interval.
+        """
+        async with self.conn.execute(
+            "SELECT id, nickname, user_id, message_id, content, media_ids, "
+            "is_recalled, role, created_at FROM chat_history "
+            "WHERE bot_name=? AND group_or_user_id=? AND memory_status='pending' "
+            "AND id>=? AND id<=? ORDER BY id ASC LIMIT ?",
+            (bot_name, session_id, start_id, end_id, limit),
+        ) as cursor:
+            messages = [_row_to_message(row) for row in await cursor.fetchall()]
+        return await self._attach_forward_messages(bot_name, session_id, messages)
+
     async def get_user_messages_after_id(
         self,
         bot_name: str,
@@ -613,8 +692,9 @@ class ChatHistoryRepository(BaseRepository):
 
         Returns:
             Deleted message count. Only messages at or below the durable scoped
-            memory cursor are eligible; missing or invalid cursors protect all
-            history. The count and age conditions are combined with OR.
+            memory cursor are eligible, and observed pending messages remain
+            protected even below that cursor. Missing or invalid cursors protect
+            all history. The count and age conditions are combined with OR.
         """
         if max_count_per_session <= 0 and max_age_days <= 0:
             return 0
@@ -671,6 +751,7 @@ class ChatHistoryRepository(BaseRepository):
             sql = f"""
                 DELETE FROM chat_history
                 WHERE bot_name = ? AND group_or_user_id = ?
+                  AND memory_status != 'pending'
                   AND id <= COALESCE((
                       SELECT CASE
                           WHEN typeof(value) = 'integer' THEN value

@@ -58,6 +58,15 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             await cursor.execute(
                 "ALTER TABLE chat_history ADD COLUMN processing_status TEXT DEFAULT 'history'"
             )
+        memory_status_added = "memory_status" not in history_columns
+        if memory_status_added:
+            await cursor.execute(
+                "ALTER TABLE chat_history ADD COLUMN memory_status TEXT NOT NULL DEFAULT 'unseen'"
+            )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_memory_pending "
+            "ON chat_history (bot_name, group_or_user_id, id) WHERE memory_status='pending'"
+        )
         # A restart must not silently turn an unfinished batch into a completed one.
         await cursor.execute(
             "UPDATE chat_history SET processing_status = 'interrupted' "
@@ -299,6 +308,26 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_kv_key_unique ON kv_store (key)"
         )
+        if memory_status_added:
+            # Preserve legacy progress without treating unprocessed history as seen.
+            await cursor.execute("""
+                UPDATE chat_history SET memory_status='summarized'
+                WHERE id <= COALESCE((
+                    SELECT CASE
+                        WHEN typeof(value)='integer' THEN value
+                        WHEN typeof(value)='text' AND value != ''
+                          AND value NOT GLOB '*[^0-9]*' THEN CAST(value AS INTEGER)
+                        ELSE 0
+                    END
+                    FROM kv_store
+                    WHERE key='passive_memory:last_summarized_id:'
+                        || chat_history.bot_name || ':' || chat_history.group_or_user_id
+                ), 0)
+            """)
+            await cursor.execute(
+                "DELETE FROM kv_store WHERE key LIKE 'passive_memory:silence_armed:%' "
+                "OR key LIKE 'passive_memory:silent_count:%'"
+            )
         await cursor.execute(
             "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
             ("user_aliases_migration_done",),

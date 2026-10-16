@@ -606,7 +606,7 @@ async def test_reminders_dispatch_tools_and_images_in_order(tool_runtime, platfo
         }
     }
     plugin.passive_memory_manager = SimpleNamespace(
-        mark_silence_summary_armed=AsyncMock()
+        reset_silence_counter=AsyncMock()
     )
 
     async def send_by_session(origin, chain):

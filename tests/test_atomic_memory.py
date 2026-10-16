@@ -59,7 +59,14 @@ async def runtime(tmp_path, monkeypatch):
 
 
 async def message(
-    runtime, text, user_id="user", day=10, role="message", hour=12, media_ids=None
+    runtime,
+    text,
+    user_id="user",
+    day=10,
+    role="message",
+    hour=12,
+    media_ids=None,
+    observed=True,
 ):
     """Persist a source message with an actual database identity.
 
@@ -71,6 +78,7 @@ async def message(
         role: Stored message role.
         hour: Source hour within the selected day.
         media_ids: Directly attached media identifiers.
+        observed: Whether to simulate including the message in a model request.
 
     Returns:
         Persisted message including its database ID.
@@ -87,7 +95,10 @@ async def message(
     )
     await runtime.db.insert_message("bot", msg)
     rows = await runtime.db.get_messages_by_id_range("bot", "group", 1, 10000)
-    return next(row for row in rows if row.message_id == msg.message_id)
+    saved = next(row for row in rows if row.message_id == msg.message_id)
+    if observed:
+        await runtime.manager.observe_messages("bot", "group", "self", [saved])
+    return saved
 
 
 def atom(msg, **updates):
@@ -575,23 +586,26 @@ async def test_bounded_batches_report_real_committed_source_range(runtime, monke
     runtime.plugin.conf["memory_config"]["memory_summary_batch_size"] = 1
     for day in (10, 11, 12):
         await message(runtime, f"第{day}天有新的对话", day=day)
-    assert "到 2" in await runtime.manager.force_trigger_passive_memory(
+    assert "已归纳" in await runtime.manager.force_trigger_passive_memory(
         "bot", "group", "self"
     )
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group") == 2
     )
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 1
-    assert "到 3" in await runtime.manager.force_trigger_passive_memory(
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (3, 3, 1)
+    assert "已归纳" in await runtime.manager.force_trigger_passive_memory(
         "bot", "group", "self"
     )
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 0
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
 
 
 @pytest.mark.asyncio
 async def test_automatic_summary_is_serialized_and_shutdown_cancels_worker(runtime):
     await message(runtime, "我们周末一起玩")
-    await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
     started, cancelled = asyncio.Event(), asyncio.Event()
 
     async def block(*args, **kwargs):
@@ -621,7 +635,6 @@ async def test_automatic_summary_is_serialized_and_shutdown_cancels_worker(runti
 @pytest.mark.asyncio
 async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runtime):
     await message(runtime, "还有最后一句对话")
-    await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
     await runtime.db.upsert_kv_data(
         "atomic_memory:session:bot:group",
         json.dumps(
@@ -636,7 +649,9 @@ async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runt
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group") == 1
     )
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 0
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -682,7 +697,6 @@ async def test_memory_table_initialization_has_current_fields_and_preserves_inde
 @pytest.mark.asyncio
 async def test_new_arrival_during_summary_stays_pending_for_followup(runtime):
     first = await message(runtime, "第一批对话")
-    await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
     started, release = asyncio.Event(), asyncio.Event()
 
     async def complete(task_name, *args, **kwargs):
@@ -704,7 +718,9 @@ async def test_new_arrival_during_summary_stays_pending_for_followup(runtime):
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
         == first.db_id
     )
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 1
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (second.db_id, second.db_id, 1)
     await runtime.manager.force_trigger_passive_memory("bot", "group", "self")
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
@@ -984,6 +1000,10 @@ async def test_history_cleanup_combines_memory_boundary_and_retention_rules(
         "passive_memory:last_summarized_id:bot:group",
         str(cursor) if text_cursor else cursor,
     )
+    await runtime.db.conn.execute(
+        "UPDATE chat_history SET memory_status='summarized' WHERE id<=?", (cursor,)
+    )
+    await runtime.db.conn.commit()
     deleted = await runtime.db.auto_clean_chat_history(
         max_count_per_session=max_count,
         max_age_days=max_age,
@@ -1157,9 +1177,11 @@ async def test_wakeup_after_failed_forced_summary_cannot_release_pending_history
     runtime.manager._call_summary_llm = AsyncMock(return_value="invalid JSON")
     result = await runtime.manager.force_trigger_passive_memory("bot", "group", "self")
     assert "失败" in result
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 1
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (pending.db_id, pending.db_id, 1)
     wakeup = await message(runtime, "再次唤醒机器人", day=11)
-    await runtime.manager.mark_silence_summary_armed("bot", "group", wakeup.message_id)
+    await runtime.manager.reset_silence_counter("bot", "group")
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group", 0)
         == 0
@@ -1210,9 +1232,11 @@ async def test_wakeup_preserves_unfinished_summary_backlog_during_cleanup(
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
         == original[0].db_id
     )
-    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group") == 1
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (original[1].db_id, original[2].db_id, 2)
     wakeup = await message(runtime, "积压处理期间再次唤醒", day=13)
-    await runtime.manager.mark_silence_summary_armed("bot", "group", wakeup.message_id)
+    await runtime.manager.reset_silence_counter("bot", "group")
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
         == original[0].db_id
@@ -1234,44 +1258,40 @@ async def test_wakeup_preserves_unfinished_summary_backlog_during_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_wakeup_cursor_update_serializes_with_forced_extraction(
-    runtime, monkeypatch
-):
-    await message(runtime, "唤醒前的未观察历史", day=10)
-    wakeup = await message(runtime, "本次唤醒消息", day=11)
+async def test_observation_during_summary_preserves_only_newly_seen_sources(runtime):
+    pending = await message(runtime, "本批正在归纳的消息", day=10)
+    unseen = await message(runtime, "本批期间没有被看到的消息", day=11, observed=False)
+    wakeup = await message(runtime, "下一轮实际看到的消息", day=12, observed=False)
     started, release = asyncio.Event(), asyncio.Event()
-    original_lookup = runtime.db.get_database_id_by_message_id
 
-    async def lookup(*args, **kwargs):
-        started.set()
-        await release.wait()
-        return await original_lookup(*args, **kwargs)
+    async def complete(task_name, *args, **kwargs):
+        if task_name == "原子记忆归纳":
+            started.set()
+            await release.wait()
+            return '{"memories": []}'
+        return "<summary_user_profile>无</summary_user_profile>"
 
-    monkeypatch.setattr(runtime.db, "get_database_id_by_message_id", lookup)
+    runtime.manager._call_summary_llm = AsyncMock(side_effect=complete)
     task = asyncio.create_task(
-        runtime.manager.mark_silence_summary_armed("bot", "group", wakeup.message_id)
+        runtime.manager.force_trigger_passive_memory("bot", "group", "self")
     )
     try:
         await asyncio.wait_for(started.wait(), 2)
-        result = await runtime.manager.force_trigger_passive_memory(
-            "bot", "group", "self"
-        )
-        assert "正在进行记忆维护" in result
-        runtime.manager._call_summary_llm.assert_not_awaited()
-        assert (
-            await runtime.db.auto_clean_chat_history(
-                max_count_per_session=1, max_age_days=1, min_keep_per_session=1
-            )
-            == 0
+        await asyncio.wait_for(
+            runtime.manager.observe_messages("bot", "group", "self", [pending, wakeup]),
+            1,
         )
     finally:
         release.set()
         await asyncio.wait_for(task, 2)
-    assert not runtime.manager.passive_memory_locks["bot:group"].locked()
-    assert (
-        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
-        == wakeup.db_id - 1
-    )
+    async with runtime.db.conn.execute(
+        "SELECT id, memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [tuple(row) for row in await cursor.fetchall()] == [
+            (pending.db_id, "summarized"),
+            (unseen.db_id, "unseen"),
+            (wakeup.db_id, "pending"),
+        ]
 
 
 @pytest.mark.asyncio
@@ -1378,10 +1398,16 @@ async def test_fact_writes_and_source_checkpoint_rollback_together(runtime):
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group", 0)
         == 0
     )
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (msg.db_id, msg.db_id, 1)
     await runtime.db.conn.execute("DROP TRIGGER reject_checkpoint")
     await runtime.db.conn.commit()
     assert await extract(runtime, msg, [atom(msg)])
     assert len(await rows(runtime)) == 1
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
 
 
 def test_extraction_schema_only_requests_facts_and_evidence():
@@ -1396,3 +1422,163 @@ def test_extraction_schema_only_requests_facts_and_evidence():
         "importance",
         "evidence",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy", [False, True])
+async def test_never_observed_session_cannot_be_armed_by_message_or_maintenance(
+    runtime, busy
+):
+    msg = await message(runtime, "机器人从未看过的聊天", observed=False)
+    await runtime.manager._remember_session("bot", "group", "self")
+    # Even a stale legacy flag cannot confer eligibility on unseen messages.
+    await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
+    lock = runtime.manager.passive_memory_locks.setdefault("bot:group", asyncio.Lock())
+    if busy:
+        await lock.acquire()
+    try:
+        await runtime.manager.check_and_trigger_passive_memory("bot", "group", "self")
+    finally:
+        if busy:
+            lock.release()
+    await runtime.manager.maintain_memories()
+    result = await runtime.manager.force_trigger_passive_memory("bot", "group", "self")
+    assert "暂无已观察" in result
+    assert runtime.plugin.active_reply_counters == {}
+    assert not runtime.manager.summary_tasks
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    async with runtime.db.conn.execute(
+        "SELECT memory_status FROM chat_history WHERE id=?", (msg.db_id,)
+    ) as cursor:
+        assert (await cursor.fetchone())[0] == "unseen"
+
+
+@pytest.mark.asyncio
+async def test_quiet_inactive_session_flushes_only_messages_previously_seen(runtime):
+    seen = await message(runtime, "活跃时看到的对话")
+    unseen = await message(runtime, "退出活跃后没有看到的对话", day=11, observed=False)
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=lambda task, *args, **kwargs: (
+            json.dumps({"memories": [atom(seen)]})
+            if task == "原子记忆归纳"
+            else "<summary_user_profile>无</summary_user_profile>"
+        )
+    )
+    await runtime.manager.maintain_memories()
+    metadata = json.loads((await rows(runtime))[0]["metadata"])
+    assert [item["source_id"] for item in metadata["evidence"]] == [seen.db_id]
+    for call in runtime.manager._call_summary_llm.await_args_list:
+        assert unseen.content not in call.args[2]
+    async with runtime.db.conn.execute(
+        "SELECT memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [row[0] for row in await cursor.fetchall()] == ["summarized", "unseen"]
+
+
+@pytest.mark.asyncio
+async def test_reactivation_observes_exact_backfill_and_preserves_unseen_gaps(runtime):
+    history = [
+        await message(runtime, f"历史消息 {index}", observed=False)
+        for index in range(1, 102)
+    ]
+    await runtime.manager.observe_messages("bot", "group", "self", history[:20])
+    # The reactivation request contains messages 82..101, not the whole idle gap.
+    await runtime.manager.observe_messages("bot", "group", "self", history[81:101])
+    assert "已归纳" in await runtime.manager.force_trigger_passive_memory(
+        "bot", "group", "self"
+    )
+    async with runtime.db.conn.execute(
+        "SELECT memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [row[0] for row in await cursor.fetchall()] == (
+            ["summarized"] * 20 + ["unseen"] * 61 + ["summarized"] * 20
+        )
+    await runtime.manager.observe_messages("bot", "group", "self", history[81:101])
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    # A later context can discover older messages below the maximum processed ID.
+    await runtime.manager.observe_messages("bot", "group", "self", history[20:22])
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (history[20].db_id, history[21].db_id, 2)
+    await runtime.db.auto_clean_chat_history(
+        max_count_per_session=1, max_age_days=0, min_keep_per_session=1
+    )
+    assert "已归纳" in await runtime.manager.force_trigger_passive_memory(
+        "bot", "group", "self"
+    )
+    assert await runtime.db.get_kv_data(
+        "passive_memory:last_summarized_id:bot:group"
+    ) == history[-1].db_id
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_overflow_threshold_counts_only_observed_messages_outside_context(runtime):
+    runtime.plugin.msg_number = 2
+    runtime.plugin.active_reply_counters["bot:group"] = 10
+    first = await message(runtime, "已观察的旧消息")
+    history = [
+        await message(runtime, f"未观察的旧消息 {index}", observed=False)
+        for index in range(4)
+    ]
+    await runtime.manager.check_and_trigger_passive_memory("bot", "group", "self")
+    assert not runtime.manager.summary_tasks
+    runtime.manager._call_summary_llm.assert_not_awaited()
+    await runtime.manager.observe_messages("bot", "group", "self", [history[0]])
+    await runtime.manager.check_and_trigger_passive_memory("bot", "group", "self")
+    await asyncio.wait_for(runtime.manager.summary_tasks["bot:group"], 2)
+    async with runtime.db.conn.execute(
+        "SELECT id FROM chat_history WHERE memory_status='summarized' ORDER BY id"
+    ) as cursor:
+        assert [row[0] for row in await cursor.fetchall()] == [
+            first.db_id,
+            history[0].db_id,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_observed_pending_messages_survive_database_reinitialization(runtime):
+    seen = await message(runtime, "重启前已经看到的消息")
+    unseen = await message(runtime, "重启前未看到的消息", observed=False)
+    await initialize_database(runtime.db.conn)
+    restarted = PassiveMemoryManager(runtime.plugin)
+    restarted._call_summary_llm = runtime.manager._call_summary_llm
+    try:
+        await restarted.maintain_memories()
+    finally:
+        await restarted.close()
+    async with runtime.db.conn.execute(
+        "SELECT id, memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [tuple(row) for row in await cursor.fetchall()] == [
+            (seen.db_id, "summarized"),
+            (unseen.db_id, "unseen"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_memory_observation_migration_preserves_legacy_progress_once(runtime):
+    processed = await message(runtime, "已有归纳进度的历史", observed=False)
+    unknown = await message(runtime, "没有观察记录的历史", observed=False)
+    await runtime.db.upsert_kv_data(
+        "passive_memory:last_summarized_id:bot:group", processed.db_id
+    )
+    await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
+    await runtime.db.conn.execute("DROP INDEX idx_history_memory_pending")
+    await runtime.db.conn.execute("ALTER TABLE chat_history DROP COLUMN memory_status")
+    await runtime.db.conn.commit()
+    await initialize_database(runtime.db.conn)
+    async with runtime.db.conn.execute(
+        "SELECT memory_status FROM chat_history ORDER BY id"
+    ) as cursor:
+        assert [row[0] for row in await cursor.fetchall()] == ["summarized", "unseen"]
+    assert await runtime.db.get_kv_data("passive_memory:silence_armed:bot:group", 0) == 0
+    await runtime.manager.observe_messages("bot", "group", "self", [processed, unknown])
+    await initialize_database(runtime.db.conn)
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (unknown.db_id, unknown.db_id, 1)

@@ -147,6 +147,7 @@ class MemoryMaintenanceMixin:
                 records,
                 batch_key=batch_key,
                 source_end=messages[-1].db_id,
+                source_ids=[msg.db_id for msg in messages],
             )
         except (ValueError, TypeError) as error:
             logger.warning(
@@ -262,15 +263,20 @@ class MemoryMaintenanceMixin:
                         continue
                     try:
                         async with lock:
-                            if (
-                                summarize_enabled
-                                and self_id
-                                and await self.plugin.db.get_kv_data(
-                                    f"passive_memory:silence_armed:{key}", 0
+                            if summarize_enabled and self_id:
+                                (
+                                    first_id,
+                                    last_id,
+                                    pending,
+                                ) = await self.plugin.db.chat_history_repo.get_pending_memory_stats(
+                                    bot_name, session_id
                                 )
-                            ):
-                                recent = await self.plugin.db.get_messages(
-                                    session_id, bot_name, limit=1
+                                recent = (
+                                    await self.plugin.db.get_messages(
+                                        session_id, bot_name, limit=1
+                                    )
+                                    if pending
+                                    else []
                                 )
                                 if (
                                     recent
@@ -284,16 +290,8 @@ class MemoryMaintenanceMixin:
                                         bot_name,
                                         session_id,
                                         self_id,
-                                        int(
-                                            await self.plugin.db.get_kv_data(
-                                                f"passive_memory:last_summarized_id:{key}",
-                                                0,
-                                            )
-                                        )
-                                        + 1,
-                                        await self.plugin.db.get_max_message_id(
-                                            bot_name, session_id
-                                        ),
+                                        first_id,
+                                        last_id,
                                     )
                             await self._sync_memory_vectors(bot_name, session_id)
                     except Exception:

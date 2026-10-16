@@ -245,20 +245,17 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         """
         key = f"{bot_name}:{group_or_user_id}"
         try:
-            messages = await self.plugin.db.get_messages_by_id_range(
-                bot_name,
-                group_or_user_id,
-                start_id,
-                end_id,
-                limit=MEMORY_SUMMARY_BATCH_SIZE,
+            messages = (
+                await self.plugin.db.chat_history_repo.get_pending_memory_messages(
+                    bot_name,
+                    group_or_user_id,
+                    start_id,
+                    end_id,
+                    limit=MEMORY_SUMMARY_BATCH_SIZE,
+                )
             )
             if not messages:
                 return True
-            # Persist pending work before inference, including forced batches,
-            # so failures remain retryable and a later wake-up cannot skip them.
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silence_armed:{key}", 1
-            )
             selected, text_size = [], 0
             for msg in messages:
                 if selected and text_size + len(msg.content or "") > 16000:
@@ -282,22 +279,15 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     bot_name, group_or_user_id, self_id, nickname, context
                 ):
                     return False
-            processed_end = selected[-1].db_id
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:last_summarized_id:{key}", processed_end
-            )
-            await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{key}", 0)
-            activity_version = self.activity_versions.get(key, 0)
-            latest_id = await self.plugin.db.get_max_message_id(
-                bot_name, group_or_user_id
-            )
-            await self.plugin.db.upsert_kv_data(
-                f"passive_memory:silence_armed:{key}", int(processed_end < latest_id)
-            )
-            if self.activity_versions.get(key, 0) != activity_version:
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:silence_armed:{key}", 1
+            else:
+                await self.plugin.db.memories_repo.insert_memories(
+                    bot_name,
+                    group_or_user_id,
+                    [],
+                    source_end=selected[-1].db_id,
+                    source_ids=[msg.db_id for msg in selected],
                 )
+            await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{key}", 0)
             if context:
                 try:
                     await self._run_profile_summary_task(

@@ -9,6 +9,7 @@ import pytest_asyncio
 from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
+from core.web.chat_history_api import ChatHistoryApi
 from core.web.memory_api import MemoryApi
 from fastapi import FastAPI, Request
 
@@ -28,8 +29,11 @@ async def memory_api(tmp_path, monkeypatch):
     plugin.data_cache = DataCache(plugin.db, None, None, plugin=plugin)
     api = MemoryApi()
     api.giftia = plugin
+    history_api = ChatHistoryApi()
+    history_api.giftia = plugin
     app = FastAPI()
     handlers = {
+        "chat_history": history_api.get_chat_history,
         "memories": api.get_memories,
         "memories/filter_options": api.get_memory_filter_options,
         "memories/add": api.add_memory,
@@ -107,6 +111,29 @@ async def test_memory_names_are_scoped_to_selected_session(memory_api):
     assert data["user_id_to_name"] == {"1": "local name"}
     data = (await client.get("/memories", params={"bot_name": "bot"})).json()["data"]
     assert data["user_id_to_name"] == {}
+
+
+@pytest.mark.asyncio
+async def test_history_api_reports_per_message_memory_state_below_maximum(memory_api):
+    client, plugin = memory_api
+    await plugin.db.conn.executemany(
+        "INSERT INTO chat_history (bot_name, group_or_user_id, message_id, "
+        "content, memory_status) VALUES ('bot', 'group', ?, 'message', ?)",
+        [("unseen", "unseen"), ("pending", "pending"), ("done", "summarized")],
+    )
+    await plugin.db.conn.commit()
+    await plugin.db.upsert_kv_data("passive_memory:last_summarized_id:bot:group", 999)
+    response = await client.get(
+        "/chat_history", params={"bot_name": "bot", "group_or_user_id": "group"}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["last_summarized_id"] == 999
+    assert {item["message_id"]: item["memory_status"] for item in data["items"]} == {
+        "unseen": "unseen",
+        "pending": "pending",
+        "done": "summarized",
+    }
 
 
 @pytest.mark.asyncio

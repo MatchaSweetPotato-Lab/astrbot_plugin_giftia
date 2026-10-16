@@ -27,6 +27,7 @@ globalThis.window = {};
 await import('../pages/giftia_dashboard/js/utils.js');
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
 const { loadMemories, renderMemories } = await import('../pages/giftia_dashboard/js/modules/render/memories.js');
+const { renderChatHistory } = await import('../pages/giftia_dashboard/js/modules/render/history.js');
 await import('../pages/giftia_dashboard/js/modals/memory.js');
 await import('../pages/giftia_dashboard/js/modals/profile.js');
 const get = id => document.getElementById(id);
@@ -50,6 +51,19 @@ beforeEach(() => {
         loadMemories: async () => {},
         loadUserProfiles: async () => {}
     };
+});
+
+test('history badges use each message observation state independently', () => {
+    renderChatHistory([
+        { id: 1, memory_status: 'unseen', content: 'unseen', created_at: '2026-10-01' },
+        { id: 2, memory_status: 'pending', content: 'pending', created_at: '2026-10-02' },
+        { id: 3, memory_status: 'summarized', content: 'done', created_at: '2026-10-03' },
+    ]);
+    const html = get('history-list').innerHTML;
+    assert.match(html, /未见/);
+    assert.match(html, /已见待总结/);
+    assert.match(html, /已总结/);
+    assert.doesNotMatch(html, /已归档|待总结\/跳过/);
 });
 
 test('memory cards show facts and escape evidence and account IDs', () => {

@@ -30,7 +30,7 @@ export async function loadChatHistory() {
             if (boundaryEl) {
                 boundaryEl.textContent = lastSummarizedId > 0 ? `#${lastSummarizedId}` : "无";
             }
-            renderChatHistory(res.data.items, lastSummarizedId);
+            renderChatHistory(res.data.items);
             window.renderPagination("history-pagination", state.pagination.history, (page) => {
                 state.pagination.history.page = page;
                 loadChatHistory();
@@ -43,7 +43,7 @@ export async function loadChatHistory() {
     }
 }
 
-export function renderChatHistory(items, lastSummarizedId = 0) {
+export function renderChatHistory(items) {
     const container = document.getElementById("history-list");
     if (!items || items.length === 0) {
         container.innerHTML = `<tr><td colspan="7" class="no-data-row">暂无相关聊天记录</td></tr>`;
@@ -80,10 +80,12 @@ export function renderChatHistory(items, lastSummarizedId = 0) {
 
         const senderDisp = item.nickname ? `${item.nickname} (${item.user_id})` : item.user_id;
 
-        const isSummarized = item.id <= lastSummarizedId;
-        const summaryBadge = isSummarized
-            ? `<span class="badge badge-success" style="font-size: 0.75rem; padding: 2px 6px;">已归档</span>`
-            : `<span class="badge badge-secondary" style="font-size: 0.75rem; padding: 2px 6px;">待总结/跳过</span>`;
+        const memoryLabels = {
+            unseen: '未见', pending: '已见待总结', summarized: '已总结',
+        };
+        const summaryLabel = memoryLabels[item.memory_status] || memoryLabels.unseen;
+        const summaryClass = item.memory_status === 'summarized' ? 'badge-success' : 'badge-secondary';
+        const summaryBadge = `<span class="badge ${summaryClass}" style="font-size: 0.75rem; padding: 2px 6px;">${summaryLabel}</span>`;
 
         return `
             <tr>
