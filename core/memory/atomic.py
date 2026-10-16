@@ -165,7 +165,7 @@ def validate_memory_records(
             raise ValueError("A memory must involve a group member")
         if not record.evidence:
             raise ValueError("Incremental memories require direct source evidence")
-        evidence, member_evidence = [], []
+        evidence = []
         for ref in record.evidence:
             msg = sources.get(ref.source_id)
             if msg is None:
@@ -202,10 +202,6 @@ def validate_memory_records(
                 "time": msg.time,
             }
             evidence.append(verified)
-            if str(msg.user_id) != self_id:
-                member_evidence.append(verified)
-        if not member_evidence:
-            raise ValueError("Self output alone cannot establish a memory")
         item["evidence"] = list({ref["source_id"]: ref for ref in evidence}.values())
         item["new_source_ids"] = sorted({ref.source_id for ref in record.evidence})
         if item["occurred_at"]:

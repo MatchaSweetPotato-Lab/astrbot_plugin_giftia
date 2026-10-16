@@ -269,16 +269,15 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     break
                 selected.append(msg)
                 text_size += len(msg.content or "")
-            has_human_source = any(
-                str(msg.user_id) != str(self_id)
-                and not msg.is_recalled
+            has_source = any(
+                not msg.is_recalled
                 and msg.role != "operation_log"
                 and (msg.content or msg.media_id_list)
                 for msg in selected
             )
             context = None
             nickname = self.plugin.bot_map.get(bot_name, {}).get("nickname", bot_name)
-            if has_human_source:
+            if has_source:
                 context = await self._build_summary_context(
                     bot_name, group_or_user_id, self_id, selected
                 )

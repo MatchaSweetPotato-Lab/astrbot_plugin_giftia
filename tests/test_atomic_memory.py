@@ -251,6 +251,54 @@ async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "include_question,question_processed",
+    [(False, False), (True, False), (False, True)],
+)
+async def test_bot_answer_can_establish_interaction_evidence(
+    runtime, include_question, question_processed
+):
+    question = await message(runtime, "你建议我早餐吃什么？")
+    if question_processed:
+        assert await extract(runtime, question, [])
+    answer = await message(
+        runtime,
+        ("@小明(user) " if question_processed else "") + "早餐可以试试煎蛋吐司。",
+        user_id="self",
+    )
+    evidence_ids = [question.db_id, answer.db_id] if include_question else [answer.db_id]
+    proposal = atom(
+        answer,
+        text="我向小明建议早餐可以试试煎蛋吐司。",
+        associated_user_ids=["user", "self"],
+        evidence=[{"source_id": source_id} for source_id in evidence_ids],
+    )
+    runtime.manager._call_summary_llm.side_effect = [
+        json.dumps({"memories": [proposal]}),
+        "<summary_user_profile>无</summary_user_profile>",
+    ]
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", question.db_id, answer.db_id
+    )
+    saved = (await rows(runtime))[0]
+    metadata = json.loads(saved["metadata"])
+    assert saved["text"] == proposal["text"]
+    assert metadata["associated_user_ids"] == ["user"]
+    assert [item["source_id"] for item in metadata["evidence"]] == evidence_ids
+    assert metadata["evidence"][-1] == {
+        "source_id": answer.db_id,
+        "user_id": "self",
+        "message_id": answer.message_id,
+        "time": answer.time,
+        "media_ids": [],
+        "quote": answer.content,
+    }
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "call_name,nickname,display_name",
     [
         ("小明", "平台昵称A", "小明"),
@@ -1684,7 +1732,14 @@ async def test_own_sent_output_is_observed_without_waiting_for_another_request(
             ("self", "pending"),
         ]
     await runtime.manager.maintain_memories()
-    runtime.manager._call_summary_llm.assert_not_awaited()
+    summary_calls = [
+        call
+        for call in runtime.manager._call_summary_llm.await_args_list
+        if call.args[0] == "原子记忆归纳"
+    ]
+    assert len(summary_calls) == 1
+    assert output.content in summary_calls[0].args[2]
+    assert unseen.content not in summary_calls[0].args[2]
     assert await rows(runtime) == []
     async with runtime.db.conn.execute(
         "SELECT memory_status FROM chat_history ORDER BY id"
@@ -1738,7 +1793,13 @@ async def test_own_output_repair_preserves_user_observation_and_scope(runtime):
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (0, 0, 0)
-    runtime.manager._call_summary_llm.assert_not_awaited()
+    summary_call = runtime.manager._call_summary_llm.await_args_list[0]
+    assert summary_call.args[0] == "原子记忆归纳"
+    assert output.content in summary_call.args[2]
+    assert user.content not in summary_call.args[2]
+    assert processed.content not in summary_call.args[2]
+    assert "另一个 Bot 的记录" not in summary_call.args[2]
+    assert "没有已知观察者身份的会话" not in summary_call.args[2]
 
 
 @pytest.mark.asyncio
