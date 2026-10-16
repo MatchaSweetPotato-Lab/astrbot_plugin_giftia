@@ -51,7 +51,6 @@ class PassiveContextMixin:
         record: dict | None,
         allowed_fields: set[str] | None = None,
         include_relation_score: bool = True,
-        include_relation_title: bool = True,
     ) -> str:
         record = record or {}
 
@@ -67,18 +66,15 @@ class PassiveContextMixin:
                 continue
             value = normalize_profile_value(record.get(field))
             if value:
-                structured_lines.append(f"- {label}：{value}")
+                structured_lines.append(f"{label}：{value}")
         if structured_lines:
-            parts.append("结构化画像:\n" + "\n".join(structured_lines))
+            parts.append(structured_lines)
 
         relation_parts = []
-        title = record.get("title") if include_relation_title else None
         if include_relation_score:
             relation_parts.append(f"好感度: {record.get('relation') or 0}")
-        if title:
-            relation_parts.append(f"头衔: {title}")
         if relation_parts:
-            parts.append("关系状态: " + "，".join(relation_parts))
+            parts.append(relation_parts)
 
         return "\n".join(parts) if parts else "无"
 
@@ -200,7 +196,6 @@ class PassiveContextMixin:
                     profile_record,
                     allowed_fields=SESSION_PROFILE_FIELDS,
                     include_relation_score=True,
-                    include_relation_title=False,
                 )
             )
             user_profile_blocks.append("\n".join(block_lines))
