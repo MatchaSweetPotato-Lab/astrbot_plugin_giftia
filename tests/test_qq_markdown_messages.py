@@ -4,8 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiocqhttp import Event
 from core.utils.message_parse import MessageParser
+from core.utils.qq_official_action import QQOfficialAction
 
 from astrbot.api.message_components import At, Node, Plain, Reply
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
     AiocqhttpAdapter,
 )
@@ -77,6 +79,63 @@ async def test_official_bot_markdown_and_fallback_are_stored_once(
 async def test_markdown_only_keeps_a_readable_mention(parser):
     result = await parser.chain_to_result([Plain(MENTION + BODY)])
     assert result.content == READABLE
+
+
+@pytest.mark.asyncio
+async def test_extra_plain_fallback_before_native_mention_is_stored_once(parser):
+    body = "收到，测试指令已执行捏"
+    mention = "[@影](mqqapi://markdown/mention?at_type=1&at_tinyid=1614170952)"
+    quote = Reply(
+        id="original",
+        sender_nickname="影",
+        message_str="引用这条消息再艾特我一下 @小祥²(3889698602) ",
+        chain=[Plain("引用这条消息再艾特我一下"), At(qq="3889698602", name="小祥²")],
+    )
+    chain = [
+        quote,
+        Plain(mention + body),
+        Plain(body),
+        At(qq="1614170952", name="影"),
+        Plain(body),
+    ]
+    outline = AstrMessageEvent._outline_chain(None, chain)
+    assert outline == (
+        "[引用消息(影: 引用这条消息再艾特我一下 @小祥²(3889698602) )] "
+        f"{mention}{body} {body} [At:1614170952] {body}"
+    )
+
+    result = await parser.chain_to_result(chain)
+
+    assert result.content.startswith('<quote message_id="original"')
+    assert "引用这条消息再艾特我一下 @小祥²(3889698602)</quote>" in result.content
+    assert result.content.endswith(f"</quote> @影(1614170952) {body}")
+    assert result.content.count(body) == 1
+    assert len(chain) == 5
+
+
+@pytest.mark.asyncio
+async def test_plain_fallback_requires_a_complete_native_copy(parser):
+    result = await parser.chain_to_result(
+        [
+            Plain(MENTION + BODY),
+            Plain(BODY),
+            At(qq="10002", name="另一位"),
+            Plain(BODY),
+        ]
+    )
+    assert result.content == f"{READABLE} {BODY} @另一位(10002) {BODY}"
+
+
+@pytest.mark.asyncio
+async def test_repetition_inside_markdown_is_preserved(parser):
+    result = await parser.chain_to_result(
+        [
+            Plain(f"{MENTION}{BODY} {BODY}"),
+            At(qq="1017789696", name="e.e."),
+            Plain(BODY),
+        ]
+    )
+    assert result.content == f"{READABLE} {BODY} {READABLE}"
 
 
 @pytest.mark.asyncio
@@ -177,3 +236,76 @@ async def test_reply_and_forwarded_component_chains_use_the_same_normalization(p
         [Node(uin="10001", name="Official bot", content=chain)]
     )
     assert forward.forward_messages[0]["nodes"][0]["content"] == READABLE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_id", ["group-openid", ""])
+@pytest.mark.parametrize("mode", ["plain", "markdown", "mention"])
+async def test_official_send_uses_one_content_representation(group_id, mode):
+    api = SimpleNamespace(
+        post_group_message=AsyncMock(return_value={"id": "sent"}),
+        post_c2c_message=AsyncMock(return_value={"id": "sent"}),
+    )
+    event = SimpleNamespace(
+        bot=SimpleNamespace(api=api),
+        message_obj=SimpleNamespace(message_id="trigger"),
+        get_platform_name=lambda: "qq_official",
+        get_group_id=lambda: group_id,
+        get_sender_id=lambda: "sender-openid",
+    )
+    chain = [Plain(BODY)]
+    if mode == "mention":
+        chain.insert(0, At(qq="recipient-openid"))
+
+    success, message_id = await QQOfficialAction().send_message(
+        event, chain, quote_message_id="reference", use_markdown=mode == "markdown"
+    )
+
+    assert (success, message_id) == (True, "sent")
+    send = api.post_group_message if group_id else api.post_c2c_message
+    send.assert_awaited_once()
+    payload = send.await_args.kwargs
+    assert payload["msg_id"] == "trigger"
+    assert payload["message_reference"]["message_id"] == "reference"
+    if mode == "plain":
+        assert payload["msg_type"] == 0
+        assert payload["content"] == BODY
+        assert "markdown" not in payload
+    else:
+        expected = (
+            f'<qqbot-at-user id="recipient-openid" />{BODY}'
+            if mode == "mention"
+            else BODY
+        )
+        assert payload["msg_type"] == 2
+        assert payload["markdown"] == {"content": expected}
+        assert "content" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_id", ["group-openid", ""])
+async def test_rejected_markdown_retries_with_plain_content(group_id):
+    send = AsyncMock(side_effect=[RuntimeError("Markdown rejected"), {"id": "sent"}])
+    event = SimpleNamespace(
+        bot=SimpleNamespace(
+            api=SimpleNamespace(post_group_message=send, post_c2c_message=send)
+        ),
+        message_obj=SimpleNamespace(message_id="trigger"),
+        get_platform_name=lambda: "qq_official",
+        get_group_id=lambda: group_id,
+        get_sender_id=lambda: "sender-openid",
+    )
+
+    result = await QQOfficialAction().send_message(
+        event, [Plain(BODY)], quote_message_id="reference", use_markdown=True
+    )
+
+    assert result == (True, "sent")
+    assert send.await_count == 2
+    markdown, fallback = [call.kwargs for call in send.await_args_list]
+    assert "content" not in markdown
+    assert fallback["msg_type"] == 0
+    assert fallback["content"] == BODY
+    assert "markdown" not in fallback
+    assert fallback["msg_seq"] == markdown["msg_seq"]
+    assert fallback["message_reference"] == markdown["message_reference"]

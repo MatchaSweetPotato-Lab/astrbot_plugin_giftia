@@ -65,8 +65,23 @@ def normalize_qq_markdown_chain(
     omitted = set()
     for index in markdown_indices:
         expected = _MENTION_SPACING.sub(r"\1", keys[index]).strip()
+        plain_body = re.sub(r"\x00[0-9]+\x00", "", keys[index]).strip()
         for direction in (1, -1):
             position = index + direction
+            plain_copy_index = None
+            # Some messages also contain a separate plain-text fallback before
+            # the native mention. Remove it only after the complete native copy
+            # matches; repetition inside the Markdown itself stays untouched.
+            if (
+                direction == 1
+                and position < len(entries)
+                and len(entries[position]) == 1
+                and isinstance(entries[position][0], Plain)
+                and plain_body
+                and keys[position].strip() == plain_body
+            ):
+                plain_copy_index = position
+                position += 1
             adjacent = ""
             while 0 <= position < len(entries):
                 if position in markdown_indices or keys[position] is None:
@@ -79,6 +94,8 @@ def normalize_qq_markdown_chain(
                 actual = _MENTION_SPACING.sub(r"\1", adjacent).strip()
                 if actual == expected:
                     omitted.add(index)
+                    if plain_copy_index is not None:
+                        omitted.add(plain_copy_index)
                     break
                 if not (
                     expected.startswith(actual)
