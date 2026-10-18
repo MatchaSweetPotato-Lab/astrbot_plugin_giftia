@@ -1,5 +1,6 @@
 import { state } from '../state.js';
 import { initializeScopedView } from '../filters.js';
+import { renderRelationChanges } from './relation_history.js';
 
 export function loadProfilesData() {
     state.activeSubTab = document.getElementById("profile-type")?.value || "user-profiles";
@@ -77,68 +78,65 @@ export function renderUserProfiles(items) {
         return;
     }
 
-    container.innerHTML = items.map(item => {
-        const structured = {
-            call_name: item.call_name || "",
-            personality: item.personality || "",
-            interests: item.interests || "",
-            attitude: item.attitude || "",
-            agreements: item.agreements || "",
-            extra: item.extra || "",
-            avatar_description: item.avatar_description || ""
-        };
-        const encodedStructured = encodeURIComponent(JSON.stringify(structured));
-        const profileHtml = window.renderProfileCard("", {
+    container.innerHTML = items.map((item, index) => {
+        const profileHtml = window.renderProfileCard({
             call_name: item.call_name,
             aliases: item.aliases,
-            personality: item.personality,
-            interests: item.interests,
             attitude: item.attitude,
-            agreements: item.agreements,
-            extra: item.extra,
             avatar_description: item.avatar_description
         });
 
-        let relationBadge = "";
-        const rel = parseInt(item.relation) || 0;
-        if (rel > 0) {
-            relationBadge = `<span class="badge badge-success">${rel} 好感度</span>`;
-        } else if (rel < 0) {
-            relationBadge = `<span class="badge badge-danger">${rel} 好感度</span>`;
-        } else {
-            relationBadge = `<span class="badge badge-secondary">0 好感度</span>`;
-        }
-        const titleHtml = item.title ? `<span class="badge badge-info">${window.escapeHtml(item.title)}</span>` : "";
-        const encodedTitle = encodeURIComponent(item.title || "");
+        const rel = Number(item.relation ?? 50).toFixed(1);
+        const interaction = Number(item.interaction_score ?? 50);
+        const relationClass = interaction > 50 ? 'badge-success' : interaction < 50 ? 'badge-danger' : 'badge-secondary';
+        const relationBadge = `<button type="button" class="badge ${relationClass} profile-relation-badge" data-profile-action="relation-history" title="查看好感度详情与互动评价历史" aria-label="好感度 ${rel}，查看好感度详情与互动评价历史">${rel} 好感度 <span aria-hidden="true">›</span></button>`;
+        const recentChanges = (item.recent_relation_changes || []).slice(0, 3);
+        const historyHtml = recentChanges.length ? `
+            <section class="profile-relation-history" aria-label="最近互动评价">
+                <h3 class="profile-history-heading">最近互动评价</h3>
+                ${renderRelationChanges(recentChanges)}
+            </section>
+        ` : '';
 
         return `
-            <div class="profile-item-card card">
+            <div class="profile-item-card card" data-profile-index="${index}">
                 <div class="profile-card-header">
                     <div class="profile-card-id-section">
                         <span class="profile-card-id-label">用户:</span>
-                        <span class="profile-card-id-value">${item.user_id}</span>
+                        <span class="profile-card-id-value">${window.escapeHtml(String(item.user_id))}</span>
                     </div>
                     <div class="profile-card-badges">
                         ${relationBadge}
-                        ${titleHtml}
                     </div>
                 </div>
                 <div class="profile-card-body">
                     ${profileHtml}
+                    ${historyHtml}
                 </div>
                 <div class="profile-card-footer">
                     <div class="profile-card-time">
                         更新时间: ${window.formatDate(item.updated_at || item.created_at)}
                     </div>
                     <div class="profile-card-actions">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
-                        <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
+                        <button class="btn btn-secondary btn-small" data-profile-action="edit">编辑</button>
+                        <button class="btn btn-secondary btn-small" data-profile-action="aliases">外号</button>
+                        <button class="btn btn-danger btn-small" data-profile-action="delete">删除</button>
                     </div>
                 </div>
             </div>
         `;
     }).join("");
+    container.onclick = event => {
+        const button = event.target.closest('[data-profile-action]');
+        const card = button?.closest('[data-profile-index]');
+        if (!card) return;
+        const item = items[Number(card.dataset.profileIndex)];
+        if (button.dataset.profileAction === 'relation-history') window.openUserRelationHistoryModal(item);
+        if (button.dataset.profileAction === 'edit') window.openEditUserProfileModal(item);
+        if (button.dataset.profileAction === 'aliases') window.openUserAliasesModal(item.bot_name, item.group_or_user_id, item.user_id);
+        if (button.dataset.profileAction === 'delete') window.deleteUserProfile(item.bot_name, item.group_or_user_id, item.user_id);
+    };
+
 }
 
 export async function loadGroupProfiles() {

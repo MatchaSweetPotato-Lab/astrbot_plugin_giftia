@@ -1,16 +1,17 @@
 import asyncio
 import random
+import re
 from copy import deepcopy
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
 from ..llm.preset_prompts import build_tts_xml_instructions
-from ..llm.prompt import build_reply_prompt
+from ..llm.prompt import build_reply_prompt, prepare_reply_message_context
 from ..utils.anti_drool import filter_duplicate_replies
-from ..utils.schemas import MessageData
+from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
-from .memory_recall import conf_int, search_memories_with_rerank
+from .memory_recall import conf_float, conf_int, search_memories_with_rerank
 from .tool_executor import ToolExecutor
 
 
@@ -33,7 +34,6 @@ class ReplyPipeline:
             "kick",
             "leave",
             "search_memories",
-            "delete_memories",
             "tools_to_call",
             "native_tools_called",
             "schedule_tasks",
@@ -63,29 +63,13 @@ class ReplyPipeline:
             self._conf_int(conf, "session_recall_ttl_seconds", 1800),
         )
 
-    @staticmethod
-    def _append_relevant_memory_texts(
-        relevant_memories: list[str],
-        memories: list[dict] | None,
-    ) -> None:
-        if not memories:
-            return
-        seen = set(relevant_memories)
-        for memory in memories:
-            text = str(memory.get("text") or "").strip()
-            if text and text not in seen:
-                relevant_memories.append(text)
-                seen.add(text)
-
     def commit_pending_session_recalled_memories(
         self,
         bot_name: str,
         group_or_user_id: str,
         pending_recall_memories: list[dict] | None,
     ) -> None:
-        if not pending_recall_memories or not self.plugin.embedding_conf.get(
-            "session_recall_enabled", True
-        ):
+        if not pending_recall_memories:
             return
         deduped_memories = {}
         fallback_index = 0
@@ -112,34 +96,84 @@ class ReplyPipeline:
         reply_messages: list[MessageData],
         remind_message: str | None,
         recent_messages: list[MessageData],
+        media_captions: list[MediaCaption] | None = None,
     ) -> list[dict]:
+        """Recall each participant's batch using text and completed media captions.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            reply_messages: Frozen pending messages in their original order.
+            remind_message: Reminder text used when no pending messages exist.
+            recent_messages: History identifying the active participants.
+            media_captions: Already cached media descriptions; only caption is used.
+
+        Returns:
+            Ranked, deduplicated records within the automatic injection limit.
+        """
         conf = self.plugin.embedding_conf
-        if not conf.get("enabled", False) or not conf.get(
-            "session_recall_enabled", True
-        ):
+        max_items, _ = self._session_recall_limits()
+        if not conf.get("enabled", False) or max_items <= 0:
             return []
 
-        query = ""
-        if reply_messages:
-            query = "\n".join(
-                f"{msg.nickname} ({msg.user_id}): {msg.content}"
-                for msg in reply_messages
-                if msg.content
+        captions = {
+            caption.hash_val: (caption.caption or "").strip()
+            for caption in media_captions or []
+            if caption.is_captioned and (caption.caption or "").strip()
+        }
+        messages = reply_messages or [MessageData(content=remind_message or "")]
+        user_queries: dict[str, list[str]] = {}
+        for message in messages:
+            if message.is_recalled or message.role != "message":
+                continue
+            # Uncaptioned media never contributes a placeholder or an identifier.
+            content = re.sub(
+                r"\[(?:图片|语音|视频|合并转发)(?::([^\]\s]+))?\]",
+                lambda match: (
+                    "\n" + captions[match[1]] + "\n" if match[1] in captions else ""
+                ),
+                message.content or "",
             ).strip()
-        elif remind_message:
-            query = remind_message.strip()
-        if not query:
-            return []
+            if not content:
+                continue
+            if message.user_id:
+                content = f"{message.nickname} ({message.user_id}): {content}"
+            user_queries.setdefault(str(message.user_id), []).append(content)
 
-        return await search_memories_with_rerank(
-            self.plugin,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            query=query,
-            recent_messages=recent_messages,
-            limit_key="session_recall_search_limit",
-            log_context="会话记忆自动召回",
+        candidates = []
+        for parts in user_queries.values():
+            candidates.extend(
+                await search_memories_with_rerank(
+                    self.plugin,
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    query="\n".join(parts),
+                    recent_messages=[*recent_messages, *reply_messages],
+                    limit_key="session_recall_search_limit",
+                    log_context="会话记忆自动召回",
+                    record_hits=False,
+                )
+            )
+        candidates.sort(
+            key=lambda memory: conf_float(
+                memory, "score", 1.0 - conf_float(memory, "_distance", 1.0)
+            ),
+            reverse=True,
         )
+        deduped = {}
+        for memory in candidates:
+            memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
+            if memory_id:
+                deduped.setdefault(memory_id, memory)
+        memories = list(deduped.values())[:max_items]
+        if memories:
+            try:
+                await self.plugin.data_cache.record_memory_hits(memories)
+            except Exception as error:
+                logger.warning(
+                    "[Giftia] Failed to record automatic recall hits: %s", error
+                )
+        return memories
 
     async def dispatch_llm_reply_loop(
         self,
@@ -149,7 +183,7 @@ class ReplyPipeline:
         group_or_user_id: str,
         reply_messages: list[MessageData] | None = None,
         remind_message: str | None = None,
-        relevant_memories: list[str] | None = None,
+        relevant_memories: list[dict] | None = None,
         pending_recall_memories: list[dict] | None = None,
         tool_results: list[dict[str, str]] | None = None,
         other_data: list[str] | None = None,
@@ -215,49 +249,111 @@ class ReplyPipeline:
                 reply_messages=reply_messages,
                 remind_message=remind_message,
                 recent_messages=recent_messages,
+                media_captions=media_captions,
             )
             if current_recall_memories:
                 pending_recall_memories.extend(current_recall_memories)
-                self._append_relevant_memory_texts(
-                    relevant_memories, current_recall_memories
-                )
 
         session_recalled_memories = []
-        if self.plugin.embedding_conf.get("session_recall_enabled", True):
+        if self.plugin.embedding_conf.get("enabled", False):
             max_items, ttl_seconds = self._session_recall_limits()
-            session_recalled_memories = (
-                self.plugin.data_cache.get_session_recalled_memories(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    max_items=max_items,
-                    ttl_seconds=ttl_seconds,
-                )
+            cached_memories = self.plugin.data_cache.get_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                max_items=max_items,
+                ttl_seconds=ttl_seconds,
             )
+            seen_ids = {
+                str(memory.get("memory_id") or memory.get("id") or "")
+                for memory in relevant_memories
+            }
+            # Pending recalls survive tool turns without mutating the pool before success.
+            for memory in [*pending_recall_memories, *cached_memories]:
+                if len(session_recalled_memories) >= max_items:
+                    break
+                memory_id = (
+                    str(memory.get("memory_id") or memory.get("id") or "")
+                    if isinstance(memory, dict)
+                    else memory.memory_id
+                )
+                if memory_id and memory_id not in seen_ids:
+                    seen_ids.add(memory_id)
+                    session_recalled_memories.append(memory)
 
-        # 2. 读取画像、关系与状态数据
+        # Load full profiles for every participant in the rendered reply timeline.
         bot_status = await self.plugin.data_cache.get_bot_status(
             bot_name=bot_name,
             group_id=group_or_user_id,
-        )
-        user_profile = await self.plugin.data_cache.get_user_profile_record(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=event.get_sender_id(),
         )
         group_profile = await self.plugin.data_cache.get_group_profile(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
-        user_relation = await self.plugin.data_cache.get_user_relation(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=event.get_sender_id(),
+        prompt_recent_messages, prompt_reply_messages = prepare_reply_message_context(
+            recent_messages, reply_messages
         )
+        reply_users = {}
+        self_id = str(event.get_self_id())
+        sender_id = str(event.get_sender_id() or "")
+        for msg in prompt_reply_messages:
+            uid = str(msg.user_id or "")
+            if uid and uid != self_id and not msg.is_recalled and msg.role == "message":
+                reply_users[uid] = msg.nickname or reply_users.get(uid, "")
+        if not reply_messages and sender_id and sender_id != self_id:
+            reply_users[sender_id] = event.get_sender_name() or ""
+        user_profiles = []
+        for uid, user_nickname in reply_users.items():
+            (
+                user_profile,
+                user_relation,
+                relation_changes,
+                relation_score,
+            ) = await asyncio.gather(
+                self.plugin.data_cache.get_user_profile_record(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                ),
+                self.plugin.data_cache.get_user_relation(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                ),
+                self.plugin.db.get_relation_changes(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                    limit=3,
+                ),
+                self.plugin.db.get_relation_score(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                ),
+            )
+            user_profiles.append(
+                {
+                    "user_id": uid,
+                    "nickname": user_nickname
+                    or (event.get_sender_name() if uid == sender_id else "")
+                    or "",
+                    "user_profile": user_profile,
+                    "user_relation": user_relation,
+                    "relation_changes": relation_changes,
+                    "relation_score": relation_score,
+                }
+            )
         active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
-            recent_messages=[*recent_messages, *reply_messages],
-            current_user_id=event.get_sender_id(),
+            recent_messages=[
+                msg
+                for msg in [*recent_messages, *reply_messages]
+                if str(msg.user_id) not in reply_users
+                and not msg.is_recalled
+                and msg.role == "message"
+            ],
+            current_user_id="",
             self_id=event.get_self_id(),
             limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
         )
@@ -294,20 +390,6 @@ class ReplyPipeline:
                 )
             task_creator_names[str(event.get_self_id())] = nickname
 
-        # 读取长期记忆
-        long_memories = []
-        inject_limit = self._conf_int(self.plugin.embedding_conf, "inject_limit", 20)
-        if (
-            self.plugin.embedding_conf.get("enabled", False)
-            and not self.plugin.embedding_conf.get("session_recall_enabled", True)
-            and inject_limit > 0
-        ):
-            long_memories = await self.plugin.data_cache.get_memories(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                limit=inject_limit,
-            )
-
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
         persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
 
@@ -339,29 +421,25 @@ class ReplyPipeline:
 
         # 3. 构造回复提示词 Prompt
         user_prompt = build_reply_prompt(
-            recent_messages=recent_messages,
+            recent_messages=prompt_recent_messages,
             media_captions=media_captions,
-            reply_messages=reply_messages,
+            reply_messages=prompt_reply_messages,
             remind_message=remind_message,
             group_data=str(
                 await event.get_group(event.get_group_id())
                 if event.get_group_id()
                 else ""
             ),
-            user_id=event.get_sender_id(),
-            nickname=event.get_sender_name() or "",
             bot_status=bot_status,
             tool_results=tool_results,
-            long_memories=long_memories,
             session_recalled_memories=session_recalled_memories,
             relevant_memories=relevant_memories,
-            user_profile=user_profile,
+            user_profiles=user_profiles,
             group_profile=group_profile,
             active_user_briefs=active_user_briefs,
             short_tasks=short_tasks,
             short_task_limit=short_task_limit,
             other_data=other_data,
-            user_relation=user_relation,
             bot_sticker=bot_sticker_cache,
             message_truncate_limit=getattr(
                 self.plugin, "reply_message_truncate_limit", 1500
@@ -412,6 +490,13 @@ class ReplyPipeline:
             random.shuffle(provider_ids)
 
         # 4. 调用 LLM 进行回复
+        if getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name,
+                group_or_user_id,
+                event.get_self_id(),
+                [*recent_messages, *reply_messages],
+            )
         llm_result = await self.plugin.call_llm.call_llm_reply(
             event=event,
             group_or_user_id=group_or_user_id,

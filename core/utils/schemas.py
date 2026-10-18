@@ -27,7 +27,7 @@ class FeatureKey:
     TASK_BOARD = "task_board"
     SLANG = "slang"
     STICKER = "sticker"
-    MEMORY_QUERY_DELETE = "memory_query_delete"
+    MEMORY_QUERY = "memory_query"
     SET_CALL_NAME = "set_call_name"
     SET_AVATAR = "set_avatar"
     PERSISTENT_STATUS = "persistent_status"
@@ -213,7 +213,6 @@ FLAT_CLOSABLE_TAGS = [
     "search_memory",
     "search_chat_history",
     "get_message_context",
-    "delete_memory",
     "update_memory",
     "update_relation",
     "set_relation_title",
@@ -280,7 +279,6 @@ class XmlLlmResult:
     leave: list[str] = field(default_factory=list)
     # 长期记忆。群号/用户ID，内容
     search_memories: list[tuple[str, str]] = field(default_factory=list)
-    delete_memories: list[str] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list

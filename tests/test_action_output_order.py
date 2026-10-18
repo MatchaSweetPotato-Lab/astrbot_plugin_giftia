@@ -139,6 +139,9 @@ async def test_actions_follow_xml_order(runtime, platform, xml, expected):
     )
     assert logs.count("<poke ") == expected.count("group_poke")
     assert logs.count("<emoji_like ") == expected.count("msg_emoji_like")
+    for entry in runtime.plugin.data_cache.add_message.await_args_list:
+        if entry.args[2].role == "message":
+            assert entry.kwargs["observed_by_bot"] is True
 
 
 @pytest.mark.asyncio
@@ -287,6 +290,11 @@ async def test_history_timestamps_follow_completed_actions(runtime):
     assert "<poke " in rows[1].content
     assert "<emoji_like " in rows[3].content
     assert rows == sorted(rows, key=lambda row: row.time)
+    assert all(
+        entry.kwargs["observed_by_bot"]
+        for entry in runtime.plugin.data_cache.add_message.await_args_list
+        if entry.args[2].role == "message"
+    )
 
 
 @pytest.fixture
@@ -350,6 +358,11 @@ async def test_signature_quote_attaches_to_first_content(
     assert str(chains[0][0].id) == "400"
     assert isinstance(chains[0][1], Record if first_kind == "tts" else Plain)
     assert sum(isinstance(c, Reply) for chain in chains for c in chain) == 1
+    assert all(
+        entry.kwargs["observed_by_bot"]
+        for entry in runtime.plugin.data_cache.add_message.await_args_list
+        if entry.args[2].role == "message"
+    )
     if first_kind == "tts":
         assert (
             'quote="400"'
@@ -471,7 +484,7 @@ async def test_xml_tool_outputs_and_results_follow_order(
     result = await runtime.parser.decode_llm_xml(xml, "100")
     plugin = runtime.plugin
     plugin.bot_map = {"bot": {"llm_reply_conf": {"provider_id": "mock"}}}
-    plugin.embedding_conf = {"enabled": False, "session_recall_enabled": False}
+    plugin.embedding_conf = {"enabled": False}
     plugin.msg_number = 10
     plugin.emoji_manager = SimpleNamespace(
         get_random_stickers=AsyncMock(return_value=[])
@@ -480,7 +493,9 @@ async def test_xml_tool_outputs_and_results_follow_order(
         get_persona_v3_by_id=lambda _: {"prompt": "test"}
     )
     plugin.db = SimpleNamespace(
-        slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[]))
+        get_relation_changes=AsyncMock(return_value=[]),
+        get_relation_score=AsyncMock(return_value={}),
+        slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),
     )
     plugin.call_llm = SimpleNamespace(
         call_llm_reply=AsyncMock(side_effect=[result, XmlLlmResult()])
@@ -605,9 +620,7 @@ async def test_reminders_dispatch_tools_and_images_in_order(tool_runtime, platfo
             }
         }
     }
-    plugin.passive_memory_manager = SimpleNamespace(
-        mark_silence_summary_armed=AsyncMock()
-    )
+    plugin.passive_memory_manager = SimpleNamespace(reset_silence_counter=AsyncMock())
 
     async def send_by_session(origin, chain):
         runtime.observed.append(

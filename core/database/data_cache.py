@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -10,6 +11,7 @@ from cachetools import LRUCache
 
 from astrbot.api import logger
 
+from ..memory.atomic import memory_metadata
 from ..memory.memory import LTM
 from ..utils.http_manager import HttpManager
 from ..utils.schemas import (
@@ -74,7 +76,7 @@ class DataCache:
 
         # 关系缓存
         self.relations: dict[
-            str, tuple[int, str]
+            str, tuple[float, str]
         ] = {}  # bot_name:group_or_user_id:user_id -> (relation, title)
 
         # 使用 defaultdict 自动管理每个会话的 deque
@@ -136,9 +138,21 @@ class DataCache:
                         break
 
     async def add_message(
-        self, bot_name: str, group_id: str, msg_data: MessageData
+        self,
+        bot_name: str,
+        group_id: str,
+        msg_data: MessageData,
+        *,
+        observed_by_bot: bool = False,
     ) -> None:
-        """添加消息，先加入缓存，再写入数据库"""
+        """Cache and persist a message, then queue confirmed bot output as observed.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_id: Owning conversation.
+            msg_data: Message to store, assigning a local ID when necessary.
+            observed_by_bot: Whether this is the bot's successfully sent output.
+        """
         import time
 
         self._intercept_message(msg_data)
@@ -179,6 +193,10 @@ class DataCache:
         self.recent_messages[fmt_key].append(msg_data)
         # 将消息写入数据库
         await self.db.insert_message(bot_name=bot_name, message=msg_data)
+        if observed_by_bot and getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name, group_id, msg_data.user_id, [msg_data]
+            )
 
     async def add_cache_message(
         self, bot_name: str, group_id: str, msg_data: MessageData
@@ -497,7 +515,7 @@ class DataCache:
         bot_name: str,
         group_or_user_id: str,
         user_id: str,
-        relation: int | None = None,
+        base_relation: int | None = None,
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
         alias_increment_count: bool = True,
@@ -506,23 +524,6 @@ class DataCache:
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         profile_fields = dict(profile_fields or {})
         aliases = profile_fields.pop("aliases", None)
-        db_relation = relation
-        db_title = title
-        if relation is not None or title is not None:
-            current_relation, current_title = await self.get_user_relation(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=user_id,
-            )
-            if relation is not None:
-                db_relation = relation
-            else:
-                db_relation = current_relation
-            db_title = title if title is not None else current_title
-            self.relations[fmt_key] = (
-                db_relation,
-                db_title,
-            )
         if aliases is not None:
             if aliases or alias_increment_count:
                 await self.db.upsert_user_aliases(
@@ -542,12 +543,13 @@ class DataCache:
             user_id=user_id,
             group_or_user_id=group_or_user_id,
             bot_name=bot_name,
-            relation=db_relation,
-            title=db_title,
+            base_relation=base_relation,
+            title=title,
             profile_fields=profile_fields,
         )
         self.user_profile_records.pop(fmt_key, None)
         self.user_profiles.pop(fmt_key, None)
+        self.relations.pop(fmt_key, None)
 
     async def get_group_profile(
         self, bot_name: str, group_or_user_id: str
@@ -593,25 +595,43 @@ class DataCache:
         self.group_profiles[fmt_key] = profile
 
     async def update_relation(
-        self, bot_name: str, group_or_user_id: str, user_id: str, relation: int
-    ) -> None:
-        """更新关系"""
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        relation: int,
+        reason: str,
+        source_ids: list[int] | None = None,
+        occurred_at: str = "",
+    ) -> bool:
+        """Persist an interaction rating before invalidating cached affinity values.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            user_id: Member whose affinity changes.
+            relation: Signed nonzero interaction rating within minus five to plus five.
+            reason: Observed interaction explaining the rating.
+            source_ids: Exact source batch used for replay protection.
+            occurred_at: Last source message time.
+
+        Returns:
+            Whether this batch inserted a new affinity change.
+        """
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        current_relation, current_title = await self.get_user_relation(
+        _, _, applied = await self.db.apply_relation_change(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             user_id=user_id,
+            delta=relation,
+            reason=reason,
+            source_ids=source_ids,
+            occurred_at=occurred_at,
         )
-        new_relation = current_relation + relation
-        self.relations[fmt_key] = (new_relation, current_title)
-        if fmt_key in self.user_profile_records:
-            self.user_profile_records[fmt_key]["relation"] = new_relation
-        await self.db.upsert_relation(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=user_id,
-            relation=new_relation,
-        )
+        self.relations.pop(fmt_key, None)
+        self.user_profile_records.pop(fmt_key, None)
+        self.user_profiles.pop(fmt_key, None)
+        return applied
 
     async def set_relation_title(
         self, bot_name: str, group_or_user_id: str, user_id: str, title: str
@@ -635,7 +655,7 @@ class DataCache:
 
     async def get_user_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str
-    ) -> tuple[int, str]:
+    ) -> tuple[float, str]:
         """获取用户关系"""
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         relation = self.relations.get(fmt_key)
@@ -650,7 +670,7 @@ class DataCache:
         if relation_data:
             self.relations[fmt_key] = relation_data
             return relation_data
-        return 0, ""
+        return 50.0, ""
 
     async def build_active_user_briefs(
         self,
@@ -702,6 +722,8 @@ class DataCache:
                 "user_id": uid,
                 "nickname": nickname,
                 "relation": relation,
+                "base_relation": (record or {}).get("base_relation", 0),
+                "interaction_score": (record or {}).get("interaction_score", 50.0),
                 "title": title,
                 "call_name": "",
                 "aliases": "",
@@ -714,21 +736,7 @@ class DataCache:
                     brief["avatar_description"] = record.get("avatar_description") or ""
                 if not title and record.get("title"):
                     brief["title"] = record.get("title") or ""
-                if relation == 0 and record.get("relation") is not None:
-                    brief["relation"] = record.get("relation")
-
-            has_content = any(
-                brief.get(key)
-                for key in (
-                    "relation",
-                    "title",
-                    "call_name",
-                    "aliases",
-                    "avatar_description",
-                )
-            )
-            if has_content:
-                briefs.append(brief)
+            briefs.append(brief)
 
         return briefs
 
@@ -822,7 +830,7 @@ class DataCache:
                 continue
 
             score, distance = self._session_recall_score(raw_memory)
-            metadata = str(raw_memory.get("metadata") or "{}")
+            metadata = json.dumps(memory_metadata(raw_memory), ensure_ascii=False)
             updated_at = str(raw_memory.get("updated_at") or "")
             created_at = str(raw_memory.get("created_at") or "")
 
@@ -883,6 +891,8 @@ class DataCache:
         for memory in ranked:
             if len(selected) >= max_items:
                 break
+            metadata = memory_metadata({"metadata": memory.metadata})
+            memory.metadata = json.dumps(metadata, ensure_ascii=False)
             selected.append(memory)
         return selected
 
@@ -898,10 +908,7 @@ class DataCache:
     ) -> list[MemoryItem]:
         """获取记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
-        memories = self.memories.get(fmt_key)
-        if memories and len(memories) >= limit:
-            return list(memories)[-limit:]
-        # 从数据库中获取
+        # Replacements may change between reads; SQLite owns the current versions.
         db_memories = await self.db.get_memories(
             group_or_user_id=group_or_user_id, bot_name=bot_name, limit=limit
         )
@@ -934,20 +941,11 @@ class DataCache:
             meta_dict["associated_user_ids"] = associated_user_ids
         meta_str = json.dumps(meta_dict)
 
-        result = await self.ltm.add_memory(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            text=text,
-            time=now,
-            metadata=meta_str,
-        )
-        if result is None:
-            return
-        memory_id, vector = result
+        memory_id = str(uuid.uuid4())
         memory = MemoryItem(
             memory_id=memory_id,
             text=text,
-            vector=vector,
+            vector=b"",
             metadata=meta_str,
             updated_at=now,
             created_at=now,
@@ -960,6 +958,9 @@ class DataCache:
         await self.db.insert_memory(
             bot_name=bot_name, group_or_user_id=group_or_user_id, memory=memory
         )
+        manager = getattr(self.plugin, "passive_memory_manager", None)
+        if manager is not None:
+            await manager._sync_memory_vectors(bot_name, group_or_user_id)
         return memory_id
 
     async def record_memory_hits(
@@ -998,10 +999,16 @@ class DataCache:
 
     async def delete_memory(self, memory_id: str) -> bool:
         """删除记忆"""
-        result = await self.ltm.delete_memory(memory_id=memory_id)
-        if result is None:
-            return False
         await self.db.delete_memory(memory_id=memory_id)
+        if self.ltm and self.ltm.embedding_conf.get("enabled", False):
+            try:
+                await self.ltm.delete_memory(memory_id=memory_id)
+            except Exception as error:
+                logger.warning(
+                    "[Giftia Memory] Vector deletion deferred for %s: %s",
+                    memory_id,
+                    error,
+                )
         # 从缓存中删除
         for memories in self.memories.values():
             for memory in memories:

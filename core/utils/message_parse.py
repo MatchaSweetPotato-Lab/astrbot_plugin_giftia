@@ -37,6 +37,7 @@ from .message_forward import (
 from .message_forward import (
     MessageForwardParser,
 )
+from .message_markdown import normalize_qq_markdown_chain
 from .message_media import (
     SUPPORTED_FILE_FORMATS_WITH_DOT as SUPPORTED_FILE_FORMATS_WITH_DOT,
 )
@@ -294,7 +295,7 @@ class MessageParser:
 
         # Expand cards in a local queue to share normal image caching and the
         # per-message caption budget without changing the caller's chain.
-        chain = list(chain)
+        chain = normalize_qq_markdown_chain(chain)
         msg_parts = []
         result = ChainParseResult()
         index = 0

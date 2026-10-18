@@ -1,0 +1,309 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import aiosqlite
+import httpx
+import pytest
+import pytest_asyncio
+from core.database.data_cache import DataCache
+from core.database.database import Database
+from core.database.schema import initialize_database
+from core.web.chat_history_api import ChatHistoryApi
+from core.web.memory_api import MemoryApi
+from fastapi import FastAPI, Request
+
+from astrbot.api.web import PluginRequest, bind_request_context
+
+
+@pytest_asyncio.fixture
+async def memory_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(tmp_path / "runtime"))
+    conn = await aiosqlite.connect(tmp_path / "memory.db")
+    conn.row_factory = aiosqlite.Row
+    await initialize_database(conn)
+    plugin = SimpleNamespace(
+        db=Database(conn),
+        passive_memory_manager=SimpleNamespace(_sync_memory_vectors=AsyncMock()),
+    )
+    plugin.data_cache = DataCache(plugin.db, None, None, plugin=plugin)
+    api = MemoryApi()
+    api.giftia = plugin
+    history_api = ChatHistoryApi()
+    history_api.giftia = plugin
+    app = FastAPI()
+    handlers = {
+        "chat_history": history_api.get_chat_history,
+        "memories": api.get_memories,
+        "memories/filter_options": api.get_memory_filter_options,
+        "memories/add": api.add_memory,
+        "memories/update": api.update_memory,
+        "memories/delete": api.delete_memory,
+        "memories/clean/candidates": api.get_memory_clean_candidates,
+    }
+
+    @app.api_route("/{endpoint:path}", methods=["GET", "POST"])
+    async def dispatch(endpoint: str, request: Request):
+        with bind_request_context(PluginRequest(request)):
+            return await handlers[endpoint]()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        yield client, plugin
+    await conn.close()
+
+
+async def seed_memory(plugin, memory_id, **fields):
+    """Seed a synthetic atom for endpoint tests.
+
+    Args:
+        plugin: Isolated plugin runtime.
+        memory_id: Stable test identifier.
+        **fields: Stored fields overriding defaults.
+    """
+    item = {
+        "bot_name": "bot",
+        "group_or_user_id": "group",
+        "memory_id": memory_id,
+        "text": memory_id,
+        "importance": 3,
+        "created_at": "2020-01-01T00:00:00+00:00",
+        "updated_at": "2020-01-01T00:00:00+00:00",
+        "metadata": json.dumps(
+            {
+                "schema_version": 2,
+                "associated_user_ids": ["1"],
+                "topic": "game",
+                "evidence": [
+                    {
+                        "source_id": 12,
+                        "quote": "original",
+                        "user_id": "1",
+                        "time": "2020-01-01",
+                    }
+                ],
+            }
+        ),
+        **fields,
+    }
+    await plugin.db.conn.execute(
+        f"INSERT INTO memories ({','.join(item)}) VALUES ({','.join('?' for _ in item)})",
+        list(item.values()),
+    )
+    await plugin.db.conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_memory_names_are_scoped_to_selected_session(memory_api):
+    client, plugin = memory_api
+    await seed_memory(plugin, "event")
+    await plugin.db.conn.executemany(
+        "INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, call_name) VALUES (?, ?, ?, ?)",
+        [("bot", "group", "1", "local name"), ("bot", "other", "1", "private name")],
+    )
+    await plugin.db.conn.commit()
+    data = (
+        await client.get(
+            "/memories", params={"bot_name": "bot", "group_or_user_id": "group"}
+        )
+    ).json()["data"]
+    assert data["user_id_to_name"] == {"1": "local name"}
+    data = (await client.get("/memories", params={"bot_name": "bot"})).json()["data"]
+    assert data["user_id_to_name"] == {}
+
+
+@pytest.mark.asyncio
+async def test_history_api_reports_per_message_memory_state_below_maximum(memory_api):
+    client, plugin = memory_api
+    await plugin.db.conn.executemany(
+        "INSERT INTO chat_history (bot_name, group_or_user_id, message_id, "
+        "content, memory_status) VALUES ('bot', 'group', ?, 'message', ?)",
+        [("unseen", "unseen"), ("pending", "pending"), ("done", "summarized")],
+    )
+    await plugin.db.conn.commit()
+    await plugin.db.upsert_kv_data("passive_memory:last_summarized_id:bot:group", 999)
+    response = await client.get(
+        "/chat_history", params={"bot_name": "bot", "group_or_user_id": "group"}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["last_summarized_id"] == 999
+    assert {item["message_id"]: item["memory_status"] for item in data["items"]} == {
+        "unseen": "unseen",
+        "pending": "pending",
+        "done": "summarized",
+    }
+
+
+@pytest.mark.asyncio
+async def test_manual_memory_supports_multiple_participants_without_forged_evidence(
+    memory_api,
+):
+    client, plugin = memory_api
+    body = {
+        "bot_name": "bot",
+        "group_or_user_id": "group",
+        "topic": "emoji",
+        "text": "A 最近常用某个表情与 B 互动",
+        "associated_user_ids": "A,B,C",
+        "evidence": [{"source_id": 9999, "quote": "forged"}],
+        "origin": "derived",
+    }
+    result = (await client.post("/memories/add", json=body)).json()
+    assert result["status"] == "success"
+    item = (await client.get("/memories")).json()["data"]["items"][0]
+    assert item["metadata"]["evidence"] == []
+    assert item["metadata"]["manual_entry"] is True
+    assert not {"subject_id", "object_id", "origin"} & item["metadata"].keys()
+    assert item["metadata"]["associated_user_ids"] == ["A", "B", "C"]
+    plugin.passive_memory_manager._sync_memory_vectors.assert_awaited_once_with(
+        "bot", "group"
+    )
+    assert (
+        await client.post("/memories/add", json={**body, "associated_user_ids": []})
+    ).status_code == 400
+    assert not {"kind", "status", "expires_at"} & item.keys()
+
+
+@pytest.mark.asyncio
+async def test_scoped_delete_rejects_another_conversation(memory_api):
+    client, plugin = memory_api
+    await seed_memory(plugin, "event")
+    result = await client.post(
+        "/memories/delete",
+        json={
+            "memory_id": "event",
+            "bot_name": "bot",
+            "group_or_user_id": "other",
+        },
+    )
+    assert result.status_code == 400
+    assert (await client.get("/memories")).json()["data"]["total"] == 1
+    result = await client.post(
+        "/memories/delete",
+        json={
+            "memory_id": "event",
+            "bot_name": "bot",
+            "group_or_user_id": "group",
+        },
+    )
+    assert result.json()["status"] == "success"
+    assert (await client.get("/memories")).json()["data"]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fact_filters_counts_and_cleanup_use_scope_participants_and_text(
+    memory_api,
+):
+    client, plugin = memory_api
+    await seed_memory(plugin, "first", text="角色：卡夫卡")
+    await seed_memory(plugin, "second", text="角色：黑天鹅")
+    await seed_memory(plugin, "other-session", group_or_user_id="other")
+    await seed_memory(plugin, "malformed", metadata="{malformed")
+    await seed_memory(
+        plugin, "another-user", metadata=json.dumps({"associated_user_ids": ["11"]})
+    )
+    filters = {
+        "bot_name": "bot",
+        "group_or_user_id": "group",
+        "associated_user_id": "1",
+        "search": "角色",
+    }
+    data = (await client.get("/memories", params={**filters, "limit": 1})).json()[
+        "data"
+    ]
+    assert data["total"] == 2 and len(data["items"]) == 1
+    for item in data["items"]:
+        assert not {"kind", "status", "expires_at"} & item.keys()
+    counts = (await client.get("/memories/filter_options", params=filters)).json()[
+        "data"
+    ]
+    assert counts["sessions"] == [{"group_or_user_id": "group", "total": 2}]
+    clean = (
+        await client.post(
+            "/memories/clean/candidates",
+            json={
+                **filters,
+                "min_age_days": 0,
+                "last_hit_before_days": 0,
+            },
+        )
+    ).json()["data"]
+    assert {item["memory_id"] for item in clean["items"]} == {"first", "second"}
+
+
+@pytest.mark.asyncio
+async def test_fact_edit_preserves_identity_evidence_and_checks_revision(memory_api):
+    client, plugin = memory_api
+    await seed_memory(plugin, "fact")
+    item = (await client.get("/memories")).json()["data"]["items"][0]
+    body = {
+        "memory_id": "fact",
+        "bot_name": "bot",
+        "group_or_user_id": "group",
+        "text": "修正后的事实",
+        "revision": item["revision"],
+        "associated_user_ids": "B",
+        "user_id": "admin",
+    }
+    await plugin.data_cache.get_memories("bot", "group")
+    assert (await client.post("/memories/update", json=body)).json()[
+        "status"
+    ] == "success"
+    after = (await client.get("/memories")).json()["data"]["items"][0]
+    assert after["memory_id"] == item["memory_id"]
+    assert after["created_at"] == item["created_at"]
+    assert after["metadata"]["evidence"] == item["metadata"]["evidence"]
+    assert after["metadata"]["topic"] == item["metadata"]["topic"]
+    assert after["metadata"]["associated_user_ids"] == ["B"]
+    assert after["metadata"]["manually_edited"] is True
+    assert after["revision"] == item["revision"] + 1
+    assert not {"kind", "status", "expires_at"} & after.keys()
+    recalled = await plugin.data_cache.get_memories("bot", "group")
+    assert [memory.memory_id for memory in recalled] == ["fact"]
+    for changes in [
+        {},
+        {"revision": after["revision"], "topic": "another topic"},
+        {"group_or_user_id": "other"},
+    ]:
+        assert (
+            await client.post("/memories/update", json={**body, **changes})
+        ).status_code == 400
+    assert (await client.get("/memories")).json()["data"]["items"][0][
+        "revision"
+    ] == after["revision"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_classification_is_ignored_without_destroying_stored_facts(
+    memory_api,
+):
+    client, plugin = memory_api
+    await plugin.db.conn.execute(
+        "ALTER TABLE memories ADD COLUMN kind TEXT DEFAULT 'event'"
+    )
+    await plugin.db.conn.execute(
+        "ALTER TABLE memories ADD COLUMN status TEXT DEFAULT 'active'"
+    )
+    await seed_memory(
+        plugin,
+        "legacy",
+        kind="preference",
+        status="completed",
+        metadata=json.dumps(
+            {
+                "kind": "preference",
+                "status": "completed",
+                "expires_at": "2020-01-01",
+                "associated_user_ids": ["1"],
+                "evidence": [{"quote": "original evidence"}],
+            }
+        ),
+    )
+    await initialize_database(plugin.db.conn)
+    item = (await client.get("/memories")).json()["data"]["items"][0]
+    assert item["text"] == "legacy"
+    assert item["metadata"]["evidence"] == [{"quote": "original evidence"}]
+    assert not {"kind", "status", "expires_at"} & item.keys()
+    assert not {"kind", "status", "expires_at"} & item["metadata"].keys()

@@ -196,6 +196,62 @@ async def test_only_current_model_confirmed_alias_observations_count_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("profile_exists", "current_score", "delta"),
+    [
+        pytest.param(False, None, 1, id="new-profile"),
+        pytest.param(True, None, 1, id="unscored-profile"),
+        pytest.param(True, 0, 1, id="zero-score"),
+        pytest.param(True, 9, 4, id="cross-ten"),
+        pytest.param(True, 29, 4, id="cross-thirty"),
+        pytest.param(True, 40, 4, id="high-score"),
+        pytest.param(True, 40, -4, id="negative-event"),
+        pytest.param(True, -5, 2, id="negative-score"),
+    ],
+)
+async def test_profile_summary_receives_current_affinity_and_preserves_event_delta(
+    runtime, profile_exists, current_score, delta
+):
+    if profile_exists:
+        await runtime.db.upsert_user_profile(
+            "bot",
+            "group",
+            "A",
+            base_relation=current_score,
+            title="Retired title",
+            profile_fields={"attitude": "友好", "personality": "Retired personality"},
+        )
+    manager = PassiveSummaryTaskMixin()
+    manager.plugin = runtime
+    manager._call_summary_llm = AsyncMock(
+        return_value=(
+            '<summary_user_profile user_id="A">'
+            f'<update_relation delta="{delta:+d}">本批互动</update_relation>'
+            "</summary_user_profile>"
+        )
+    )
+    context = await manager._build_summary_context(
+        "bot",
+        "group",
+        "bot-id",
+        [MessageData(user_id="A", nickname="Alice", content="约好的事情已经办好了")],
+    )
+
+    assert await manager._run_profile_summary_task(
+        "bot", "group", "小吉", "bot-id", context
+    )
+
+    user_prompt = manager._call_summary_llm.call_args.args[2]
+    assert "好感度:" not in user_prompt
+    assert "Retired title" not in user_prompt
+    assert "Retired personality" not in user_prompt
+    relation, _ = await runtime.db.get_relation("bot", "group", "A")
+    assert relation == pytest.approx(
+        (current_score or 0) + 100 * (5 + max(delta, 0)) / (10 + abs(delta))
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("group_id", ["group", ""])
 @pytest.mark.parametrize("rules", ["禁止刷屏", "1. 禁止刷屏\n2. 讨论时  尊重他人", ""])
 async def test_rules_command_preserves_original_text_and_overwrites_only_current_session(

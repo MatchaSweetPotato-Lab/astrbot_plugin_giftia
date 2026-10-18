@@ -131,13 +131,20 @@ export async function refreshScopedFilters(viewKey, preserveSession = true) {
     const groupEl = document.getElementById(config.groupInputId);
     const currentSession = groupEl ? groupEl.value : "";
     const params = getScopedFilterParams(viewKey);
+    const selection = JSON.stringify(params);
 
     try {
         const res = await window.apiGet(config.filterEndpoint, params);
+        if (selection !== JSON.stringify(getScopedFilterParams(viewKey))) return;
+        if (groupEl?.value !== currentSession) return;
         const data = res.status === "success" && res.data ? res.data : { bots: [], sessions: [], selected_bot_name: "" };
         const bots = data.bots || [];
         const selectedBotName = data.selected_bot_name || "";
         const sessions = data.sessions || [];
+        if (viewKey === 'memories' && preserveSession && currentSession && params.bot_name === selectedBotName &&
+            !sessions.some(item => item.group_or_user_id === currentSession)) {
+            sessions.unshift({ group_or_user_id: currentSession, total: 0 });
+        }
 
         populateBotSelect(botEl, bots, selectedBotName);
 
@@ -164,6 +171,7 @@ export async function refreshScopedFilters(viewKey, preserveSession = true) {
             }
         }
     } catch (e) {
+        if (selection !== JSON.stringify(getScopedFilterParams(viewKey))) return;
         if (groupEl && groupEl.tagName === "SELECT") {
             groupEl.value = "";
             if (viewKey === "tokenLogs") {

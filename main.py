@@ -237,6 +237,7 @@ class Giftia(Star):
         # 实例化逻辑管理器
         self.task_board = TaskBoardManager(self)
         self.passive_memory_manager = PassiveMemoryManager(self)
+        self.passive_memory_manager.register_jobs()
         self.tts_manager = TTSManager(self)
         self.reports = ReportService(
             self, StarTools.get_data_dir("astrbot_plugin_giftia")
@@ -864,8 +865,10 @@ class Giftia(Star):
                     )
             self.chat_manager.sessions.clear()
 
+        if hasattr(self, "passive_memory_manager"):
+            await self.passive_memory_manager.close()
+        self.task_manager.shutdown()
         await self.http_manager.close_session()
         await self.db.close()
-        self.task_manager.shutdown()
         self.ltm.close()
         remove_tools(self.context)

@@ -22,7 +22,7 @@ class ToolExecutor:
         group_or_user_id: str,
         llm_result: XmlLlmResult,
         recent_messages: list,
-        relevant_memories: list[str],
+        relevant_memories: list[dict],
         other_data: list[str],
     ) -> None:
         """在有序输出派发完成后填充查询上下文。
@@ -63,7 +63,10 @@ class ToolExecutor:
             "enabled", False
         ):
             found_memory = False
-            seen_memory_texts = set(relevant_memories)
+            seen_memory_ids = {
+                memory.get("memory_id") or memory.get("id")
+                for memory in relevant_memories
+            }
             for target_group_or_user_id, query in llm_result.search_memories:
                 memory_results = await search_memories_with_rerank(
                     self.plugin,
@@ -78,12 +81,14 @@ class ToolExecutor:
                     found_memory = True
 
                 for memory in memory_results:
-                    memory_text = memory["text"]
-                    if memory_text not in seen_memory_texts:
-                        relevant_memories.append(memory_text)
-                        seen_memory_texts.add(memory_text)
+                    memory_id = memory.get("memory_id") or memory.get("id")
+                    if memory_id not in seen_memory_ids:
+                        relevant_memories.append(memory)
+                        seen_memory_ids.add(memory_id)
             if not found_memory and len(relevant_memories) == 0:
-                relevant_memories.append("没有找到相关记忆")
+                other_data.append(
+                    "<memory_search_result>没有找到相关记忆</memory_search_result>"
+                )
 
         # 3. 搜索聊天历史记录
         if llm_result.search_histories:

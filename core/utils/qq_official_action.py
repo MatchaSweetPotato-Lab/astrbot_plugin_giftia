@@ -445,7 +445,6 @@ class QQOfficialAction:
             if should_use_md:
                 payload_to_send["msg_type"] = 2
                 payload_to_send["markdown"] = {"content": plain_text}
-                payload_to_send["content"] = plain_text
             else:
                 payload_to_send["msg_type"] = 0
                 payload_to_send["content"] = plain_text

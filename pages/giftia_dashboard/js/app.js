@@ -105,29 +105,13 @@ window.GiftiaApp = {
 };
 
 // Global handlers bound to window for inline HTML onclick/etc.
-window.toggleMemoryText = function(memoryId) {
-    const textContainer = document.getElementById(`memory-text-${memoryId}`);
-    const btnToggle = document.getElementById(`btn-toggle-${memoryId}`);
-    if (textContainer && btnToggle) {
-        const isCollapsed = textContainer.classList.contains("collapsed");
-        if (isCollapsed) {
-            textContainer.classList.remove("collapsed");
-            textContainer.classList.add("expanded");
-            btnToggle.textContent = "收起全部";
-        } else {
-            textContainer.classList.remove("expanded");
-            textContainer.classList.add("collapsed");
-            btnToggle.textContent = "展开全部";
-        }
-    }
-};
-
 window.filterMemoryByUser = async function(userId) {
     const input = document.getElementById("memory-associated-user-id");
     if (input) {
         input.value = userId;
         const app = window.GiftiaApp;
         app.resetPagination("memories");
+        await app.refreshScopedFilters("memories", true);
         await app.loadMemories();
     }
 };

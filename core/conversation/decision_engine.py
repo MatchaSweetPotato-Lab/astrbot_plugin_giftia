@@ -265,7 +265,7 @@ class DecisionEngine:
         recent_messages: list[MessageData],
         *,
         force_reply: bool = False,
-    ) -> tuple[bool, list[str] | None, list[dict] | None, str | None]:
+    ) -> tuple[bool, list[dict] | None, list[dict] | None, str | None]:
         """Evaluate a frozen batch; admission and scheduling belong to the caller.
 
         Args:
@@ -278,7 +278,7 @@ class DecisionEngine:
             force_reply: Whether a batch member requests a direct reply.
 
         Returns:
-            Reply choice, recalled texts, recalled records, and optional meme tags.
+            Reply choice, prompt records, pending cache records, and optional meme tags.
 
         Raises:
             RuntimeError: All model attempts failed; this is not a silent decision.
@@ -392,6 +392,13 @@ class DecisionEngine:
         )
 
         # 调用 LLM 决策（纯文本化调用，不传递多模态原始 URL）
+        if getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.observe_messages(
+                bot_name,
+                group_or_user_id,
+                event.get_self_id(),
+                [*recent_messages, *pending_messages],
+            )
         result = await self.plugin.call_llm.call_llm_decision(
             provider_ids=provider_ids,
             system_prompt=decision_conf.get("decision_prompt"),
@@ -435,7 +442,7 @@ class DecisionEngine:
                 recent_messages=recent_messages,
                 log_context="决策 RAG 记忆召回",
             )
-            relevant_memories = [m["text"] for m in memory_results]
+            relevant_memories = list(memory_results)
             return True, relevant_memories, memory_results, result.meme_tags
 
         return True, relevant_memories, None, result.meme_tags

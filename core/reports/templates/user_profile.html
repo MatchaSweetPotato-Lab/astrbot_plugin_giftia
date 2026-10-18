@@ -7,16 +7,25 @@ body { margin: 0; padding: 44px; background: #edf4f1; color: #183c32; font-famil
 .eyebrow { color: #49806a; font-size: 18px; letter-spacing: 3px; }
 h1 { margin: 18px 0 10px; font-size: 44px; }
 .subtitle, footer { color: #72867d; font-size: 18px; line-height: 1.7; }
-.relationship { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 30px 0; }
+.relationship { margin: 30px 0; }
 .metric { padding: 22px; background: #f1f8f4; border-radius: 18px; }
 .metric span { display: block; color: #49806a; font-size: 18px; margin-bottom: 10px; }
 .metric strong { font-size: 28px; }
 .field { padding: 22px 0; border-bottom: 1px solid #e6eee9; }
 .field h2 { margin: 0 0 10px; color: #49806a; font-size: 20px; font-weight: 500; }
 .field p { margin: 0; font-size: 23px; line-height: 1.65; white-space: pre-wrap; }
+.history { margin-top: 30px; }
+.history h2 { color: #49806a; font-size: 20px; font-weight: 500; }
+.change { padding: 20px 0; border-bottom: 1px solid #e6eee9; }
+.change:last-child { border-bottom: none; }
+.change-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; font-size: 18px; color: #72867d; }
+.change-delta { padding: 4px 10px; border-radius: 8px; background: #f1f8f4; color: #277351; }
+.change-delta.negative { background: #fff1ef; color: #ba574a; }
+.change-meta time { margin-left: auto; font-size: 16px; }
+.change p { margin: 12px 0 0; font-size: 21px; line-height: 1.65; white-space: pre-wrap; }
 .report * { min-width: 0; overflow-wrap: anywhere; }
 footer { margin-top: 28px; }
-@media (max-width: 600px) { body { padding: 20px; } .report { padding: 26px; } .relationship { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { body { padding: 20px; } .report { padding: 26px; } }
 </style>
 </head>
 <body>
@@ -24,13 +33,32 @@ footer { margin-top: 28px; }
   <div class="eyebrow">GIFTIA · PROFILE</div>
   <h1>{{ title }}</h1>
   <div class="subtitle">用户 ID · {{ user_id }}<br>机器人 · {{ nickname }} ({{ bot_name }})</div>
+  {% if relation is not none and relation != '' and relation != '暂无记录' %}
   <section class="relationship">
-    <div class="metric"><span>好感度</span><strong>{{ relation }}</strong></div>
-    <div class="metric"><span>关系称谓</span><strong>{{ relation_title }}</strong></div>
+    <div class="metric">
+      <span>好感度</span><strong>{{ '%.1f' | format(relation) }}</strong>
+      <span>基础 {{ base_relation }} + 互动 {{ '%.1f' | format(interaction_score) }}</span>
+      <span>近期 {{ '%.1f' | format(recent_score) }} · 长期 {{ '%.1f' | format(long_term_score) }} · 共 {{ total_count }} 次评价</span>
+    </div>
   </section>
-  {% for label, value in profile_fields.items() %}
+  {% endif %}
+  {% for label, value in profile_fields.items() if value and value != '暂无记录' %}
   <section class="field"><h2>{{ label }}</h2><p>{{ value }}</p></section>
   {% endfor %}
+  {% if recent_relation_changes is defined and recent_relation_changes %}
+  <section class="history">
+    <h2>最近互动评价</h2>
+    {% for change in recent_relation_changes %}
+    <div class="change">
+      <div class="change-meta">
+        <strong class="change-delta{% if change.delta < 0 %} negative{% endif %}">互动评价 {{ '%+d' | format(change.delta) }}</strong>
+        {% if change.time %}<time>{{ change.time }}</time>{% endif %}
+      </div>
+      {% if change.reason %}<p>{{ change.reason }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
   <footer>会话 {{ session_id }} · {{ generated_at }}</footer>
 </main>
 </body>

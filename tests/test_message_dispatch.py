@@ -26,6 +26,7 @@ def runtime():
         passive_memory_enabled=False,
         passive_memory_manager=SimpleNamespace(
             check_and_trigger_passive_memory=AsyncMock(),
+            close=AsyncMock(),
         ),
         db=SimpleNamespace(
             get_kv_data=AsyncMock(return_value=None),
@@ -240,6 +241,7 @@ async def test_terminate_cancels_passive_memory_before_closing_resources(runtime
 
     async def close_db():
         assert cancelled.is_set()
+        plugin.passive_memory_manager.close.assert_awaited_once()
 
     plugin.passive_memory_manager.check_and_trigger_passive_memory.side_effect = (
         passive_memory

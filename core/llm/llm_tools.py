@@ -17,7 +17,7 @@ from ..utils.schemas import (
     MediaCaption,
     MessageData,
 )
-from .prompt import USER_PROFILE_FIELDS, normalize_profile_value
+from .prompt import USER_PROFILE_FIELDS, build_user_relation, normalize_profile_value
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -196,12 +196,11 @@ class SearchUserProfileTool(FunctionTool):
 
         lines = [header]
         relation = item.get("relation")
-        if relation not in (None, "", 0):
-            lines.append(f"- 好感度：{relation}")
-        title = normalize_profile_value(item.get("title"))
-        if title:
-            lines.append(f"- 关系头衔：{title}")
-
+        if relation not in (None, ""):
+            lines.append(build_user_relation((relation, "")))
+            lines.append(
+                f"基础分：{item['base_relation']}；互动分：{item['interaction_score']:.1f}"
+            )
         for profile_field, label in USER_PROFILE_FIELDS:
             value = normalize_profile_value(item.get(profile_field))
             if value:

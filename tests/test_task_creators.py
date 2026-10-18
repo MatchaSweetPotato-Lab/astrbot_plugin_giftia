@@ -27,7 +27,7 @@ def runtime():
         ),
     ]
 
-    async def add_message(bot, session, message):
+    async def add_message(bot, session, message, **kwargs):
         history.append(message)
 
     bot_conf = {"llm_reply_conf": {"provider_ids": ["reply"]}}
@@ -35,7 +35,7 @@ def runtime():
         bot_map={"bot": bot_conf},
         get_bot_config=lambda _: bot_conf,
         tools_config={"max_loop": 3},
-        embedding_conf={"enabled": False, "session_recall_enabled": False},
+        embedding_conf={"enabled": False},
         msg_number=20,
         data_cache=SimpleNamespace(
             get_recent_message=AsyncMock(side_effect=lambda *args: list(history)),
@@ -70,6 +70,8 @@ def runtime():
             )
         ),
         db=SimpleNamespace(
+            get_relation_changes=AsyncMock(return_value=[]),
+            get_relation_score=AsyncMock(return_value={}),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),
             update_message_reply_decision=AsyncMock(),
         ),

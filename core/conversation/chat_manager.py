@@ -331,6 +331,7 @@ class ChatManager:
                             media_id_list=parsed_msg.media_id_list,
                             forward_messages=parsed_msg.forward_messages,
                         ),
+                        observed_by_bot=True,
                     )
                     logger.debug(
                         "[Giftia] intercepted_send successfully logged to database"
@@ -846,7 +847,7 @@ class ChatManager:
         group_or_user_id: str,
         state: SessionState,
         recent_messages: list[MessageData],
-        relevant_memories: list[str] | None,
+        relevant_memories: list[dict] | None,
         pending_recall_memories: list[dict] | None,
         meme_tags: str | None,
     ) -> bool:
@@ -858,7 +859,7 @@ class ChatManager:
             group_or_user_id: Stored conversation identifier.
             state: Current batch and side-effect tracking.
             recent_messages: Frozen history at reply start.
-            relevant_memories: Decision-selected memory texts.
+            relevant_memories: Decision-selected memory records.
             pending_recall_memories: Memory records to commit on completion.
             meme_tags: Decision-selected sticker search tags.
 
@@ -912,20 +913,12 @@ class ChatManager:
                         chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids
                     )
             if has_sent_reply:
-                # Capture inactivity before refreshing the window. Passing a trigger
-                # advances the memory cursor and would discard active conversation.
-                trigger_msg_id = (
-                    state.current[0].message.message_id
-                    if self.plugin.active_reply_counters.get(reply_key, 0) == 0
-                    else None
-                )
                 self.plugin.active_reply_counters[reply_key] = bot_conf.get(
                     "decision_conf", {}
                 ).get("reply_active_window", 10)
-                await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                await self.plugin.passive_memory_manager.reset_silence_counter(
                     bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    trigger_msg_id=trigger_msg_id,
+                    session_id=group_or_user_id,
                 )
             self.reply_pipeline.commit_pending_session_recalled_memories(
                 bot_name=bot_name,
@@ -1211,9 +1204,9 @@ class ChatManager:
                     decision_conf = bot_conf.get("decision_conf", {})
                     window_size = decision_conf.get("reply_active_window", 10)
                     self.plugin.active_reply_counters[fmt_key] = window_size
-                    await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                    await self.plugin.passive_memory_manager.reset_silence_counter(
                         bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
+                        session_id=group_or_user_id,
                     )
                     logger.info(
                         f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"

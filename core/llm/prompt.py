@@ -3,9 +3,9 @@ from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
+from ..memory.atomic import memory_metadata
 from ..utils.schemas import (
     MediaCaption,
-    MemoryItem,
     MessageData,
     SessionRecallMemory,
     ShortTask,
@@ -27,11 +27,7 @@ MAX_FORWARDED_INDEX_IN_PROMPT = 20
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
-    ("personality", "性格风格"),
-    ("interests", "兴趣话题"),
     ("attitude", "互动态度"),
-    ("agreements", "关键约定"),
-    ("extra", "其他补充"),
     ("avatar_description", "头像描述"),
 ]
 
@@ -85,7 +81,7 @@ def build_decision_prompt(
     recent_messages: list[MessageData],
     pending_messages: list[MessageData],
     bot_status: Status,
-    user_relation: tuple[int, str] | None = None,
+    user_relation: tuple[float, str] | None = None,
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
     active_user_briefs: list[dict] | None = None,
@@ -213,10 +209,16 @@ def process_media_captions_for_prompt(
     threshold: int = 100,
     force_inline_all: bool = False,
 ) -> tuple[list[MessageData], list[MediaCaption]]:
-    """
-    分析消息列表与媒体转述，进行内联判定与替换。
-    force_inline_all: 若为 True，则无视长度和频次限制，将所有已有转述 100% 全部内联替换到正文中。
-    返回: (修改后的消息副本列表, 剩余未内联的媒体转述列表)
+    """Embed captions in message copies or retain them as shared footnotes.
+
+    Args:
+        messages: Source messages with attached media identifiers.
+        media_captions: Available captions and descriptive metadata.
+        threshold: Maximum descriptive length for a unique inline caption.
+        force_inline_all: Inline all supplied captions regardless of length or count.
+
+    Returns:
+        Processed message copies and captions that remain as footnotes.
     """
     from collections import Counter
 
@@ -279,16 +281,14 @@ def process_media_captions_for_prompt(
             for hash_val in msg.media_id_list:
                 if hash_val in inline_hashes:
                     formatted = format_inline_caption(caption_map[hash_val])
-                    if f"[图片:{hash_val}][描述:" not in msg.content:
-                        msg.content = msg.content.replace(
-                            f"[图片:{hash_val}]", f"[图片:{hash_val}][描述:{formatted}]"
-                        )
-                    if f"[语音:{hash_val}][描述:" not in msg.content:
-                        msg.content = msg.content.replace(
-                            f"[语音:{hash_val}]", f"[语音:{hash_val}][描述:{formatted}]"
-                        )
+                    for label in ("图片", "语音", "视频"):
+                        placeholder = f"[{label}:{hash_val}]"
+                        if f"{placeholder}[描述:" not in msg.content:
+                            msg.content = msg.content.replace(
+                                placeholder, f"{placeholder}[描述:{formatted}]"
+                            )
 
-    # 剩余未内联的媒体（仅保留已有转述内容的图片/语音媒体；视频转述不自动注入提示词注脚，以防上下文膨胀）
+    # Caption selection belongs to the caller; supplied videos must not be lost.
     remaining_captions = []
     if media_captions:
         for caption in media_captions:
@@ -305,20 +305,69 @@ def process_media_captions_for_prompt(
     return copied_messages, remaining_captions
 
 
+def prepare_reply_message_context(
+    recent_messages: list[MessageData],
+    reply_messages: list[MessageData],
+) -> tuple[list[MessageData], list[MessageData]]:
+    """Align reply context without changing the frozen processing targets.
+
+    Args:
+        recent_messages: Session history from the reply's snapshot.
+        reply_messages: Frozen batch selected for this reply.
+
+    Returns:
+        History before the first target and the remaining reply timeline.
+    """
+    if not reply_messages:
+        return recent_messages, []
+
+    # Replace stale cached copies with frozen targets, preserving snapshot order.
+    reply_by_key = {msg.message_id or id(msg): msg for msg in reply_messages}
+    timeline = []
+    seen = set()
+    for msg in [*recent_messages, *reply_messages]:
+        key = msg.message_id or id(msg)
+        if key not in seen:
+            timeline.append(reply_by_key.get(key, msg))
+            seen.add(key)
+
+    # Compare full instants; missing times and ties retain their snapshot order.
+    timed_positions = []
+    timed_messages = []
+    for index, msg in enumerate(timeline):
+        try:
+            timestamp = datetime.fromisoformat(
+                msg.time.replace("Z", "+00:00")
+            ).timestamp()
+        except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+            continue
+        timed_positions.append(index)
+        timed_messages.append((timestamp, msg))
+    timed_messages.sort(key=lambda item: item[0])
+    for index, (_, msg) in zip(timed_positions, timed_messages):
+        timeline[index] = msg
+
+    boundary = next(
+        index
+        for index, msg in enumerate(timeline)
+        if (msg.message_id or id(msg)) in reply_by_key
+    )
+    return timeline[:boundary], timeline[boundary:]
+
+
 def build_reply_prompt(
     recent_messages: list[MessageData],
     media_captions: list[MediaCaption],
     bot_status: Status,
-    user_relation: tuple[int, str] | None = None,
+    user_relation: tuple[float, str] | None = None,
     group_data: str = "",
     user_id: str = "",
     nickname: str = "",
     reply_messages: list[MessageData] | None = None,
     remind_message: str | None = None,
     tool_results: list[dict[str, str]] | None = None,
-    long_memories: list[MemoryItem] | None = None,
-    session_recalled_memories: list[SessionRecallMemory] | None = None,
-    relevant_memories: list[str] | None = None,
+    session_recalled_memories: list[SessionRecallMemory | dict] | None = None,
+    relevant_memories: list[dict] | None = None,
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
     active_user_briefs: list[dict] | None = None,
@@ -328,13 +377,29 @@ def build_reply_prompt(
     bot_sticker: str | None = None,
     message_truncate_limit: int = 1500,
     slang_entries: list[dict] | None = None,
+    relation_changes: list[dict] | None = None,
+    relation_score: dict[str, int | float] | None = None,
+    user_profiles: list[dict] | None = None,
 ) -> str:
-    reply_messages = reply_messages or []
-    reply_ids = {msg.message_id for msg in reply_messages if msg.message_id}
-    recent_messages = [
-        msg
-        for msg in recent_messages
-        if not msg.message_id or msg.message_id not in reply_ids
+    recent_messages, reply_messages = prepare_reply_message_context(
+        recent_messages, reply_messages or []
+    )
+    if user_profiles is None:
+        user_profiles = [
+            {
+                "user_id": user_id,
+                "nickname": nickname,
+                "user_profile": user_profile,
+                "user_relation": user_relation,
+                "relation_changes": relation_changes,
+                "relation_score": relation_score,
+            }
+        ]
+    profile_ids = {str(profile["user_id"]) for profile in user_profiles}
+    active_user_briefs = [
+        brief
+        for brief in active_user_briefs or []
+        if str(brief.get("user_id")) not in profile_ids
     ]
     all_messages = [*recent_messages, *reply_messages]
 
@@ -344,12 +409,16 @@ def build_reply_prompt(
         threshold=100,
     )
 
-    # Apply call names using the helper
+    profile_call_names = [
+        {"user_id": profile["user_id"], "call_name": record.get("call_name")}
+        for profile in user_profiles
+        if isinstance(record := profile.get("user_profile"), dict)
+    ]
     processed_messages = _apply_call_names_to_messages(
         messages=processed_messages,
-        user_id=user_id,
-        user_profile=user_profile,
-        active_user_briefs=active_user_briefs,
+        user_id="",
+        user_profile=None,
+        active_user_briefs=[*active_user_briefs, *profile_call_names],
     )
 
     # 拆分回 recent_messages 和 current_message
@@ -358,6 +427,10 @@ def build_reply_prompt(
     )
     copied_reply = processed_messages[len(recent_messages) :]
 
+    # Current results take precedence over copies from earlier turns.
+    seen_memory_ids = set()
+    relevant_block = build_memory_items(relevant_memories or [], seen_memory_ids)
+    session_block = build_memory_items(session_recalled_memories or [], seen_memory_ids)
     user_prompt = []
 
     # Keep rules, tasks, and member summaries in the stable prefix.
@@ -374,16 +447,11 @@ def build_reply_prompt(
     if active_user_briefs_block:
         user_prompt.append(active_user_briefs_block)
 
-    # 2. 长期记忆背景：全量长期记忆库与会话累计召回记忆
-    if long_memories:
-        user_prompt.append(
-            f"<long_memories>\n{build_long_memories(long_memories)}\n</long_memories>"
-        )
-    # 当前会话累计召回的相关长期记忆
-    if session_recalled_memories:
+    # Recalled context includes this batch and memories retained by the session pool.
+    if session_block:
         user_prompt.append(
             "<session_recalled_memories>\n"
-            f"{build_session_recalled_memories(session_recalled_memories)}\n"
+            f"{session_block}\n"
             "</session_recalled_memories>"
         )
 
@@ -408,14 +476,10 @@ def build_reply_prompt(
         )
 
     # 4. 即时刺激与心境生成区（高权重近因区，为生成提供直接依据，变动置底保护上方缓存）
-    user_profile_block = build_user_profile_block(
-        user_id=user_id,
-        user_profile=user_profile,
-        user_relation=user_relation,
-        nickname=nickname,
-    )
-    if user_profile_block:
-        user_prompt.append(user_profile_block)
+    for profile in user_profiles:
+        user_profile_block = build_user_profile_block(**profile)
+        if user_profile_block:
+            user_prompt.append(user_profile_block)
     persistent_status_block = build_persistent_status_block(bot_status)
     if persistent_status_block:
         user_prompt.append(persistent_status_block)
@@ -425,9 +489,9 @@ def build_reply_prompt(
     if bot_sticker:
         user_prompt.append(f"<stickers>\n{bot_sticker}\n</stickers>")
     # 相关记忆
-    if relevant_memories:
+    if relevant_block:
         user_prompt.append(
-            f"<relevant_memories>\n{build_rag_results(relevant_memories)}\n</relevant_memories>"
+            f"<relevant_memories>\n{relevant_block}\n</relevant_memories>"
         )
     # 提醒消息
     if remind_message:
@@ -546,7 +610,14 @@ def parse_message_to_str(message: MessageData, truncate_limit: int = 500) -> str
 
 
 def parse_caption_to_str(media_caption: MediaCaption) -> str:
-    """构建xml格式的图片等媒体的消息，用于提示词传递聊天记录"""
+    """Render caption data using escaped XML attributes and body text.
+
+    Args:
+        media_caption: Available media description and metadata.
+
+    Returns:
+        A caption element with the media identifier and nonempty metadata.
+    """
     props = ""
     caption_text = ""
     for prop in CAPTION_PROPS:
@@ -557,7 +628,8 @@ def parse_caption_to_str(media_caption: MediaCaption) -> str:
                 continue
             props += f" {prop}={quoteattr(str(value))}"
     return (
-        f'<caption media_id="{media_caption.hash_val}"{props}>{caption_text}</caption>'
+        f"<caption media_id={quoteattr(str(media_caption.hash_val))}{props}>"
+        f"{escape(caption_text)}</caption>"
     )
 
 
@@ -658,33 +730,6 @@ def build_persistent_status_block(status: Status | None) -> str:
     return f"<bot_persistent_status>\n{status_content}\n</bot_persistent_status>"
 
 
-def build_memory_attrs(
-    memory_id: str,
-    created_at: str = "",
-    updated_at: str = "",
-) -> str:
-    memory_time = format_memory_time(select_memory_time(created_at, updated_at))
-    attrs = [f"id={quoteattr(memory_id)}"]
-    if memory_time:
-        attrs.append(f"time={quoteattr(memory_time)}")
-    return " " + " ".join(attrs)
-
-
-def select_memory_time(created_at: str, updated_at: str) -> str:
-    """Return the latest meaningful timestamp for a memory item."""
-    if not updated_at:
-        return created_at or ""
-    if not created_at:
-        return updated_at
-
-    try:
-        created_dt = datetime.fromisoformat(str(created_at).strip())
-        updated_dt = datetime.fromisoformat(str(updated_at).strip())
-        return updated_at if updated_dt >= created_dt else created_at
-    except (TypeError, ValueError):
-        return updated_at
-
-
 def format_memory_time(value: str) -> str:
     """Format memory timestamps to minute precision for prompt injection."""
     if not value:
@@ -694,7 +739,11 @@ def format_memory_time(value: str) -> str:
         return ""
 
     try:
-        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
+        return (
+            datetime.fromisoformat(text.replace("Z", "+00:00"))
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M %z")
+        )
     except ValueError:
         normalized = text.replace("T", " ")
         if "." in normalized:
@@ -702,35 +751,55 @@ def format_memory_time(value: str) -> str:
         return normalized[:16] if len(normalized) >= 16 else normalized
 
 
-def build_memory_items(memories) -> str:
-    """构建长期记忆 XML，兼容数据库记忆和会话召回记忆。"""
+def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
+    """Render compact memory context without exposing maintenance identifiers.
+
+    Args:
+        memories: Recalled dictionaries or persisted memory records.
+        seen_ids: Shared internal identifiers already rendered in this prompt.
+
+    Returns:
+        Escaped memory XML with factual text and available times.
+    """
+    if seen_ids is None:
+        seen_ids = set()
     xmls = []
     for memory in memories:
-        attrs = build_memory_attrs(
-            memory_id=memory.memory_id,
-            created_at=memory.created_at,
-            updated_at=memory.updated_at,
+        item = (
+            memory
+            if isinstance(memory, dict)
+            else {
+                "memory_id": memory.memory_id,
+                "text": memory.text,
+                "metadata": memory.metadata,
+                "created_at": memory.created_at,
+            }
         )
-        xmls.append(f"<memory{attrs}>{memory.text}</memory>")
+        text = str(item.get("text") or "").strip()
+        key = str(item.get("memory_id") or item.get("id") or "") or f"text:{text}"
+        if not text or key in seen_ids:
+            continue
+        metadata = memory_metadata(item)
+        attrs = []
+        times = {
+            field: item.get(field) or metadata.get(field)
+            for field in (
+                "occurred_at",
+                "observed_from",
+                "observed_until",
+            )
+        }
+        if not any(
+            times[field] for field in ("occurred_at", "observed_from", "observed_until")
+        ):
+            times["recorded_at"] = item.get("created_at")
+        for field, value in times.items():
+            if isinstance(value, str) and value.strip():
+                attrs.append(f"{field}={quoteattr(format_memory_time(value))}")
+        attributes = " " + " ".join(attrs) if attrs else ""
+        xmls.append(f"<memory{attributes}>{escape(text)}</memory>")
+        seen_ids.add(key)
     return "\n".join(xmls)
-
-
-def build_long_memories(long_memories: list[MemoryItem]) -> str:
-    """构建长期记忆的提示词"""
-    return build_memory_items(long_memories)
-
-
-def build_session_recalled_memories(
-    session_recalled_memories: list[SessionRecallMemory],
-) -> str:
-    """构建当前会话累计召回记忆的提示词"""
-    return build_memory_items(session_recalled_memories)
-
-
-def build_rag_results(rag_memories: list[str]) -> str:
-    """构建RAG提示词，用于提示词传递聊天记录"""
-    rag_memories_str = "\n".join(rag_memories)
-    return rag_memories_str
 
 
 def normalize_profile_text(profile: str | None) -> str:
@@ -765,28 +834,21 @@ def normalize_profile_value(value) -> str:
     return text
 
 
-def build_user_relation(relation: tuple[int, str] | None) -> str:
+def build_user_relation(relation: tuple[float, str] | None) -> str:
     if not relation:
         return ""
 
-    score = relation[0] if relation[0] is not None else 0
-    title = relation[1] or ""
-    if score == 0 and not title:
-        return ""
-
-    text = []
-    if score != 0:
-        text.append(f"好感度：{score}")
-    if title:
-        text.append(f"称号：{title}")
-    return "\n".join(text)
+    score = relation[0] if relation[0] is not None else 50.0
+    return f"好感度：{score:.1f}"
 
 
 def build_user_profile_block(
     user_id: str,
     user_profile: str | dict | None,
-    user_relation: tuple[int, str] | None,
+    user_relation: tuple[float, str] | None,
     nickname: str | None = None,
+    relation_changes: list[dict] | None = None,
+    relation_score: dict[str, int | float] | None = None,
 ) -> str:
     parts = []
 
@@ -803,9 +865,37 @@ def build_user_profile_block(
         if profile_text:
             parts.append(profile_text)
 
+    if relation_score:
+        user_relation = (relation_score["relation"], "")
     relation_text = build_user_relation(user_relation)
     if relation_text:
         parts.append(relation_text)
+
+    if relation_score:
+        parts.extend(
+            [
+                f"基础分：{relation_score['base_relation']}；互动分：{relation_score['interaction_score']:.1f}",
+                f"近期分：{relation_score['recent_score']:.1f}（最近{relation_score['recent_count']}次）；"
+                f"长期分：{relation_score['long_term_score']:.1f}（共{relation_score['total_count']}次）",
+            ]
+        )
+
+    changes = []
+    for change in (relation_changes or [])[-3:]:
+        reason = normalize_profile_value(change.get("reason"))
+        if reason:
+            timestamp = format_memory_time(
+                change.get("occurred_at") or change.get("created_at") or ""
+            )
+            changes.append(
+                f"{escape(timestamp)} 互动评价 {int(change['delta']):+d}："
+                f"{escape(truncate_message_content(reason, 120))}"
+            )
+    if changes:
+        parts.append(
+            "最近互动评价（已参与计分，评价值不等于最终好感度增减）：\n"
+            + "\n".join(changes)
+        )
 
     if not parts:
         return ""
@@ -836,11 +926,8 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
 
         lines = []
         relation = item.get("relation")
-        if relation not in (None, "", 0):
-            lines.append(f"好感度：{relation}")
-        title = normalize_profile_value(item.get("title"))
-        if title:
-            lines.append(f"关系头衔：{title}")
+        if relation not in (None, ""):
+            lines.append(f"好感度：{relation:.1f}")
         if call_name:
             lines.append(f"你的称呼：{call_name}")
         aliases = normalize_profile_value(item.get("aliases"))

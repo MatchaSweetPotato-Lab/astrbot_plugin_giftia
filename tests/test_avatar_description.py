@@ -118,7 +118,7 @@ class AvatarDescriptionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('user_id="12345"', block)
         self.assertIn("你的称呼：测试用户", block)
-        self.assertIn("性格风格：幽默", block)
+        self.assertNotIn("性格风格", block)
         self.assertIn("头像描述：风景照，落日余晖下的大海与沙滩", block)
 
     def test_build_active_user_briefs_with_avatar(self):

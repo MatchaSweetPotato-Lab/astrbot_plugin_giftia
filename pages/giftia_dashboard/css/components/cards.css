@@ -616,6 +616,8 @@ html[data-theme="dark"] .media-caption-text {
 
 .profile-card-footer {
     display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
@@ -631,6 +633,110 @@ html[data-theme="dark"] .media-caption-text {
 .profile-card-actions {
     display: flex;
     gap: 8px;
+    flex-shrink: 0;
+}
+
+.profile-card-actions .btn {
+    white-space: nowrap;
+}
+
+.profile-relation-badge {
+    border: 1px solid transparent;
+    font-family: inherit;
+    cursor: pointer;
+    min-height: 30px;
+}
+
+.profile-relation-badge:hover {
+    filter: brightness(0.95);
+}
+
+.profile-relation-badge:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+}
+
+.profile-relation-history {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+.profile-history-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.profile-history-heading span,
+.relation-change-time,
+.relation-history-empty {
+    color: var(--font-secondary);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.relation-change-list {
+    display: flex;
+    flex-direction: column;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.relation-change-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.relation-change-item:first-child {
+    padding-top: 0;
+}
+
+.relation-change-item:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.relation-change-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+}
+
+.relation-change-delta {
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.relation-change-delta.positive { color: var(--success); background: var(--success-bg); }
+.relation-change-delta.negative { color: var(--danger); background: var(--danger-bg); }
+.relation-change-delta.neutral { color: var(--font-secondary); background: var(--bg-secondary); }
+
+.relation-change-time {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.relation-change-reason {
+    margin: 7px 0 0;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.relation-history-empty {
+    margin: 0;
+    padding: 8px 0;
 }
 
 /* Card internal tabs styling */
@@ -677,7 +783,7 @@ html[data-theme="dark"] .media-caption-text {
    ========================================================================== */
 .memory-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
     gap: 16px;
     margin-bottom: 24px;
     width: 100%;
@@ -693,6 +799,7 @@ html[data-theme="dark"] .media-caption-text {
     box-shadow: var(--shadow);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     box-sizing: border-box;
+    min-width: 0;
 }
 
 .memory-card:hover {
@@ -702,10 +809,67 @@ html[data-theme="dark"] .media-caption-text {
 
 .memory-card-header {
     display: flex;
+    align-items: flex-start;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
+    gap: 12px;
+    margin-bottom: 14px;
 }
+
+.memory-heading-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.memory-topic {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+    line-height: 1.45;
+    color: var(--font-color);
+    overflow-wrap: anywhere;
+}
+
+.memory-context {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--font-secondary);
+    overflow-wrap: anywhere;
+}
+
+.memory-observation,
+.memory-evidence-meta {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--font-secondary);
+    overflow-wrap: anywhere;
+}
+
+.memory-evidence {
+    margin: 10px 0 12px;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.memory-evidence summary { cursor: pointer; color: var(--primary); }
+.memory-evidence ol { padding-left: 18px; margin: 10px 0; max-height: 300px; overflow-y: auto; }
+.memory-evidence li + li { margin-top: 12px; }
+.memory-evidence blockquote {
+    margin: 4px 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--border-color);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.memory-evidence p { margin: 8px 0 0; }
+.memory-edit-identity { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+
 
 /* Importance badges */
 .memory-importance-badge {
@@ -716,6 +880,8 @@ html[data-theme="dark"] .media-caption-text {
     font-weight: 600;
     border-radius: 20px;
     gap: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .memory-importance-badge.importance-low {
@@ -749,22 +915,6 @@ html[data-theme="dark"] .media-caption-text {
     height: 6px;
     border-radius: 50%;
     background-color: var(--danger);
-}
-
-/* Activity Badge */
-.memory-activity-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 10px;
-    font-size: 12px;
-    color: var(--font-secondary);
-    background-color: rgba(0, 0, 0, 0.03);
-    border-radius: 20px;
-    gap: 4px;
-}
-
-html[data-theme="dark"] .memory-activity-badge {
-    background-color: rgba(255, 255, 255, 0.03);
 }
 
 .activity-icon {
@@ -822,6 +972,7 @@ html[data-theme="dark"] .memory-activity-badge {
 /* Card Footer */
 .memory-card-footer {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
     border-top: 1px dashed var(--border-color);
@@ -833,8 +984,9 @@ html[data-theme="dark"] .memory-activity-badge {
 .memory-associated-users {
     display: flex;
     flex-wrap: wrap;
+    flex: 1 1 120px;
     gap: 6px;
-    max-width: 75%;
+    min-width: 0;
 }
 
 .user-pill {
@@ -848,6 +1000,8 @@ html[data-theme="dark"] .memory-activity-badge {
     cursor: pointer;
     font-weight: 500;
     transition: opacity 0.2s ease, transform 0.1s ease;
+    border: none;
+    overflow-wrap: anywhere;
 }
 
 .user-pill:hover {
@@ -868,6 +1022,8 @@ html[data-theme="dark"] .user-pill-raw {
 .memory-actions {
     display: flex;
     gap: 6px;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 .btn-icon-action {
@@ -905,6 +1061,8 @@ html[data-theme="dark"] .btn-icon-action:hover {
     color: var(--font-secondary);
     margin-top: 8px;
     display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
     justify-content: space-between;
     opacity: 0.75;
 }

@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="css/base.css">
     <link rel="stylesheet" href="css/components.css">
     <link rel="stylesheet" href="css/components/tables.css">
-    <link rel="stylesheet" href="css/components/cards.css">
+    <link rel="stylesheet" href="css/components/cards.css?v=relation-history">
     <link rel="stylesheet" href="css/components/token_stats.css">
     <link rel="stylesheet" href="css/components/switches.css">
     <link rel="stylesheet" href="css/components/priority_select.css">
@@ -173,7 +173,7 @@
                 <div class="data-card card">
                     <div style="margin-bottom: 15px; padding: 5px 5px 0 5px; font-size: 0.95rem; color: var(--font-secondary); display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            已归档消息边界 ID: <strong id="history-last-summarized-id" class="badge badge-info" style="font-size: 0.85rem; vertical-align: middle; margin-left: 5px;">无</strong>
+                            已归纳消息最大 ID: <strong id="history-last-summarized-id" class="badge badge-info" style="font-size: 0.85rem; vertical-align: middle; margin-left: 5px;">无</strong>
                         </div>
                         <div class="header-action-group">
                             <button class="btn btn-secondary btn-small" style="margin-right: 8px;" onclick="openChatHistoryAutoCleanModal()">自动清理配置</button>
@@ -219,8 +219,8 @@
                             <select id="memory-group-id"></select>
                         </div>
                         <div class="filter-group">
-                            <label>关联用户ID</label>
-                            <input type="text" id="memory-associated-user-id" placeholder="筛选关联用户">
+                            <label>关联群友账号</label>
+                            <input type="text" id="memory-associated-user-id" placeholder="筛选关联群友">
                         </div>
                         <div class="filter-group flex-grow">
                             <label>搜索记忆内容</label>
@@ -555,7 +555,7 @@
     <div id="add-memory-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>新增长期记忆</h2>
+                <h2 class="text-h3 pa-4 pb-0 pl-6">新增原子记忆</h2>
                 <button class="modal-close-btn" onclick="closeModal('add-memory-modal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -568,7 +568,11 @@
                     <input type="text" id="add-mem-group" placeholder="例如: 123456789">
                 </div>
                 <div class="form-group">
-                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <label for="add-mem-topic">主题 <span class="required">*</span></label>
+                    <input type="text" id="add-mem-topic" maxlength="80" placeholder="例如：使用某个表情互动">
+                </div>
+                <div class="form-group">
+                    <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>
                     <input type="text" id="add-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">
@@ -577,11 +581,12 @@
                 </div>
                 <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>
-                    <textarea id="add-mem-text" rows="5" placeholder="例如: 老师最喜欢的食物是草莓蛋糕。"></textarea>
+                    <textarea id="add-mem-text" rows="5" maxlength="300" placeholder="写清参与群友、各自行为及互动方向，自述和观察推断在正文中区分。"></textarea>
                 </div>
+                <p class="muted-text">保存后标记为“人工录入”。从聊天归纳的记录会另外保留原话证据。</p>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitAddMemory()">确认保存</button>
+                <button id="add-mem-save" class="btn btn-primary" variant="tonal" onclick="submitAddMemory()">确认保存</button>
             </div>
         </div>
     </div>
@@ -615,7 +620,7 @@
                                     </div>
                                     <div class="form-row">
                                         <div class="form-group flex-grow">
-                                            <label>关联用户ID</label>
+                                            <label>关联群友账号</label>
                                             <input type="text" id="clean-mem-associated-user-id" placeholder="可选">
                                         </div>
                                         <div class="form-group flex-grow">
@@ -721,11 +726,14 @@
     <div id="edit-memory-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>编辑长期记忆</h2>
+                <h2 class="text-h3 pa-4 pb-0 pl-6">编辑原子记忆</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-memory-modal')">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="edit-mem-id">
+                <input type="hidden" id="edit-mem-revision">
+                <p id="edit-mem-identity" class="memory-edit-identity"></p>
+                <p class="muted-text">主题和原话依据保留。修改内容会标记为人工修订。</p>
                 <div class="form-group">
                     <label>Bot名称</label>
                     <input type="text" id="edit-mem-bot" readonly class="readonly-input">
@@ -735,7 +743,7 @@
                     <input type="text" id="edit-mem-group" readonly class="readonly-input">
                 </div>
                 <div class="form-group">
-                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>
                     <input type="text" id="edit-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">
@@ -748,7 +756,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitEditMemory()">保存修改</button>
+                <button id="edit-mem-save" class="btn btn-primary" variant="tonal" onclick="submitEditMemory()">保存修改</button>
             </div>
         </div>
     </div>
@@ -986,50 +994,28 @@
     <div id="edit-user-profile-modal" class="modal-overlay">
         <div class="modal-card card edit-user-profile-modal-card">
             <div class="modal-header">
-                <h2>修改用户画像</h2>
-                <button class="modal-close-btn" onclick="closeModal('edit-user-profile-modal')">&times;</button>
+                <h2 class="text-h3 pa-4 pb-0 pl-6">修改用户画像</h2>
+                <button type="button" class="modal-close-btn" variant="text" aria-label="关闭修改用户画像" onclick="closeModal('edit-user-profile-modal')">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="edit-user-prof-bot">
                 <input type="hidden" id="edit-user-prof-group">
                 <input type="hidden" id="edit-user-prof-user">
+                <p class="muted-text">约定、关系、偏好和习惯统一在“长期记忆”中管理。</p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>好感度</label>
-                        <input type="number" id="edit-user-prof-relation" placeholder="好感度数值">
+                        <label for="edit-user-prof-base-relation">好感度基础分</label>
+                        <input type="number" id="edit-user-prof-base-relation" step="1" placeholder="默认 0，可设为负数">
+                        <small class="muted-text">最终好感度 = 基础分 + 互动分。互动分自动计算，初始 50，范围 0～100。</small>
                     </div>
-                    <div class="form-group flex-2">
-                        <label>关系头衔</label>
-                        <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
+                    <div class="form-group">
+                        <label for="edit-user-prof-call-name">你的称呼</label>
+                        <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>你的称呼</label>
-                    <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>性格风格</label>
-                        <input type="text" id="edit-user-prof-personality" placeholder="性格特征与说话风格">
-                    </div>
-                    <div class="form-group">
-                        <label>兴趣话题</label>
-                        <input type="text" id="edit-user-prof-interests" placeholder="兴趣爱好与关注事物">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>互动态度</label>
-                        <input type="text" id="edit-user-prof-attitude" placeholder="该成员对机器人的态度">
-                    </div>
-                    <div class="form-group">
-                        <label>关键约定</label>
-                        <input type="text" id="edit-user-prof-agreements" placeholder="承诺、约定或共同回忆">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>其他补充</label>
-                    <textarea id="edit-user-prof-extra" rows="2" placeholder="无法归类但长期有用的信息"></textarea>
+                    <label for="edit-user-prof-attitude">互动态度</label>
+                    <input type="text" id="edit-user-prof-attitude" placeholder="双方的互动基调，如熟络、常互相接梗">
                 </div>
                 <div class="form-group">
                     <label>头像描述</label>
@@ -1039,6 +1025,22 @@
             <div class="modal-footer">
                 <button class="btn btn-primary" onclick="submitEditUserProfile()">确认保存</button>
             </div>
+        </div>
+    </div>
+
+    <!-- MODAL: User Affinity History -->
+    <div id="user-relation-history-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="user-relation-history-title">
+        <div class="modal-card card user-relation-history-modal-card">
+            <div class="modal-header">
+                <h2 id="user-relation-history-title" class="text-h3 pa-4 pb-0 pl-6">互动评价历史</h2>
+                <button type="button" class="modal-close-btn" variant="text" aria-label="关闭互动评价历史" onclick="closeModal('user-relation-history-modal')">&times;</button>
+            </div>
+            <p id="user-relation-history-scope" class="muted-text"></p>
+            <div id="user-relation-history-content" class="modal-body">
+                <section id="user-relation-history-summary" class="relation-score-summary" aria-label="好感度详情"></section>
+                <div id="user-relation-history-list" aria-live="polite"></div>
+            </div>
+            <div id="user-relation-history-pagination" class="pagination-container"></div>
         </div>
     </div>
 

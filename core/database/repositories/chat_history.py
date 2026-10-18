@@ -211,21 +211,112 @@ class ChatHistoryRepository(BaseRepository):
         return row["max_id"] if row and row["max_id"] is not None else 0
 
     async def get_messages_by_id_range(
-        self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        start_id: int,
+        end_id: int,
+        limit: int | None = None,
     ) -> list[MessageData]:
         """获取指定 id 范围内的历史消息"""
         async with self.conn.execute(
             """
-                SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+                SELECT id, nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
                 FROM chat_history
                 WHERE group_or_user_id = ? AND bot_name = ? AND id >= ? AND id <= ?
                 ORDER BY id ASC
+                LIMIT ?
             """,
-            (group_or_user_id, bot_name, start_id, end_id),
+            (
+                group_or_user_id,
+                bot_name,
+                start_id,
+                end_id,
+                limit if limit is not None else -1,
+            ),
         ) as cursor:
             rows = await cursor.fetchall()
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
+
+    async def mark_messages_observed(
+        self, bot_name: str, session_id: str, message_ids: list[str]
+    ) -> int:
+        """Queue previously unseen messages included in a model context.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            message_ids: Exact platform message IDs submitted to the model.
+
+        Returns:
+            Number of messages newly queued for memory extraction.
+        """
+        ids = list(dict.fromkeys(mid for mid in message_ids if mid))
+        if not ids:
+            return 0
+        async with self.conn.executemany(
+            "UPDATE chat_history SET memory_status='pending' "
+            "WHERE bot_name=? AND group_or_user_id=? AND message_id=? "
+            "AND memory_status='unseen' AND COALESCE(is_recalled, 0)=0 "
+            "AND COALESCE(role, 'message')='message'",
+            [(bot_name, session_id, mid) for mid in ids],
+        ) as cursor:
+            changed = cursor.rowcount
+        await self.conn.commit()
+        return changed
+
+    async def get_pending_memory_stats(
+        self, bot_name: str, session_id: str, end_id: int | None = None
+    ) -> tuple[int, int, int]:
+        """Read the bounds and count of observed, unprocessed messages.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            end_id: Optional inclusive upper database ID.
+
+        Returns:
+            First ID, last ID, and message count, or three zeros when empty.
+        """
+        async with self.conn.execute(
+            "SELECT MIN(id), MAX(id), COUNT(*) FROM chat_history "
+            "WHERE bot_name=? AND group_or_user_id=? AND memory_status='pending' "
+            "AND (? IS NULL OR id<=?)",
+            (bot_name, session_id, end_id, end_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0] or 0), int(row[1] or 0), int(row[2])
+
+    async def get_pending_memory_messages(
+        self,
+        bot_name: str,
+        session_id: str,
+        start_id: int,
+        end_id: int,
+        limit: int,
+    ) -> list[MessageData]:
+        """Read an ordered batch without crossing unseen history gaps.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Owning conversation.
+            start_id: Inclusive lower database ID.
+            end_id: Inclusive upper database ID.
+            limit: Maximum batch size.
+
+        Returns:
+            Only observed messages still awaiting extraction in this interval.
+        """
+        async with self.conn.execute(
+            "SELECT id, nickname, user_id, message_id, content, media_ids, "
+            "is_recalled, role, created_at FROM chat_history "
+            "WHERE bot_name=? AND group_or_user_id=? AND memory_status='pending' "
+            "AND id>=? AND id<=? ORDER BY id ASC LIMIT ?",
+            (bot_name, session_id, start_id, end_id, limit),
+        ) as cursor:
+            messages = [_row_to_message(row) for row in await cursor.fetchall()]
+        return await self._attach_forward_messages(bot_name, session_id, messages)
 
     async def get_user_messages_after_id(
         self,
@@ -591,10 +682,19 @@ class ChatHistoryRepository(BaseRepository):
         max_age_days: int = 30,
         min_keep_per_session: int = 20,
     ) -> int:
-        """
-        按会话（Option A 并集删除）自动清理聊天记录：
-        - 某条消息如果不属于最新的 min_keep_per_session 条保底记录，
-          且满足（超出 max_count_per_session 条数 OR 早于 max_age_days 天前）时触发清理。
+        """Clean processed history while preserving pending memory sources.
+
+        Args:
+            max_count_per_session: Retain this many recent messages; zero disables
+                the count condition.
+            max_age_days: Clean older messages; zero disables the age condition.
+            min_keep_per_session: Always keep at least this many recent messages.
+
+        Returns:
+            Deleted message count. Only messages at or below the durable scoped
+            memory cursor are eligible, and observed pending messages remain
+            protected even below that cursor. Missing or invalid cursors protect
+            all history. The count and age conditions are combined with OR.
         """
         if max_count_per_session <= 0 and max_age_days <= 0:
             return 0
@@ -603,7 +703,6 @@ class ChatHistoryRepository(BaseRepository):
         clean_count = max(0, int(max_count_per_session or 0))
         clean_days = max(0, int(max_age_days or 0))
 
-        # 获取所有包含聊天记录的会话
         async with self.conn.execute(
             """
             SELECT DISTINCT bot_name, group_or_user_id
@@ -621,6 +720,7 @@ class ChatHistoryRepository(BaseRepository):
             params = [
                 bot_name,
                 group_or_user_id,
+                f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}",
                 bot_name,
                 group_or_user_id,
                 clean_keep,
@@ -646,9 +746,21 @@ class ChatHistoryRepository(BaseRepository):
                 continue
 
             where_or = " OR ".join(conds)
+            # Check the durable boundary in the DELETE itself. In-flight or failed
+            # extraction must retain its sources regardless of age or count.
             sql = f"""
                 DELETE FROM chat_history
                 WHERE bot_name = ? AND group_or_user_id = ?
+                  AND memory_status != 'pending'
+                  AND id <= COALESCE((
+                      SELECT CASE
+                          WHEN typeof(value) = 'integer' THEN value
+                          WHEN typeof(value) = 'text' AND value != ''
+                            AND value NOT GLOB '*[^0-9]*' THEN CAST(value AS INTEGER)
+                          ELSE 0
+                      END
+                      FROM kv_store WHERE key = ?
+                  ), 0)
                   AND id NOT IN (
                       SELECT id FROM chat_history
                       WHERE bot_name = ? AND group_or_user_id = ?
