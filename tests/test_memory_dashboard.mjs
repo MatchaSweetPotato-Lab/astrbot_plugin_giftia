@@ -226,23 +226,34 @@ test('profile cards show three newest changes and open history with the exact sc
 });
 
 test('profile without changes still offers the zero affinity history button', () => {
-    renderUserProfiles([{ user_id: 'new', bot_name: 'bot', group_or_user_id: 'group', relation: 0 }]);
-    const html = get('user-profile-list').innerHTML;
-    assert.match(html, /暂无互动评价记录/);
-    assert.match(html, /data-profile-action="relation-history"/);
-    assert.match(html, /0\.0 好感度/);
+    for (const changes of [undefined, []]) {
+        renderUserProfiles([{ user_id: 'new', bot_name: 'bot', group_or_user_id: 'group', relation: 0, recent_relation_changes: changes }]);
+        const html = get('user-profile-list').innerHTML;
+        assert.doesNotMatch(html, /最近互动评价|暂无互动评价记录|profile-relation-history/);
+        assert.match(html, /data-profile-action="relation-history"/);
+        assert.match(html, /0\.0 好感度/);
+    }
 });
 
-test('profile scores retain fractions and show the base and interaction components', () => {
-    renderUserProfiles([{
+test('profile scores retain fractions and show components and counts in the affinity modal', async () => {
+    const profile = {
         user_id: 'friend', relation: 83.1818, base_relation: 0,
         interaction_score: 83.1818, recent_score: 75, long_term_score: 95.4545,
-        total_count: 100
-    }]);
+        recent_count: 10, total_count: 100
+    };
+    renderUserProfiles([profile]);
     const html = get('user-profile-list').innerHTML;
     assert.match(html, /83\.2 好感度/);
-    assert.match(html, /基础 0 \+ 互动 83\.2/);
-    assert.match(html, /近期 75\.0 · 长期 95\.5 · 共 100 次评价/);
+    assert.doesNotMatch(html, /基础|互动 83\.2|近期|长期|100 次评价/);
+    window.apiGet = async () => ({ status: 'success', data: { items: [], total: 100, page: 1 } });
+    await window.openUserRelationHistoryModal(profile);
+    const summary = get('user-relation-history-summary').innerHTML;
+    assert.match(summary, /83\.2/);
+    assert.match(summary, /基础 0 \+ 互动 83\.2/);
+    assert.match(summary, /75\.0/);
+    assert.match(summary, /95\.5/);
+    assert.match(summary, /最近 10 次评价/);
+    assert.match(summary, /累计 100 次评价/);
 });
 
 test('editing a fractional base does not submit an update', async () => {

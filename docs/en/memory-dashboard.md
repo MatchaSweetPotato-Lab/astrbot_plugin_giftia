@@ -21,15 +21,16 @@ Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-t
 | Names, aliases, attitude and avatar descriptions | Continue to use profile management |
 | Editing cumulative affinity directly | Edit the affinity base score; final affinity is base plus interaction score |
 | Affinity-change history and before/after scores | Interaction-rating history, displaying only timestamps, ratings and reasons |
+| Score breakdowns and evaluation counts on member cards | Click a card's affinity pill to view them in the dialog |
 | Recent-memory injection and the recall-pool switch | One recall pool; set its injection limit to zero to disable automatic retrieval and injection |
 
-Member cards display final affinity, base, interaction, recent and long-term scores, and the evaluation count, followed by the latest three interaction ratings in newest-first order. Each entry shows only its time, rating strength and reason. Fewer entries are shown when history is short, with an empty state for members without recorded changes. Filter long-term memories by account to inspect a member's facts.
+Member cards display final affinity at the top. Base, interaction, recent and long-term scores and evaluation counts are available in the affinity dialog. Cards show the latest three interaction ratings in newest-first order, with only the time, rating strength and reason for each entry. Fewer entries are shown when history is short; the entire recent-rating section is hidden when there are no records. Filter long-term memories by account to inspect a member's facts.
 
 ![Member cards with the latest three interaction ratings, using example data](../images/member-profile-history.png)
 
-Click a card's affinity pill to open that member's complete interaction-rating history for the exact bot and conversation. The dialog shows ten entries per page, page numbers, previous/next controls, the current record range and total count. The final page contains the remaining entries. Browsing history is independent of the fifty-entry context window used by background tone reviews. Failed requests offer a retry button.
+Click a card's affinity pill to open the interaction-rating history dialog for the exact bot and conversation. Its summary shows final affinity, the base and interaction components, recent and long-term scores and their evaluation counts. History appears below with ten entries per page, page numbers, previous/next controls, the current record range and total count. The final page contains the remaining entries. Members without history still have a score summary, followed by an empty state in the record area. Browsing history is independent of the fifty-entry context window used by background tone reviews. Failed requests offer a retry button.
 
-![Complete affinity history with ten entries per page, using example data](../images/member-relation-history.png)
+![Affinity dialog with score breakdowns, evaluation counts and ten history entries per page, using example data](../images/member-relation-history.png)
 
 Historical profile fields remain in storage. Profile reports no longer read or display personality, interests, miscellaneous notes, agreements or relationship titles. Update custom report templates that reference retired variables or restore their defaults.
 

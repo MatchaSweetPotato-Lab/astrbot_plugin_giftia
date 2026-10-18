@@ -1036,7 +1036,10 @@
                 <button type="button" class="modal-close-btn" variant="text" aria-label="关闭互动评价历史" onclick="closeModal('user-relation-history-modal')">&times;</button>
             </div>
             <p id="user-relation-history-scope" class="muted-text"></p>
-            <div id="user-relation-history-list" class="modal-body" aria-live="polite"></div>
+            <div id="user-relation-history-content" class="modal-body">
+                <section id="user-relation-history-summary" class="relation-score-summary" aria-label="好感度详情"></section>
+                <div id="user-relation-history-list" aria-live="polite"></div>
+            </div>
             <div id="user-relation-history-pagination" class="pagination-container"></div>
         </div>
     </div>

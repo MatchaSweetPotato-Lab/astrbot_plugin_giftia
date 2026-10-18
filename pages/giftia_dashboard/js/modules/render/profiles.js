@@ -88,9 +88,15 @@ export function renderUserProfiles(items) {
 
         const rel = Number(item.relation ?? 50).toFixed(1);
         const interaction = Number(item.interaction_score ?? 50);
-        const base = Number(item.base_relation ?? 0);
         const relationClass = interaction > 50 ? 'badge-success' : interaction < 50 ? 'badge-danger' : 'badge-secondary';
-        const relationBadge = `<button type="button" class="badge ${relationClass} profile-relation-badge" data-profile-action="relation-history" title="查看全部互动评价历史" aria-label="好感度 ${rel}，查看全部互动评价历史">${rel} 好感度 <span aria-hidden="true">›</span></button>`;
+        const relationBadge = `<button type="button" class="badge ${relationClass} profile-relation-badge" data-profile-action="relation-history" title="查看好感度详情与互动评价历史" aria-label="好感度 ${rel}，查看好感度详情与互动评价历史">${rel} 好感度 <span aria-hidden="true">›</span></button>`;
+        const recentChanges = (item.recent_relation_changes || []).slice(0, 3);
+        const historyHtml = recentChanges.length ? `
+            <section class="profile-relation-history" aria-label="最近互动评价">
+                <h3 class="profile-history-heading">最近互动评价</h3>
+                ${renderRelationChanges(recentChanges)}
+            </section>
+        ` : '';
 
         return `
             <div class="profile-item-card card" data-profile-index="${index}">
@@ -104,13 +110,8 @@ export function renderUserProfiles(items) {
                     </div>
                 </div>
                 <div class="profile-card-body">
-                    <p class="muted-text">基础 ${base} + 互动 ${interaction.toFixed(1)}</p>
-                    <p class="muted-text">近期 ${Number(item.recent_score ?? 50).toFixed(1)} · 长期 ${Number(item.long_term_score ?? 50).toFixed(1)} · 共 ${Number(item.total_count ?? 0)} 次评价</p>
                     ${profileHtml}
-                    <section class="profile-relation-history" aria-label="最近互动评价">
-                        <h3 class="profile-history-heading">最近互动评价 <span>最近 3 条</span></h3>
-                        ${renderRelationChanges((item.recent_relation_changes || []).slice(0, 3))}
-                    </section>
+                    ${historyHtml}
                 </div>
                 <div class="profile-card-footer">
                     <div class="profile-card-time">

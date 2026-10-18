@@ -17,9 +17,65 @@
     overflow-wrap: anywhere;
 }
 
+.relation-score-summary {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr;
+    flex-shrink: 0;
+    gap: 24px;
+    margin-bottom: 16px;
+    padding: 18px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+}
+
+.relation-score-total {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.relation-score-label,
+.relation-score-formula,
+.relation-score-windows dt,
+.relation-score-windows dd span {
+    color: var(--font-secondary);
+    font-size: 12px;
+}
+
+.relation-score-value {
+    font-size: 28px;
+    line-height: 1.3;
+}
+
+.relation-score-windows {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 16px;
+    margin: 0;
+}
+
+.relation-score-windows dd {
+    margin: 4px 0 0;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.relation-score-windows dd span {
+    display: block;
+    margin-top: 4px;
+    font-weight: 400;
+}
+
+#user-relation-history-content {
+    display: block;
+    margin-bottom: 0;
+}
+
 #user-relation-history-list {
     min-height: 100px;
-    margin-bottom: 0;
 }
 
 #user-relation-history-list .relation-change-item {
@@ -62,6 +118,14 @@
 .alias-count-input {
     width: 88px;
     min-width: 88px;
+}
+
+@media (max-width: 480px) {
+    .relation-score-summary {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 16px;
+    }
 }
 
 @media (max-width: 768px) {
