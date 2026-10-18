@@ -5,6 +5,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from xml.etree.ElementTree import fromstring
 
 import pytest
 from core.conversation.chat_manager import ChatManager
@@ -56,7 +57,7 @@ def runtime(monkeypatch):
             get_recent_message=AsyncMock(side_effect=history),
             is_bot_muted=Mock(return_value=False),
         ),
-        passive_memory_manager=SimpleNamespace(mark_silence_summary_armed=AsyncMock()),
+        passive_memory_manager=SimpleNamespace(reset_silence_counter=AsyncMock()),
     )
     manager = ChatManager(plugin)
     manager.decision_engine.check_whitelists = Mock(return_value=True)
@@ -164,6 +165,67 @@ async def test_reply_absorbs_decision_arrivals_but_not_reply_arrivals(runtime):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message_time", ["2026-10-18T10:01:41", ""])
+async def test_only_reply_prompt_orders_arrivals_before_previous_reply(
+    runtime, message_time
+):
+    started, release = asyncio.Event(), asyncio.Event()
+    decision_prompts, reply_prompts = [], []
+
+    async def decide(**kwargs):
+        decision_prompts.append(
+            build_decision_prompt(
+                user_id="user",
+                group_data="",
+                recent_messages=kwargs["recent_messages"],
+                pending_messages=kwargs["pending_messages"],
+                bot_status=None,
+            )
+        )
+        return True, None, None, None
+
+    async def reply(**kwargs):
+        reply_prompts.append(
+            build_reply_prompt(
+                recent_messages=kwargs["recent_messages"],
+                reply_messages=kwargs["reply_messages"],
+                media_captions=[],
+                bot_status=None,
+            )
+        )
+        if len(reply_prompts) == 1:
+            started.set()
+            await asyncio.wait_for(release.wait(), 2)
+            runtime.histories["group"].append(
+                MessageData(
+                    message_id="R", user_id="self", time=message_time, content="sent"
+                )
+            )
+        yield XmlLlmResult()
+
+    runtime.manager.decision_engine.evaluate_decision.side_effect = decide
+    runtime.manager.reply_pipeline.dispatch_llm_reply_loop = reply
+    await runtime.send("A")
+    runtime.histories["group"][-1].time = message_time
+    await asyncio.wait_for(started.wait(), 2)
+    await runtime.send("B")
+    runtime.histories["group"][-1].time = message_time
+    release.set()
+    await runtime.drain()
+
+    for prompt, tag, history_ids, current_ids in (
+        (decision_prompts[1], "pending_messages", ["A", "R"], ["B"]),
+        (reply_prompts[1], "reply_messages", ["A"], ["B", "R"]),
+    ):
+        root = fromstring("<context>" + prompt + "</context>")
+        assert [
+            msg.get("message_id") for msg in root.find("recent_messages")
+        ] == history_ids
+        assert [msg.get("message_id") for msg in root.find(tag)] == current_ids
+    assert runtime.outcomes == {("group", "A"): "handled", ("group", "B"): "handled"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("active_counter", [0, 1, 10])
 @pytest.mark.parametrize("has_reply", [True, False])
 async def test_reply_preserves_unsummarized_memory_during_active_conversation(
@@ -202,8 +264,8 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
     await runtime.send("102")
     await runtime.drain()
 
-    # Only an idle wake-up may skip history before the first batch member.
-    expected_cursor = 100 if has_reply and active_counter == 0 else 90
+    # Replies never advance memory progress or skip the history they read.
+    expected_cursor = 90
     assert stored[cursor_key] == expected_cursor
 
     await runtime.send("103")
@@ -212,7 +274,6 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
     # A follow-up reply must preserve messages still waiting for summarization.
     assert stored[cursor_key] == expected_cursor
     if has_reply:
-        assert stored["passive_memory:silence_armed:bot:group"] == 1
         assert stored["passive_memory:silent_count:bot:group"] == 0
         assert plugin.active_reply_counters["bot:group"] == 10
     else:
@@ -398,15 +459,155 @@ def test_batch_prompt_deduplicates_history_and_retains_all_senders(decision):
     assert 'user_id="one"' in prompt and 'user_id="two"' in prompt
 
 
+@pytest.mark.parametrize("decision", [True, False])
+@pytest.mark.parametrize("cached_pending", [True, False])
+def test_only_reply_prompt_interleaves_later_context_after_first_pending(
+    decision, cached_pending
+):
+    history = MessageData(message_id="H", time="2026-10-18T10:01:22")
+    a = MessageData(
+        message_id="A", time="2026-10-18T10:01:41", user_id="one", content="first"
+    )
+    b = MessageData(
+        message_id="B", time="2026-10-18T10:01:44", user_id="two", content="second"
+    )
+    own = MessageData(
+        message_id="R", time="2026-10-18T10:02:00", user_id="self", content="sent"
+    )
+    log = MessageData(
+        time="2026-10-18T10:02:01", role="operation_log", content="tool completed"
+    )
+    recent = [history, a, b, own, log] if cached_pending else [history, own, log]
+    pending = [a, b]
+    kwargs = {
+        "user_id": "one",
+        "group_data": "",
+        "recent_messages": recent,
+        "bot_status": None,
+    }
+    if decision:
+        prompt = build_decision_prompt(**kwargs, pending_messages=pending)
+        tag = "pending_messages"
+    else:
+        prompt = build_reply_prompt(**kwargs, media_captions=[], reply_messages=pending)
+        tag = "reply_messages"
+
+    root = fromstring("<context>" + prompt + "</context>")
+    assert [msg.get("message_id") for msg in root.find("recent_messages")] == (
+        ["H", "R", None] if decision else ["H"]
+    )
+    assert [msg.get("message_id") for msg in root.find(tag)] == (
+        ["A", "B"] if decision else ["A", "B", "R", None]
+    )
+    log_tag = "recent_messages" if decision else tag
+    assert root.find(f"{log_tag}/operation_log").text.strip() == "tool completed"
+    assert [msg.message_id for msg in recent] == (
+        ["H", "A", "B", "R", ""] if cached_pending else ["H", "R", ""]
+    )
+    assert pending == [a, b]
+
+
+@pytest.mark.parametrize("decision", [True, False])
+@pytest.mark.parametrize("message_time", ["2026-10-18T10:01:41", ""])
+def test_batch_prompt_preserves_snapshot_order_and_current_copies_at_ties(
+    decision, message_time
+):
+    history = MessageData(message_id="H", time=message_time)
+    stale = MessageData(message_id="A", time=message_time, content="stale")
+    current = MessageData(message_id="A", time=message_time, content="updated")
+    own = MessageData(message_id="R", time=message_time, content="sent")
+    kwargs = {
+        "user_id": "one",
+        "group_data": "",
+        "recent_messages": [history, stale, own],
+        "bot_status": None,
+    }
+    if decision:
+        prompt = build_decision_prompt(**kwargs, pending_messages=[current])
+        tag = "pending_messages"
+    else:
+        prompt = build_reply_prompt(
+            **kwargs, media_captions=[], reply_messages=[current]
+        )
+        tag = "reply_messages"
+
+    root = fromstring("<context>" + prompt + "</context>")
+    assert [msg.get("message_id") for msg in root.find("recent_messages")] == (
+        ["H", "R"] if decision else ["H"]
+    )
+    assert [msg.get("message_id") for msg in root.find(tag)] == (
+        ["A"] if decision else ["A", "R"]
+    )
+    assert root.find(f"{tag}/message").text == "updated"
+    assert stale.content == "stale"
+    assert prompt.count('message_id="A"') == 1
+
+
+@pytest.mark.parametrize("decision", [True, False])
+def test_only_reply_prompt_orders_full_dates_and_timezone_offsets(decision):
+    history = MessageData(message_id="H", time="2026-10-17T15:59:59+00:00")
+    a = MessageData(message_id="A", time="2026-10-17T23:59:59.500+08:00")
+    own = MessageData(message_id="R", time="2026-10-18T00:00:00+08:00")
+    b = MessageData(message_id="B", time="2026-10-17T16:00:01+00:00")
+    kwargs = {
+        "user_id": "one",
+        "group_data": "",
+        "recent_messages": [history, own],
+        "bot_status": None,
+    }
+    if decision:
+        prompt = build_decision_prompt(**kwargs, pending_messages=[b, a])
+        tag = "pending_messages"
+    else:
+        prompt = build_reply_prompt(**kwargs, media_captions=[], reply_messages=[b, a])
+        tag = "reply_messages"
+
+    root = fromstring("<context>" + prompt + "</context>")
+    assert [msg.get("message_id") for msg in root.find("recent_messages")] == (
+        ["H", "R"] if decision else ["H"]
+    )
+    assert [msg.get("message_id") for msg in root.find(tag)] == (
+        ["B", "A"] if decision else ["A", "R", "B"]
+    )
+
+
+@pytest.mark.parametrize("decision", [True, False])
+def test_batch_prompt_without_targets_keeps_context_as_history(decision):
+    history = [
+        MessageData(message_id="H", time="2026-10-18T10:01:22"),
+        MessageData(message_id="R", time="2026-10-18T10:02:00", user_id="self"),
+    ]
+    kwargs = {
+        "user_id": "one",
+        "group_data": "",
+        "recent_messages": history,
+        "bot_status": None,
+    }
+    if decision:
+        prompt = build_decision_prompt(**kwargs, pending_messages=[])
+        tag = "pending_messages"
+    else:
+        prompt = build_reply_prompt(
+            **kwargs, media_captions=[], remind_message="reminder"
+        )
+        tag = "reply_messages"
+
+    root = fromstring("<context>" + prompt + "</context>")
+    assert [msg.get("message_id") for msg in root.find("recent_messages")] == ["H", "R"]
+    assert root.find(tag) is None
+
+
 @pytest.mark.asyncio
 async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     original = MessageData(message_id="A", content="original", user_id="user")
     later = MessageData(message_id="B", content="later", user_id="user")
     own = MessageData(message_id="R", content="already sent", user_id="self")
     plugin = SimpleNamespace(
+        passive_memory_enabled=True,
+        passive_memory_manager=SimpleNamespace(observe_messages=AsyncMock()),
         bot_map={"bot": {"llm_reply_conf": {"provider_ids": ["reply"]}}},
         tools_config={"max_loop": 3},
-        embedding_conf={"enabled": False, "session_recall_enabled": False},
+        embedding_conf={"enabled": False},
         msg_number=20,
         data_cache=SimpleNamespace(
             get_recent_message=AsyncMock(return_value=[original, later, own]),
@@ -424,6 +625,8 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
             )
         ),
         db=SimpleNamespace(
+            get_relation_changes=AsyncMock(return_value=[]),
+            get_relation_score=AsyncMock(return_value={}),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),
             update_message_reply_decision=AsyncMock(),
         ),
@@ -459,7 +662,15 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     assert len(prompts) == 2
     assert all("later" not in prompt for prompt in prompts)
     assert "already sent" in prompts[1]
+    root = fromstring("<context>" + prompts[1] + "</context>")
+    assert root.find("recent_messages") is None
+    assert [msg.get("message_id") for msg in root.find("reply_messages")] == ["A", "R"]
     assert all(prompt.count('message_id="A"') == 1 for prompt in prompts)
+    observed = [
+        {msg.message_id for msg in call.args[3]}
+        for call in plugin.passive_memory_manager.observe_messages.await_args_list
+    ]
+    assert observed == [{"A"}, {"A", "R"}]
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import aiosqlite
@@ -58,6 +59,15 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             await cursor.execute(
                 "ALTER TABLE chat_history ADD COLUMN processing_status TEXT DEFAULT 'history'"
             )
+        memory_status_added = "memory_status" not in history_columns
+        if memory_status_added:
+            await cursor.execute(
+                "ALTER TABLE chat_history ADD COLUMN memory_status TEXT NOT NULL DEFAULT 'unseen'"
+            )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_memory_pending "
+            "ON chat_history (bot_name, group_or_user_id, id) WHERE memory_status='pending'"
+        )
         # A restart must not silently turn an unfinished batch into a completed one.
         await cursor.execute(
             "UPDATE chat_history SET processing_status = 'interrupted' "
@@ -182,8 +192,9 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 agreements TEXT,
                 extra TEXT,
                 avatar_description TEXT,
-                relation INTEGER,
+                base_relation INTEGER NOT NULL DEFAULT 0,
                 title TEXT,
+                attitude_evaluated_change_id INTEGER NOT NULL DEFAULT 0,
                 bot_name TEXT NOT NULL,
                 created_at DATETIME,
                 updated_at DATETIME
@@ -198,8 +209,9 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE user_profiles ADD COLUMN agreements TEXT",
             "ALTER TABLE user_profiles ADD COLUMN extra TEXT",
             "ALTER TABLE user_profiles ADD COLUMN avatar_description TEXT",
-            "ALTER TABLE user_profiles ADD COLUMN relation INTEGER",
+            "ALTER TABLE user_profiles ADD COLUMN base_relation INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE user_profiles ADD COLUMN title TEXT",
+            "ALTER TABLE user_profiles ADD COLUMN attitude_evaluated_change_id INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 await cursor.execute(column_sql)
@@ -212,6 +224,26 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique ON user_profiles (user_id, group_or_user_id, bot_name)"
+        )
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS relation_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_name TEXT NOT NULL,
+                group_or_user_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                delta INTEGER NOT NULL CHECK(delta BETWEEN -5 AND 5 AND delta != 0),
+                relation_before REAL NOT NULL,
+                relation_after REAL NOT NULL,
+                reason TEXT NOT NULL,
+                source_ids TEXT,
+                occurred_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(bot_name, group_or_user_id, user_id, source_ids)
+            )
+        """)
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relation_changes_user "
+            "ON relation_changes (bot_name, group_or_user_id, user_id, id)"
         )
         # 用户外号统计表。aliases 旧列保留兼容，但读写权威来源迁移到这里。
         await cursor.execute("""
@@ -265,34 +297,12 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 importance INTEGER DEFAULT 5,
                 hit_count INTEGER DEFAULT 0,
                 last_hit_at DATETIME,
+                revision INTEGER NOT NULL DEFAULT 1,
+                indexed_revision INTEGER NOT NULL DEFAULT 0,
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """)
-        for sql, column_name in (
-            (
-                "ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 5",
-                "importance",
-            ),
-            (
-                "ALTER TABLE memories ADD COLUMN hit_count INTEGER DEFAULT 0",
-                "hit_count",
-            ),
-            (
-                "ALTER TABLE memories ADD COLUMN last_hit_at DATETIME",
-                "last_hit_at",
-            ),
-        ):
-            try:
-                await cursor.execute(sql)
-            except aiosqlite.OperationalError as e:
-                if (
-                    "duplicate" not in str(e).lower()
-                    and "already exists" not in str(e).lower()
-                ):
-                    logger.warning(
-                        f"Failed to add {column_name} column to memories: {e}"
-                    )
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_id_unique ON memories (memory_id)"
@@ -321,6 +331,56 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_kv_key_unique ON kv_store (key)"
         )
+        if memory_status_added:
+            # Preserve legacy progress without treating unprocessed history as seen.
+            await cursor.execute("""
+                UPDATE chat_history SET memory_status='summarized'
+                WHERE id <= COALESCE((
+                    SELECT CASE
+                        WHEN typeof(value)='integer' THEN value
+                        WHEN typeof(value)='text' AND value != ''
+                          AND value NOT GLOB '*[^0-9]*' THEN CAST(value AS INTEGER)
+                        ELSE 0
+                    END
+                    FROM kv_store
+                    WHERE key='passive_memory:last_summarized_id:'
+                        || chat_history.bot_name || ':' || chat_history.group_or_user_id
+                ), 0)
+            """)
+            await cursor.execute(
+                "DELETE FROM kv_store WHERE key LIKE 'passive_memory:silence_armed:%' "
+                "OR key LIKE 'passive_memory:silent_count:%'"
+            )
+        await cursor.execute(
+            "SELECT 1 FROM kv_store WHERE key='bot_output_observation_migration_done'"
+        )
+        if not await cursor.fetchone():
+            # Repair only known observer accounts; never infer that other senders were seen.
+            async with conn.execute(
+                "SELECT value FROM kv_store WHERE key LIKE 'atomic_memory:session:%'"
+            ) as routes_cursor:
+                routes = await routes_cursor.fetchall()
+            for (value,) in routes:
+                try:
+                    route = json.loads(value)
+                    bot_name = route["bot_name"]
+                    session_id = route["session_id"]
+                    self_id = str(route["self_id"] or "").strip()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not bot_name or not session_id or not self_id:
+                    continue
+                await cursor.execute(
+                    "UPDATE chat_history SET memory_status='pending' "
+                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
+                    "AND memory_status='unseen' AND COALESCE(is_recalled, 0)=0 "
+                    "AND COALESCE(role, 'message')='message'",
+                    (bot_name, session_id, self_id),
+                )
+            await cursor.execute(
+                "INSERT INTO kv_store (key, value) "
+                "VALUES ('bot_output_observation_migration_done', 1)"
+            )
         await cursor.execute(
             "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
             ("user_aliases_migration_done",),
@@ -405,106 +465,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_short_tasks_expiry ON short_tasks (status, expires_at)"
         )
-        # 创建关系表
-        await cursor.execute("""
-            CREATE TABLE IF NOT EXISTS relations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bot_name TEXT NOT NULL,
-                group_or_user_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                relation INTEGER,
-                title TEXT,
-                created_at DATETIME,
-                updated_at DATETIME
-            )
-        """)
-        # 创建索引
-        await cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_relation_unique ON relations (user_id, group_or_user_id, bot_name)"
-        )
-        # 检查关系数据回填的迁移是否已运行，避免每次启动都对全表进行重型更新与插入扫描
-        await cursor.execute(
-            "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
-            ("relations_migration_done",),
-        )
-        row = await cursor.fetchone()
-        if not row:
-            logger.info(
-                "[Database] Running relations schema migration to user_profiles..."
-            )
-            await cursor.execute("""
-                UPDATE user_profiles
-                SET
-                    relation = COALESCE(
-                        relation,
-                        (
-                            SELECT r.relation
-                            FROM relations r
-                            WHERE r.user_id = user_profiles.user_id
-                              AND r.group_or_user_id = user_profiles.group_or_user_id
-                              AND r.bot_name = user_profiles.bot_name
-                            LIMIT 1
-                        )
-                    ),
-                    title = COALESCE(
-                        title,
-                        (
-                            SELECT r.title
-                            FROM relations r
-                            WHERE r.user_id = user_profiles.user_id
-                              AND r.group_or_user_id = user_profiles.group_or_user_id
-                              AND r.bot_name = user_profiles.bot_name
-                            LIMIT 1
-                        )
-                    )
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM relations r
-                    WHERE r.user_id = user_profiles.user_id
-                      AND r.group_or_user_id = user_profiles.group_or_user_id
-                      AND r.bot_name = user_profiles.bot_name
-                )
-            """)
-            await cursor.execute("""
-                INSERT INTO user_profiles (
-                    user_id,
-                    group_or_user_id,
-                    bot_name,
-                    relation,
-                    title,
-                    created_at,
-                    updated_at
-                )
-                SELECT
-                    r.user_id,
-                    r.group_or_user_id,
-                    r.bot_name,
-                    r.relation,
-                    r.title,
-                    COALESCE(r.created_at, CURRENT_TIMESTAMP),
-                    COALESCE(r.updated_at, CURRENT_TIMESTAMP)
-                FROM relations r
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM user_profiles up
-                    WHERE up.user_id = r.user_id
-                      AND up.group_or_user_id = r.group_or_user_id
-                      AND up.bot_name = r.bot_name
-                )
-            """)
-            update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            await cursor.execute(
-                """
-                INSERT INTO kv_store (key, value, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value=excluded.value,
-                    updated_at=excluded.updated_at
-                """,
-                ("relations_migration_done", "1", update_time, update_time),
-            )
-            logger.info("[Database] Relations schema migration completed.")
-
         # 创建表情包表
         await cursor.execute("""
             CREATE TABLE IF NOT EXISTS stickers (

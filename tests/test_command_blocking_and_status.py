@@ -620,6 +620,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.data_cache.add_message.assert_called_once()
         saved_msg_data = self.plugin.data_cache.add_message.call_args[0][2]
         self.assertEqual(saved_msg_data.message_id, "1710535200")
+        self.assertTrue(self.plugin.data_cache.add_message.call_args.kwargs["observed_by_bot"])
 
     async def test_intercepted_send_concurrency_isolation(self):
         """测试同一个 bot 实例在多个并发事件中发送时，通过 ContextVar 隔离捕获正确的 message_id"""
@@ -669,7 +670,7 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         )
 
         saved_msgs = []
-        self.plugin.data_cache.add_message = AsyncMock(side_effect=lambda b, g, msg: saved_msgs.append(msg))
+        self.plugin.data_cache.add_message = AsyncMock(side_effect=lambda b, g, msg, **kwargs: saved_msgs.append(msg))
 
         # 并发执行两个 event.send
         await asyncio.gather(

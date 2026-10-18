@@ -1,4 +1,5 @@
 import json
+import re
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
@@ -78,10 +79,8 @@ class ProfileApi:
                        up.interests, up.attitude, up.agreements, up.extra,
                        up.avatar_description,
                        up.created_at, up.updated_at,
-                       COALESCE(up.relation, r.relation) AS relation,
-                       CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
+                       up.title
                 FROM user_profiles up
-                LEFT JOIN relations r ON up.bot_name = r.bot_name AND up.group_or_user_id = r.group_or_user_id AND up.user_id = r.user_id
                 {where_clause}
                 ORDER BY up.updated_at DESC
                 LIMIT ? OFFSET ?
@@ -110,9 +109,19 @@ class ProfileApi:
                             "agreements": r["agreements"] or "",
                             "extra": r["extra"] or "",
                             "avatar_description": r["avatar_description"] or "",
-                            "relation": r["relation"]
-                            if r["relation"] is not None
-                            else 0,
+                            **await self.giftia.db.get_relation_score(
+                                r["bot_name"], r["group_or_user_id"], r["user_id"]
+                            ),
+                            "recent_relation_changes": list(
+                                reversed(
+                                    await self.giftia.db.get_relation_changes(
+                                        r["bot_name"],
+                                        r["group_or_user_id"],
+                                        r["user_id"],
+                                        limit=3,
+                                    )
+                                )
+                            ),
                             "title": r["title"] if r["title"] is not None else "",
                             "created_at": r["created_at"],
                             "updated_at": r["updated_at"],
@@ -133,6 +142,56 @@ class ProfileApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_user_profiles error: {e}")
             return error_response(f"获取用户画像列表失败: {str(e)}")
+
+    async def get_user_relation_history(self):
+        """Read one member's complete affinity history, ten newest entries per page.
+
+        Returns:
+            A JSON response with scoped records, total count and pagination.
+        """
+        bot_name = request.query.get("bot_name")
+        group_or_user_id = request.query.get("group_or_user_id")
+        user_id = request.query.get("user_id")
+        if not bot_name or not group_or_user_id or not user_id:
+            return error_response("缺少必要参数 (bot_name, group_or_user_id, user_id)")
+        try:
+            page = int(request.query.get("page", 1))
+            if page < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return error_response("页码必须是正整数")
+        try:
+            scope = (bot_name, group_or_user_id, user_id)
+            async with self.giftia.db.conn.execute(
+                "SELECT COUNT(*) FROM relation_changes "
+                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                scope,
+            ) as cursor:
+                total = (await cursor.fetchone())[0]
+            limit = 10
+            page = min(page, max(1, (total + limit - 1) // limit))
+            async with self.giftia.db.conn.execute(
+                "SELECT id, delta, relation_before, relation_after, reason, "
+                "occurred_at, created_at FROM relation_changes "
+                "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (*scope, limit, (page - 1) * limit),
+            ) as cursor:
+                items = [dict(row) for row in await cursor.fetchall()]
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "limit": limit,
+                    },
+                }
+            )
+        except Exception as error:
+            logger.error("[Giftia API] get_user_relation_history error: %s", error)
+            return error_response("获取好感度变化历史失败")
 
     async def get_user_profile_filter_options(self):
         """Get bot/session filter options for user profiles."""
@@ -228,7 +287,7 @@ class ProfileApi:
             bot_name = body.get("bot_name")
             group_or_user_id = body.get("group_or_user_id")
             user_id = body.get("user_id")
-            relation = body.get("relation")
+            base_relation = body.get("base_relation")
             title = body.get("title")
             profile_fields = {
                 field: body.get(field)
@@ -241,16 +300,20 @@ class ProfileApi:
                     "缺少必要参数 (bot_name, group_or_user_id, user_id)"
                 )
 
-            parsed_relation = (
-                int(relation) if relation is not None and relation != "" else None
-            )
+            if base_relation is not None and (
+                isinstance(base_relation, bool)
+                or not re.fullmatch(r"[+-]?\d+", str(base_relation))
+                or abs(int(base_relation)) > 2**53 - 1
+            ):
+                return error_response("基础分必须为有效整数")
+            parsed_base = int(base_relation) if base_relation is not None else None
             parsed_title = str(title) if title is not None else None
 
             await self.giftia.data_cache.set_user_profile(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
-                relation=parsed_relation,
+                base_relation=parsed_base,
                 title=parsed_title,
                 profile_fields=profile_fields,
                 alias_increment_count=False,

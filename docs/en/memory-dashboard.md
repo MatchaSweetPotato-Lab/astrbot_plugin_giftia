@@ -1,0 +1,83 @@
+# Atomic memory management
+
+Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-term memory)**. Each record stores one fact, without memory categories or lifecycle states.
+
+1. Select a bot and conversation, then filter by an associated member or text. Member filters match complete account IDs; member chips on a card apply the same filter.
+2. Narratives describe participants, actions, interaction direction and how a fact was learned. Cards show the topic as a bold heading, with importance at the top right and manual-entry or edit markers below the heading. Factual timestamps follow the narrative; creation time and hit counts appear at the bottom. Expand the evidence section to inspect direct speech and media captions.
+3. Add a memory with all associated accounts, a topic, importance and text. Multiple participants are supported. Saving selects its conversation and marks it as a manual entry without fabricating chat evidence.
+4. Edit text, importance and associated accounts. Topics and original evidence remain unchanged; edits are marked as manual revisions. Refresh before editing a record changed by another request.
+5. Memory cleanup inherits the selected scope, member and text filters. Preview candidates before choosing records to delete.
+
+![Memory cards with prominent topic headings](../images/memory-cards.png)
+
+| Previous entry | Current entry |
+| --- | --- |
+| Memory type/status filters and agreement state editing | Removed; record changes and agreement dates in factual narratives |
+| `/整理记忆` and consolidation after extraction | Removed; no consolidation jobs are created or consumed |
+| Subject/target fields | One associated-member list; narratives retain roles and direction |
+| Origin filters | Removed; narratives distinguish self-report and observation, with evidence available |
+| The model's memory query/delete tool | Query only; management pages and administrator commands handle deletion |
+| Profile agreements, personality, interests, miscellaneous notes and relationship titles | Directly supported information is recorded as individual facts |
+| Names, aliases, attitude and avatar descriptions | Continue to use profile management |
+| Editing cumulative affinity directly | Edit the affinity base score; final affinity is base plus interaction score |
+| Affinity-change history and before/after scores | Interaction-rating history, displaying only timestamps, ratings and reasons |
+| Recent-memory injection and the recall-pool switch | One recall pool; set its injection limit to zero to disable automatic retrieval and injection |
+
+Member cards display final affinity, base, interaction, recent and long-term scores, and the evaluation count, followed by the latest three interaction ratings in newest-first order. Each entry shows only its time, rating strength and reason. Fewer entries are shown when history is short, with an empty state for members without recorded changes. Filter long-term memories by account to inspect a member's facts.
+
+![Member cards with the latest three interaction ratings, using example data](../images/member-profile-history.png)
+
+Click a card's affinity pill to open that member's complete interaction-rating history for the exact bot and conversation. The dialog shows ten entries per page, page numbers, previous/next controls, the current record range and total count. The final page contains the remaining entries. Browsing history is independent of the fifty-entry context window used by background tone reviews. Failed requests offer a retry button.
+
+![Complete affinity history with ten entries per page, using example data](../images/member-relation-history.png)
+
+Historical profile fields remain in storage. Profile reports no longer read or display personality, interests, miscellaneous notes, agreements or relationship titles. Update custom report templates that reference retired variables or restore their defaults.
+
+Default image and text profile reports show the latest three interaction ratings in newest-first order. They omit the history section when empty and hide profile fields without content instead of displaying “暂无记录”. A valid score of zero remains visible. Template data uses `""` for empty profile values, `null` for a missing `relation`, and includes only populated entries in `profile_fields`. Custom templates should check `{% if relation is not none %}` so that zero is preserved.
+
+The `recent_relation_changes` array contains at most three entries, or `[]` when no history exists. Each entry displays `delta`, `reason` and a local display `time`, and includes the original `occurred_at` and `created_at` timestamps. Lists and profile reports omit before/after affinity scores. Saved custom templates are preserved. Restore the default for the new layout or render the array in your own template:
+
+```jinja2
+{% for change in recent_relation_changes %}
+<p>{{ change.time }} · Rating {{ '%+d' | format(change.delta) }}</p>
+{% if change.reason %}<p>{{ change.reason }}</p>{% endif %}
+{% endfor %}
+```
+
+![Profile report with empty fields omitted and the latest three interaction ratings, using example data](../images/user-profile-report-history.png)
+
+Final affinity = base score + interaction score. The base defaults to zero and is set by an administrator under Profile management → Edit → Affinity base score. Negative integers are allowed; the scope is the exact bot, conversation and member. Interaction scores start at 50 and stay within 0–100; the base can take final affinity outside that range. Calculations retain full precision, while the UI, reports and prompts show one decimal place.
+
+The recent score uses the latest ten recorded interaction ratings (or fewer when history is short). The long-term score uses all recorded ratings, including those latest ten. For each window, let P be the sum of positive ratings and N the sum of absolute negative ratings: `window score = 100 × (5 + P) / (10 + P + N)`. Then `interaction score = recent score × 60% + long-term score × 40%`. Ratings range from -5 to +5; zero and neutral conversations are not recorded. The initial 50 means neutral or insufficient evidence, rather than familiarity. Reply and decision system prompts explain affinity standards once, while user prompts contain only per-user data. Formal reply profiles include sample counts and concrete reasons.
+
+A rating's `delta` describes interaction direction and strength, not the final score increment. A mild positive rating can lower the final score when a stronger positive rating leaves the rolling window. History retains final score snapshots internally. Lists and profiles show only ratings, timestamps and reasons. Changing the base does not rewrite history or create a rating. Legacy cumulative values are ignored, never converted into a base, and never used to invent history. Without history, the new starting point is base zero plus interaction 50. Update thresholds in custom character prompts to the new scale.
+
+Attitude describes the mutual interaction tone, such as exchanging familiar jokes or keeping a polite distance. The first stage maintains aliases and rates the current batch using a consistent standard. It sees existing aliases without current scores or long-term attitude. Its prompt describes behavioral rating criteria without affinity calculation rules, so neither tenure nor a high score tightens the criteria. Each rating persists its concrete reason, source batch, timestamps and final score snapshots; a source batch can rate a member only once. Formal replies include a separate profile for each user speaking in `reply_messages`, with base, interaction, recent and long-term scores, sample counts and the latest three reasons. Each user appears once, regardless of the active-member brief limit, and is excluded from those briefs. Weighted scores replace the former recent/all-time positive-change rates. Decision profiles include final affinity without rating reasons. Active-member briefs include only final affinity, omitting rating standards, score breakdowns and rating reasons.
+
+Report template data additionally includes `base_relation`, `interaction_score`, `recent_score`, `long_term_score`, `total_count` and `recent_count`. `relation` is the final score, including the initial interaction score of 50 when history is empty. In `recent_relation_changes`, `delta` is the signed interaction rating; `relation_before` and `relation_after` are internal final-affinity snapshots, omitted from the default display.
+
+Five unevaluated changes, or one interaction rating with an absolute value of at least four, trigger a separate interaction-tone review. This second stage still reads the current attitude and up to fifty history entries, distinguishes new evidence from previously reviewed background and uses related messages from the current batch when available. Concrete interaction descriptions carry more weight than scores. Reviews can preserve the existing tone and never change affinity. Successful reviews advance durable progress, including unchanged results; failures remain pending for the existing five-minute maintenance job without requiring new messages. Larger backlogs are processed in bounded batches, and changes arriving during inference remain pending. Deleting a member profile or clearing conversation profiles/relationships also clears the corresponding history.
+
+Extraction is controlled by the passive-maintenance setting and summary providers. Administrators can use `/强制总结` to process a bounded batch of observed, unprocessed messages. Extraction records only new facts from that batch, without retrieving, merging, superseding or rewriting historical memories, or inferring long-term habits. Changed preferences and fulfilled or cancelled agreements become new factual records. Explicit agreement dates and deadlines belong in their narratives.
+
+Messages actually submitted to a decision or reply model, including the current batch and its historical context, count as observed. The bot's own successfully sent messages also become observed immediately after storage, without waiting for another model request. A decision against replying still counts as observation; storing other messages alone does not. Reactivation queues only the history actually read in that request, preserving gaps that were never observed. Reading a previously processed message again does not queue it again. Every automatic trigger and `/强制总结` uses this same eligibility rule.
+
+Extraction follows the reply prompt's compact `<message>` style, retaining `source_id`, `user_id`, an available `nickname`, and the full timestamp, plus `reply_to` only when needed. It reuses the reply prompt's name resolver: prefer the name set by this bot in this conversation, otherwise preserve each message's original nickname, with the account ID as the fallback identity. Separate name tables, platform message IDs, redundant flags and empty arrays are omitted. Full dates and time zones preserve cross-day context; recalled messages, operation logs and commands are filtered before rendering. Media embedding and footnotes also reuse the reply formatter: captions whose descriptive fields total at most 100 characters and occur only once are embedded after the media placeholder as `[描述:画面: ...; 文字: ...; 类型: ...; 人物: ...; 来源: ...]`, omitting empty fields. Longer or repeated captions appear once per media ID in `<media_content>`, with genre, character, source and text attributes and the description inside `<caption>`. Only directly attached, completed captions with usable content are included. Associated-member fields retain complete IDs, and original messages and evidence are not rewritten by name resolution or media embedding.
+
+The extraction model references each message only by `source_id`. Code snapshots direct speech and available completed media captions together with the sender, timestamp, message identifier and media identifiers. Multiple attachments still form one source. Member messages and the bot's own output can both serve as evidence, including a bot answer's `source_id` alone; member-authored evidence is not required. Pending batches containing only bot output also enter extraction. Nested quotations and forwards, recalled messages, operation logs, commands and unavailable media cannot establish direct evidence.
+
+Silence and overflow thresholds control extraction; overflow counts only observed, pending messages outside the context window. A batch contains at most 100 complete messages within an approximate 16,000-character budget. Facts, replay protection and the exact batch's completion states commit transactionally. Model failures or validation errors retain pending sources for another trigger or `/强制总结` retry. Every five minutes, maintenance flushes conversations with observed pending messages when their last message is at least five minutes old, even if the bot is currently inactive. Conversations with no observed messages cannot start extraction, and lock contention cannot create eligibility. Maintenance also retries optional vector indexing; indexing failures do not discard saved facts.
+
+In the decision audit, “已归档消息边界 ID” is now “已归纳消息最大 ID”, the maximum processed message ID. Each row independently shows unseen (“未见”), observed and pending (“已见待总结”), or processed (“已总结”); the maximum no longer implies that every earlier row was processed. History retention protects observed pending sources even when later backfill discovers IDs below that maximum. Migration preserves existing progress as processed, leaves other legacy messages unseen, and ignores old armed flags. Observation states survive restarts. A one-time repair uses each conversation's saved observer account to queue previously mislabelled own output, preserving unseen messages from other senders and already processed messages.
+
+Existing memory text and evidence remain stored, without invented sources. New databases omit memory type, status, expiry-state and consolidation-progress columns. Extra columns and old consolidation jobs in existing databases are unused; initialization does not delete or rebuild historical data. Extraction follows the current JSON Schema with factual fields and message evidence only.
+
+Decision models can request retrieval. With embeddings enabled, replies continue using the session recall pool. Old `session_recall_enabled` values are ignored; `/读取近期记忆` remains available.
+
+Automatic retrieval runs once per reply. Pending messages are grouped by `user_id`, preserving each user's message order, and each group is searched separately. The reply prompt retains the original conversation order. Media placeholders use only completed, cached `caption` content in their original position, excluding `text`, genre, character and source fields. Media without a usable caption is skipped while ordinary text remains; an empty user group is not searched. Each user's candidates are reranked against that user's query, then merged and deduplicated by memory ID. A memory receives at most one automatic hit per batch. The per-user candidate setting controls each search, while the injection limit bounds the combined current automatic results and older pool entries, preferring current results. Setting that limit to 0 disables automatic retrieval and injection while leaving explicit decision and tool searches available. Recalls enter the pool only after the reply succeeds, with the existing TTL and capacity eviction preserved.
+
+All retrieval paths share a renderer for factual text and available event timestamps. Observation periods in older records remain supported. Unknown event times use a separately labelled creation timestamp; edit times never substitute for event times. Prompt context omits memory types, states, internal IDs, account lists and evidence excerpts. IDs still deduplicate records, with explicit search results taking precedence over cached copies. The model retains `<search_memory>`; `<delete_memory>` is not advertised or executed.
+
+This simplification preserves semantic retrieval, optional reranking, session-pool TTL and capacity limits. It adds neither importance/time decay nor retrieval of subsequent changes to a recalled fact.
+
+Scheduled history cleanup and the run-now action using automatic cleanup settings protect messages beyond each bot/conversation's durable processing cursor. Missing or invalid progress, failed extraction and in-flight batches do not release pending sources. Successfully processed batches remain subject to age/count rules and minimum recent-message retention. Evidence snapshots survive source-history cleanup.

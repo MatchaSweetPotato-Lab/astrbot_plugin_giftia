@@ -1,137 +1,124 @@
 import { state } from '../state.js';
 
-export async function loadMemories() {
-    const listContainer = document.getElementById("memory-list");
-    listContainer.innerHTML = `<div class="loading-row"><span class="loader"></span> 加载数据中...</div>`;
-    if (!document.getElementById("memory-bot-name").value) {
-        state.pagination.memories.total = 0;
-        listContainer.innerHTML = `<div class="no-data-row">暂无可用 Bot</div>`;
-        window.renderPagination("memory-pagination", state.pagination.memories, () => {});
-        return;
-    }
+let loadVersion = 0;
 
+export async function loadMemories() {
+    const version = ++loadVersion;
+    const listContainer = document.getElementById('memory-list');
+    listContainer.innerHTML = '<div class="loading-row"><span class="loader"></span> 加载数据中...</div>';
     const params = {
         page: state.pagination.memories.page,
         limit: state.pagination.memories.limit,
-        bot_name: document.getElementById("memory-bot-name").value,
-        group_or_user_id: document.getElementById("memory-group-id").value,
-        associated_user_id: document.getElementById("memory-associated-user-id").value,
-        search: document.getElementById("memory-search").value
+        ...window.GiftiaApp.getScopedFilterParams('memories'),
+        group_or_user_id: document.getElementById('memory-group-id').value
     };
+    const selection = JSON.stringify(params);
+    const isCurrent = () => version === loadVersion && selection === JSON.stringify({
+        page: state.pagination.memories.page,
+        limit: state.pagination.memories.limit,
+        ...window.GiftiaApp.getScopedFilterParams('memories'),
+        group_or_user_id: document.getElementById('memory-group-id').value
+    });
+    if (!params.bot_name || !params.group_or_user_id) {
+        state.pagination.memories.total = 0;
+        listContainer.innerHTML = '<div class="no-data-row">当前筛选下暂无记忆</div>';
+        window.renderPagination('memory-pagination', state.pagination.memories, () => {});
+        return;
+    }
 
     try {
-        const res = await window.apiGet("/memories", params);
-        if (res.status === "success" && res.data) {
-            state.pagination.memories.total = res.data.total;
-            renderMemories(res.data.items, res.data.user_id_to_name || {});
-            window.renderPagination("memory-pagination", state.pagination.memories, (page) => {
-                state.pagination.memories.page = page;
-                loadMemories();
-            });
-        } else {
-            throw new Error(res.message || "请求失败");
-        }
+        const res = await window.apiGet('/memories', params);
+        if (!isCurrent()) return;
+        if (res.status !== 'success' || !res.data) throw new Error(res.message || '请求失败');
+        state.pagination.memories.total = res.data.total;
+        renderMemories(res.data.items, res.data.user_id_to_name || {});
+        window.renderPagination('memory-pagination', state.pagination.memories, (page) => {
+            state.pagination.memories.page = page;
+            loadMemories();
+        });
     } catch (e) {
-        listContainer.innerHTML = `<div class="no-data-row">加载数据失败: ${e.message}</div>`;
+        if (isCurrent()) {
+            listContainer.innerHTML = `<div class="no-data-row">加载数据失败: ${window.escapeHtml(e.message)}</div>`;
+        }
     }
 }
 
 export function renderMemories(items, userIdToName = {}) {
-    const container = document.getElementById("memory-list");
-    if (!items || items.length === 0) {
-        container.innerHTML = `<div class="no-data-row">暂无相关长期记忆记录</div>`;
+    const container = document.getElementById('memory-list');
+    if (!items?.length) {
+        container.innerHTML = '<div class="no-data-row">当前筛选下暂无记忆</div>';
         return;
     }
-
-    container.innerHTML = items.map(item => {
-        const encodedText = encodeURIComponent(item.text);
-        const associatedUserIdsArray = item.metadata && Array.isArray(item.metadata.associated_user_ids)
-            ? item.metadata.associated_user_ids.filter(Boolean)
-            : [];
-        const fallbackUserId = item.metadata && item.metadata.user_id
-            ? String(item.metadata.user_id)
-            : "";
-        const associatedUserIdsList = associatedUserIdsArray.length > 0
-            ? associatedUserIdsArray.join(',')
-            : fallbackUserId;
-
-        // Render associated user tags
-        let associatedUsersHtml = "";
-        const uniqueUserIds = [...new Set(associatedUserIdsArray.length > 0 ? associatedUserIdsArray : (fallbackUserId ? [fallbackUserId] : []))];
-        if (uniqueUserIds.length > 0) {
-            associatedUsersHtml = uniqueUserIds.map(uid => {
-                const cleanUid = String(uid).trim();
-                const nickname = userIdToName[cleanUid];
-                if (nickname) {
-                    return `<span class="user-pill" onclick="window.filterMemoryByUser('${cleanUid}')" title="ID: ${cleanUid} (点击筛选)">${window.escapeHtml(nickname)}</span>`;
-                } else {
-                    return `<span class="user-pill user-pill-raw" onclick="window.filterMemoryByUser('${cleanUid}')" title="ID: ${cleanUid} (点击筛选)">${cleanUid}</span>`;
-                }
-            }).join("");
-        } else {
-            associatedUsersHtml = `<span class="muted-text" style="font-size: 11px;">无关联用户</span>`;
-        }
-
-        // Importance rating category mapping
+    const escape = value => window.escapeHtml(String(value ?? ''));
+    container.innerHTML = items.map((item, index) => {
+        const meta = item.metadata || {};
+        const userIds = [...new Set([
+            ...(Array.isArray(meta.associated_user_ids) ? meta.associated_user_ids : []),
+            ...(!meta.associated_user_ids?.length ? [meta.user_id] : [])
+        ].filter(Boolean).map(String))];
+        const topic = String(meta.topic || '').trim();
+        const notes = [meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : ''].filter(Boolean);
+        const participant = uid => escape(userIdToName[uid] || String(uid));
         const importance = Number(item.importance || 5);
-        let importanceCategory = "medium";
-        if (importance <= 3) {
-            importanceCategory = "low";
-        } else if (importance >= 8) {
-            importanceCategory = "high";
-        }
-
-        const hitCount = Number(item.hit_count || 0);
-        const lastHitAt = item.last_hit_at ? window.formatDate(item.last_hit_at) : "从未命中";
-        const formattedCreatedAt = window.formatDate(item.created_at);
-
-        // Collapsible check
-        const textContent = item.text || "";
-        const isLong = textContent.length > 120 || (textContent.match(/\n/g) || []).length >= 3;
-
+        const importanceCategory = importance <= 3 ? 'low' : importance >= 8 ? 'high' : 'medium';
+        const evidence = Array.isArray(meta.evidence) ? meta.evidence : [];
+        const isLong = (item.text || '').length > 120 || ((item.text || '').match(/\n/g) || []).length >= 3;
         return `
-            <div class="memory-card">
-                <div class="memory-card-header">
-                    <div class="memory-importance-badge importance-${importanceCategory}">
-                        <span class="importance-dot"></span>
-                        重要度 ${importance}
+            <article class="memory-card" data-memory-index="${index}">
+                <header class="memory-card-header">
+                    <div class="memory-heading-content">
+                        <h3 class="memory-topic">${escape(topic || '记忆')}</h3>
+                        ${notes.length ? `<div class="memory-context">${notes.map(note => `<span>${escape(note)}</span>`).join('')}</div>` : ''}
                     </div>
-                    <div class="memory-activity-badge" title="上次命中: ${lastHitAt}">
-                        <span class="activity-icon">⚡</span>
-                        <span>${hitCount} 次命中</span>
-                    </div>
-                </div>
-
+                    <span class="memory-importance-badge importance-${importanceCategory}"><span class="importance-dot"></span>重要度 ${importance}</span>
+                </header>
                 <div class="memory-card-body">
-                    <div class="memory-text-container collapsed" id="memory-text-${item.memory_id}">
-                        ${window.escapeHtml(textContent).replace(/\n/g, '<br>')}
-                    </div>
-                    ${isLong ? `
-                        <button class="btn-text-toggle" id="btn-toggle-${item.memory_id}" onclick="window.toggleMemoryText('${item.memory_id}')">
-                            展开全部
-                        </button>
-                    ` : ''}
+                    <div class="memory-text-container collapsed">${escape(item.text || '').replace(/\n/g, '<br>')}</div>
+                    ${isLong ? '<button type="button" class="btn-text-toggle" data-memory-action="toggle">展开全部</button>' : ''}
                 </div>
-
+                ${meta.observed_from ? `<div class="memory-observation">观察时间：${escape(window.formatDate(meta.observed_from))} — ${escape(window.formatDate(meta.observed_until || meta.observed_from))}</div>` : ''}
+                ${!meta.observed_from && meta.occurred_at ? `<div class="memory-observation">发生时间：${escape(window.formatDate(meta.occurred_at))}</div>` : ''}
+                <details class="memory-evidence">
+                    <summary>查看依据 · ${evidence.length} 条原话</summary>
+                    ${meta.manually_edited ? '<p class="muted-text">此记录经过人工修订，以下保留原始依据。</p>' : ''}
+                    ${evidence.length ? `<ol>${evidence.map(ref => `
+                        <li>
+                            <div class="memory-evidence-meta">${escape(ref.user_id || '未知用户')} · ${escape(window.formatDate(ref.time))}</div>
+                            <blockquote>${escape(ref.quote || '')}</blockquote>
+                            <div class="memory-evidence-meta">消息 ${escape(String(ref.message_id || ref.source_id || '未知'))}${Array.isArray(ref.media_ids) && ref.media_ids.length ? ` · 媒体 ${escape(ref.media_ids.join('、'))}` : ''}</div>
+                        </li>`).join('')}</ol>` : `<p class="muted-text">${meta.manual_entry ? '管理员手动录入，无聊天原话证据。' : '此记录没有保存原话证据。'}</p>`}
+                </details>
                 <div class="memory-card-footer">
-                    <div class="memory-associated-users">
-                        ${associatedUsersHtml}
-                    </div>
+                    <div class="memory-associated-users">${userIds.map(uid => `<button type="button" class="user-pill" data-memory-user="${escape(uid)}" title="用户 ID: ${escape(uid)}，点击筛选">${participant(uid)}</button>`).join('') || '<span class="muted-text">无关联用户</span>'}</div>
                     <div class="memory-actions">
-                        <button class="btn-icon-action" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}', ${importance})" title="编辑">
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                        </button>
-                        <button class="btn-icon-action danger" onclick="window.deleteMemory('${item.memory_id}')" title="删除">
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                        </button>
+                        <button type="button" class="btn btn-secondary btn-small" data-memory-action="edit">编辑</button>
+                        <button type="button" class="btn btn-danger btn-small" data-memory-action="delete">删除</button>
                     </div>
                 </div>
-
                 <div class="memory-time-details">
-                    <span>创建于 ${formattedCreatedAt}</span>
-                    ${hitCount > 0 ? `<span class="muted-text" title="上次命中: ${lastHitAt}">上次命中: ${lastHitAt.split(' ')[0]}</span>` : ''}
+                    <span>创建于 ${escape(window.formatDate(item.created_at))}</span>
+                    <span title="上次命中: ${escape(item.last_hit_at ? window.formatDate(item.last_hit_at) : '从未命中')}">${Number(item.hit_count || 0)} 次命中</span>
                 </div>
-            </div>
-        `;
-    }).join("");
+            </article>`;
+    }).join('');
+
+    // Keep identifiers and memory text out of executable inline attributes.
+    container.onclick = event => {
+        const button = event.target.closest('button');
+        const card = button?.closest('[data-memory-index]');
+        if (!card) return;
+        const item = items[Number(card.dataset.memoryIndex)];
+        if (button.dataset.memoryUser !== undefined) {
+            window.filterMemoryByUser(button.dataset.memoryUser);
+        } else if (button.dataset.memoryAction === 'edit') {
+            window.openEditMemoryModal(item);
+        } else if (button.dataset.memoryAction === 'delete') {
+            window.deleteMemory(item.memory_id, item.bot_name, item.group_or_user_id);
+        } else if (button.dataset.memoryAction === 'toggle') {
+            const text = card.querySelector('.memory-text-container');
+            const collapsed = text.classList.toggle('collapsed');
+            text.classList.toggle('expanded', !collapsed);
+            button.textContent = collapsed ? '展开全部' : '收起全部';
+        }
+    };
 }

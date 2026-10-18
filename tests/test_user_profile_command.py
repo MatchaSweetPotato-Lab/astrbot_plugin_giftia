@@ -19,12 +19,25 @@ def command(tmp_path):
         adapter_id_map={"adapter": "bot"},
         bot_map={"bot": {"nickname": "小吉"}},
         conf={},
+        db=SimpleNamespace(get_relation_changes=AsyncMock(return_value=[])),
         data_cache=SimpleNamespace(
             get_user_profile_record=AsyncMock(
                 return_value={
                     "call_name": "小明",
+                    "aliases": "阿明",
+                    "attitude": "友好\n认真回应",
+                    "avatar_description": "蓝天下的白猫",
                     "personality": "温和\n细心",
+                    "interests": "摄影",
+                    "agreements": "下次交流照片",
+                    "extra": "周末散步",
                     "relation": 0,
+                    "base_relation": -50,
+                    "interaction_score": 50,
+                    "recent_score": 50,
+                    "long_term_score": 50,
+                    "total_count": 0,
+                    "recent_count": 0,
                     "title": "朋友",
                 }
             )
@@ -55,12 +68,18 @@ async def test_profile_id_lookup_is_scoped_and_defaults_to_text(
     plugin.data_cache.get_user_profile_record.assert_awaited_once_with(
         "bot", group_id or "sender", user_id
     )
+    plugin.db.get_relation_changes.assert_awaited_once_with(
+        "bot", group_id or "sender", user_id, limit=3
+    )
     text = event.send.call_args.args[0].chain[0].text
     assert f"用户 ID：{user_id}" in text
-    assert "性格风格：温和\n细心" in text
+    assert "称呼：小明" in text
+    assert "其他外号：阿明" in text
+    assert "互动态度：友好\n认真回应" in text
+    assert "头像描述：蓝天下的白猫" in text
     assert "好感度：0" in text
-    assert "关系称谓：朋友" in text
-    assert "兴趣话题：暂无记录" in text
+    for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
+        assert label not in text
     plugin.html_render.assert_not_awaited()
 
 
@@ -174,7 +193,7 @@ async def test_profile_image_uses_saved_template_and_cleans_up(command, send_fai
         _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
     event.send.assert_awaited_once()
     call = plugin.html_render.call_args
-    assert "<h1>123 / 小明 / 0</h1>" in call.args[1]["report_html"]
+    assert "<h1>123 / 小明 / 0.0</h1>" in call.args[1]["report_html"]
     assert "STATUS" not in call.args[1]["report_html"]
     assert call.kwargs["return_url"] is False
     assert not path.exists()
@@ -196,22 +215,168 @@ def test_report_normalizes_missing_fields_without_mutating_record(command, relat
     _, plugin, _ = command
     record = {
         "call_name": "<小明>",
-        "personality": "  ",
+        "aliases": "  ",
+        "attitude": None,
+        "avatar_description": "",
+        "personality": "Retired personality",
+        "interests": "Retired interests",
+        "agreements": "Retired agreements",
+        "extra": "Retired notes",
         "relation": relation,
-        "title": "",
+        "title": "Retired relationship title",
     }
+    original = record.copy()
     data = build_user_profile_report("bot", "小吉", "group", "00123", record)
     assert data["user_id"] == "00123"
-    assert data["relation"] == ("暂无记录" if relation is None else relation)
-    assert data["relation_title"] == "暂无记录"
-    assert data["personality"] == "暂无记录"
+    assert data["relation"] == relation
     assert data["title"] == "用户画像"
-    assert record["personality"] == "  "
+    assert data["profile_fields"] == {"称呼": "<小明>"}
+    assert data["recent_relation_changes"] == []
+    assert record == original
+    assert not {
+        "personality",
+        "interests",
+        "agreements",
+        "extra",
+        "relation_title",
+    }.intersection(data)
     for field, label in USER_PROFILE_FIELDS.items():
-        assert data[field] == data["profile_fields"][label]
+        assert data[field] == data["profile_fields"].get(label, "")
     rendered = plugin.reports.render_html("user_profile", data)
     assert "&lt;小明&gt;" in rendered
     assert "<小明>" not in rendered
+    assert "Retired" not in rendered
+    assert "暂无记录" not in rendered
+    assert ('class="relationship"' in rendered) == (relation is not None)
+    assert '<section class="history">' not in rendered
+    for label in ("其他外号", "互动态度", "头像描述"):
+        assert f"<h2>{label}</h2>" not in rendered
+    for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
+        assert label not in rendered
+
+
+@pytest.mark.parametrize(
+    "empty", [None, "", " \n ", "暂无记录", "暂无", "无", "未知", "None", "n/a"]
+)
+def test_empty_report_fields_are_omitted_and_history_remains_optional(command, empty):
+    _, plugin, _ = command
+    record = {field: empty for field in USER_PROFILE_FIELDS}
+    data = build_user_profile_report("bot", "小吉", "group", "user", record)
+    assert data["profile_fields"] == {}
+    assert all(data[field] == "" for field in USER_PROFILE_FIELDS)
+    rendered = plugin.reports.render_html("user_profile", data)
+    assert "暂无记录" not in rendered
+    assert '<section class="field">' not in rendered
+    assert '<section class="relationship">' not in rendered
+    assert '<section class="history">' not in rendered
+
+
+def test_report_history_is_bounded_escaped_and_available_to_custom_templates(command):
+    _, plugin, _ = command
+    changes = [
+        {
+            "delta": delta,
+            "relation_before": 10,
+            "relation_after": 10 + delta,
+            "reason": reason,
+            "occurred_at": "2026-10-18T14:00:00+08:00",
+        }
+        for delta, reason in [
+            (2, "<script>latest</script> {{ 7 * 7 }}"),
+            (-1, "previous"),
+            (1, "third"),
+            (1, "omitted fourth"),
+        ]
+    ]
+    original = [dict(change) for change in changes]
+    data = build_user_profile_report(
+        "bot",
+        "小吉",
+        "group",
+        "user",
+        {"relation": 12},
+        recent_relation_changes=changes,
+    )
+    assert len(data["recent_relation_changes"]) == 3
+    assert changes == original
+    rendered = plugin.reports.render_html("user_profile", data)
+    assert "最近互动评价" in rendered
+    assert "+2" in rendered and "-1" in rendered
+    assert "→" not in rendered
+    assert "&lt;script&gt;latest&lt;/script&gt; {{ 7 * 7 }}" in rendered
+    assert "<script>" not in rendered
+    assert "omitted fourth" not in rendered
+    custom = "{% for change in recent_relation_changes %}{{ change.delta }}:{{ change.reason }};{% endfor %}"
+    plugin.reports.save_template("user_profile", custom)
+    assert "third" in plugin.reports.render_html("user_profile", data)
+    assert "omitted fourth" not in plugin.reports.render_html("user_profile", data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["文本响应", "图片响应"])
+@pytest.mark.parametrize("group_id", ["group", ""])
+async def test_profile_command_supplies_scoped_recent_history_to_text_and_image(
+    command, mode, group_id
+):
+    handler, plugin, event = command
+    event.get_group_id.return_value = group_id
+    plugin.conf["report_config"] = {"render_mode": mode}
+    plugin.db.get_relation_changes.return_value = [
+        {
+            "delta": 1,
+            "relation_before": 10,
+            "relation_after": 11,
+            "reason": "earliest",
+            "occurred_at": "2026-10-16T12:00:00+08:00",
+        },
+        {
+            "delta": -2,
+            "relation_before": 11,
+            "relation_after": 9,
+            "reason": "middle",
+            "occurred_at": "2026-10-17T12:00:00+08:00",
+        },
+        {
+            "delta": 3,
+            "relation_before": 9,
+            "relation_after": 12,
+            "reason": "latest",
+            "occurred_at": "2026-10-18T12:00:00+08:00",
+        },
+    ]
+    path = Path(plugin.html_render.return_value)
+    if mode == "图片响应":
+        path.write_bytes(b"rendered image")
+    _ = [chunk async for chunk in handler.get_user_profile(event, "target")]
+    plugin.db.get_relation_changes.assert_awaited_once_with(
+        "bot", group_id or "sender", "target", limit=3
+    )
+    rendered = (
+        plugin.html_render.call_args.args[1]["report_html"]
+        if mode == "图片响应"
+        else event.send.call_args.args[0].chain[0].text
+    )
+    assert (
+        rendered.index("latest") < rendered.index("middle") < rendered.index("earliest")
+    )
+    assert "+3" in rendered and "-2" in rendered
+    assert "→" not in rendered
+    if mode == "图片响应":
+        assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_profile_text_omits_missing_columns_but_preserves_zero_affinity(command):
+    handler, plugin, event = command
+    plugin.data_cache.get_user_profile_record.return_value = {"call_name": "小明"}
+    _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
+    text = event.send.call_args.args[0].chain[0].text
+    assert "称呼：小明" in text
+    for omitted in ("暂无记录", "好感度：", "互动态度：", "头像描述：", "最近互动评价"):
+        assert omitted not in text
+    plugin.data_cache.get_user_profile_record.return_value["relation"] = 0
+    _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
+    assert "好感度：0" in event.send.call_args.args[0].chain[0].text
 
 
 @pytest.mark.asyncio

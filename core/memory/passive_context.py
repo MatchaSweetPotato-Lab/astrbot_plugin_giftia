@@ -4,7 +4,6 @@ from datetime import datetime
 from astrbot.api import logger
 
 from ..llm.preset_prompts import (
-    DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT,
     DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT,
     DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT,
 )
@@ -12,19 +11,11 @@ from ..llm.prompt import (
     USER_PROFILE_FIELDS,
     normalize_profile_value,
     parse_caption_to_str,
-    parse_message_to_str,
     process_media_captions_for_prompt,
     truncate_message_content,
 )
-from ..utils.schemas import FORWARD_MEDIA_PATTERN
 
-SESSION_PROFILE_FIELDS = {"aliases", "attitude", "agreements"}
-LONG_PROFILE_FIELDS = {"personality", "interests", "extra"}
-DEFAULT_LONG_PROFILE_SAMPLE_LIMIT = 200
-DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD = 200
-DEFAULT_LONG_PROFILE_TEXT_THRESHOLD = 5000
-DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD = 200
-DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD = 5000
+SESSION_PROFILE_FIELDS = {"aliases"}
 
 
 def format_time_to_seconds(db_value: str) -> str:
@@ -55,37 +46,14 @@ class PassiveContextMixin:
     def _get_profile_summary_prompt(self) -> str:
         return DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT
 
-    def _get_long_profile_summary_prompt(self) -> str:
-        return DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT
-
-    def _get_long_profile_sample_limit(self) -> int:
-        return DEFAULT_LONG_PROFILE_SAMPLE_LIMIT
-
-    def _get_long_profile_thresholds(
-        self, has_existing_long_profile: bool
-    ) -> tuple[int, int]:
-        if has_existing_long_profile:
-            return (
-                DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD,
-                DEFAULT_LONG_PROFILE_TEXT_THRESHOLD,
-            )
-        return (
-            DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD,
-            DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD,
-        )
-
     def _format_user_profile_record_for_summary(
         self,
         record: dict | None,
         allowed_fields: set[str] | None = None,
-        include_relation_score: bool = True,
-        include_relation_title: bool = True,
     ) -> str:
-        if not record:
-            return "无"
+        record = record or {}
 
         parts = []
-        structured_lines = []
         allowed_fields = (
             set(allowed_fields)
             if allowed_fields is not None
@@ -96,19 +64,7 @@ class PassiveContextMixin:
                 continue
             value = normalize_profile_value(record.get(field))
             if value:
-                structured_lines.append(f"- {label}：{value}")
-        if structured_lines:
-            parts.append("结构化画像:\n" + "\n".join(structured_lines))
-
-        relation_parts = []
-        title = record.get("title") if include_relation_title else None
-        relation = record.get("relation") if include_relation_score else None
-        if relation not in (None, "", 0):
-            relation_parts.append(f"好感度: {relation}")
-        if title:
-            relation_parts.append(f"头衔: {title}")
-        if relation_parts:
-            parts.append("关系状态: " + "，".join(relation_parts))
+                parts.append(f"{label}：{value}")
 
         return "\n".join(parts) if parts else "无"
 
@@ -133,134 +89,6 @@ class PassiveContextMixin:
 
     def _parse_session_profile_fields(self, profile_content: str) -> dict[str, str]:
         return self._parse_profile_fields(profile_content, SESSION_PROFILE_FIELDS)
-
-    def _has_any_profile_field_tag(self, profile_content: str) -> bool:
-        return any(
-            re.search(rf"<{field}>.*?</{field}>", profile_content, re.DOTALL)
-            for field, _ in USER_PROFILE_FIELDS
-        )
-
-    def _has_existing_long_profile(self, record: dict | None) -> bool:
-        if not record:
-            return False
-        return any(
-            normalize_profile_value(record.get(field)) for field in LONG_PROFILE_FIELDS
-        )
-
-    def _is_long_profile_sample_message(self, msg) -> bool:
-        if not msg or getattr(msg, "is_recalled", 0):
-            return False
-        if getattr(msg, "role", "message") == "operation_log":
-            return False
-
-        content = str(getattr(msg, "content", "") or "").strip()
-        media_ids = getattr(msg, "media_id_list", None) or []
-        if media_ids:
-            return True
-        if not content:
-            return False
-
-        normalized = FORWARD_MEDIA_PATTERN.sub("", content)
-        normalized = re.sub(r"\[(?:图片|语音|视频|合并转发消息)\]", "", normalized)
-        normalized = normalized.strip()
-        if len(normalized) >= 4:
-            return True
-        return normalized not in {
-            "哈",
-            "哈哈",
-            "hhh",
-            "？",
-            "?",
-            "。",
-            "嗯",
-            "哦",
-            "草",
-        }
-
-    def _long_profile_sample_text_length(self, msg) -> int:
-        content = str(getattr(msg, "content", "") or "")
-        content = FORWARD_MEDIA_PATTERN.sub("", content)
-        return len(content.strip())
-
-    async def _build_long_profile_user_prompt(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        user_id: str,
-        nickname: str,
-        profile_record: dict | None,
-        sample_messages: list,
-        fetched_message_count: int,
-        sample_limit: int,
-    ) -> str:
-        all_media_ids = []
-        for msg in sample_messages:
-            if msg.media_id_list:
-                all_media_ids.extend(msg.media_id_list)
-        unique_media_ids = list(dict.fromkeys(all_media_ids))
-
-        media_captions = []
-        for media_id in unique_media_ids:
-            media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
-            if media_caption:
-                media_captions.append(media_caption)
-
-        processed_messages, remaining_captions = process_media_captions_for_prompt(
-            messages=sample_messages,
-            media_captions=media_captions,
-            threshold=100,
-        )
-
-        user_message_lines = [parse_message_to_str(msg) for msg in processed_messages]
-        sample_start = sample_messages[0].time if sample_messages else ""
-        sample_end = sample_messages[-1].time if sample_messages else ""
-
-        user_prompt_parts = [
-            f"<session_id>{group_or_user_id}</session_id>",
-            f"<target_user>\nuser_id: {user_id}\nnickname: {nickname or '未知'}\n</target_user>",
-            (
-                "<sample_info>\n"
-                f"selected_messages: {len(sample_messages)}\n"
-                f"fetched_recent_messages: {fetched_message_count}\n"
-                f"sample_limit: {sample_limit}\n"
-                f"time_range: {format_time_to_seconds(sample_start)} 到 {format_time_to_seconds(sample_end)}\n"
-                "note: 如果 fetched_recent_messages 等于 sample_limit，可能已省略更旧的未分析消息。\n"
-                "</sample_info>"
-            ),
-            (
-                "<current_user_profile>\n"
-                + self._format_user_profile_record_for_summary(
-                    profile_record,
-                    allowed_fields=LONG_PROFILE_FIELDS,
-                    include_relation_score=False,
-                    include_relation_title=False,
-                )
-                + "\n</current_user_profile>"
-            ),
-        ]
-        if remaining_captions:
-            media_captions_block = "\n".join(
-                parse_caption_to_str(caption) for caption in remaining_captions
-            )
-            user_prompt_parts.append(
-                f"<media_content>\n{media_captions_block}\n</media_content>"
-            )
-        user_prompt_parts.append(
-            "<user_messages>\n" + "\n".join(user_message_lines) + "\n</user_messages>"
-        )
-        return "\n\n".join(user_prompt_parts)
-
-    def _parse_long_profile_fields(self, completion_text: str) -> dict[str, str]:
-        match = re.search(
-            r"<long_user_profile(?:\s+[^>]*)?>(.*?)</long_user_profile>",
-            completion_text or "",
-            re.DOTALL,
-        )
-        profile_content = match.group(1).strip() if match else completion_text or ""
-        if not profile_content or profile_content.strip() == "无":
-            return {}
-
-        return self._parse_profile_fields(profile_content, LONG_PROFILE_FIELDS)
 
     def _is_bot_reference(
         self,
@@ -336,7 +164,7 @@ class PassiveContextMixin:
             )
         chat_history_text = "\n".join(chat_history_lines)
 
-        active_user_lines = []
+        active_user_briefs = []
         user_profile_blocks = []
         for uid in sorted(active_users_in_range):
             nickname = user_id_to_nickname.get(uid, "")
@@ -346,15 +174,10 @@ class PassiveContextMixin:
                 user_id=uid,
             )
 
-            # 获取 Bot 对用户的自定义称呼并注入到 active_users_text 中
+            # Apply preferred names only when rendering, preserving source snapshots.
             call_name = profile_record.get("call_name") if profile_record else None
-            parts = [f"群内昵称: {nickname}" if nickname else None]
             if call_name:
-                parts.append(f"你对他的称呼: {call_name}")
-            info_str = "，".join(p for p in parts if p)
-            active_user_lines.append(
-                f"- {uid} ({info_str})" if info_str else f"- {uid}"
-            )
+                active_user_briefs.append({"user_id": str(uid), "call_name": call_name})
 
             block_lines = [f"用户 {uid} ({nickname})" if nickname else f"用户 {uid}"]
             block_lines.append(
@@ -362,7 +185,6 @@ class PassiveContextMixin:
                 + self._format_user_profile_record_for_summary(
                     profile_record,
                     allowed_fields=SESSION_PROFILE_FIELDS,
-                    include_relation_score=False,
                 )
             )
             user_profile_blocks.append("\n".join(block_lines))
@@ -377,26 +199,15 @@ class PassiveContextMixin:
             "nickname_to_user_id": nickname_to_user_id,
             "user_id_to_nickname": user_id_to_nickname,
             "active_users_in_range": active_users_in_range,
-            "active_users_text": "\n".join(active_user_lines) or "无",
+            "active_user_briefs": active_user_briefs,
             "user_profiles_text": "\n---\n".join(user_profile_blocks) or "无",
             "media_captions_block": media_captions_block,
             "chat_history_text": chat_history_text,
             "alias_observation_messages": db_messages,
+            "memory_media_captions": [
+                caption for caption in media_captions if caption.is_captioned
+            ],
         }
-
-    def _build_memory_user_prompt(self, group_or_user_id: str, context: dict) -> str:
-        user_prompt_parts = [
-            f"<session_id>{group_or_user_id}</session_id>",
-            f"<active_users>\n{context['active_users_text']}\n</active_users>",
-        ]
-        if context["media_captions_block"]:
-            user_prompt_parts.append(
-                f"<media_content>\n{context['media_captions_block']}\n</media_content>"
-            )
-        user_prompt_parts.append(
-            f"<chat_history>\n{context['chat_history_text']}\n</chat_history>"
-        )
-        return "\n\n".join(user_prompt_parts)
 
     def _build_profile_user_prompt(self, group_or_user_id: str, context: dict) -> str:
         user_prompt_parts = [

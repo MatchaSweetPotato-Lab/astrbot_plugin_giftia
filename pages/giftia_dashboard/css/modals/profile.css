@@ -8,6 +8,43 @@
     max-width: 860px;
 }
 
+.user-relation-history-modal-card {
+    max-width: 720px;
+}
+
+#user-relation-history-scope {
+    margin: -8px 0 20px;
+    overflow-wrap: anywhere;
+}
+
+#user-relation-history-list {
+    min-height: 100px;
+    margin-bottom: 0;
+}
+
+#user-relation-history-list .relation-change-item {
+    padding: 14px 0;
+}
+
+#user-relation-history-list .relation-change-reason {
+    font-size: 13px;
+}
+
+#user-relation-history-pagination {
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    gap: 10px;
+    margin-top: 16px;
+    padding: 16px 0 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.relation-history-error {
+    padding: 20px 0;
+    color: var(--font-secondary);
+    overflow-wrap: anywhere;
+}
+
 .inline-input-action {
     display: flex;
     gap: 8px;

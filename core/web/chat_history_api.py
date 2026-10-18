@@ -55,7 +55,8 @@ class ChatHistoryApi:
             # Query data
             data_sql = f"""
                 SELECT id, bot_name, group_or_user_id, nickname, user_id, message_id,
-                       content, media_ids, role, reply_decision, use_rag, is_recalled, created_at, processing_status
+                       content, media_ids, role, reply_decision, use_rag, is_recalled,
+                       created_at, processing_status, memory_status
                 FROM chat_history
                 {where_clause}
                 ORDER BY created_at DESC
@@ -81,6 +82,7 @@ class ChatHistoryApi:
                             "role": r["role"],
                             "reply_decision": r["reply_decision"],
                             "processing_status": r["processing_status"],
+                            "memory_status": r["memory_status"],
                             "use_rag": r["use_rag"],
                             "is_recalled": r["is_recalled"],
                             "created_at": r["created_at"],

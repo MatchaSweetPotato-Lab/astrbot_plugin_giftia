@@ -121,14 +121,17 @@ class CommandHandler:
             logger.error("未启用embedding功能")
             yield await event.send(MessageChain([Plain("未启用embedding功能")]))
             return
-        embedding_memories = await self.plugin.ltm.search_memory(
-            bot_name,
-            group_or_user_id,
-            rag_queries,
-            limit=self.plugin.embedding_conf.get(
-                "limit", self.plugin.embedding_conf.get("top_k", 5)
-            ),
-            threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+        embedding_memories = (
+            await self.plugin.passive_memory_manager.search_and_filter_memories(
+                bot_name,
+                group_or_user_id,
+                rag_queries,
+                limit=self.plugin.embedding_conf.get(
+                    "limit", self.plugin.embedding_conf.get("top_k", 5)
+                ),
+                threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                filter_active_users=False,
+            )
         )
         if self.plugin.rerank_conf.get("enabled", False):
             rerank_memories = await self.plugin.ltm.rerank_memories(
@@ -169,11 +172,6 @@ class CommandHandler:
         limit: int = 10,
     ):
         """根据ID获取记忆"""
-        if not self.plugin.embedding_conf.get("enabled", False):
-            logger.error("未启用embedding功能")
-            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
-            return
-
         long_memories = await self.plugin.data_cache.get_memories(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -578,15 +576,13 @@ caption: {media_caption.caption}"""
         custom_lines = custom_lines or "• 暂无常驻状态"
 
         msg = (
-            f"【Bot 状态看板】\n"
-            f"🤖 机器人：{nickname} ({bot_name})\n\n"
-            f"📊 临时状态：\n"
+            f"临时状态：\n"
             f"• 心情：{report['mood']}\n"
             f"• 状态：{report['state']}\n"
             f"• 动作：{report['action']}\n"
             f"• 思考：{report['memory']}\n"
             f"• 能量：{report['energy']}\n\n"
-            f"📌 常驻状态：\n"
+            f"常驻状态：\n"
             f"{custom_lines}"
         )
         yield await event.send(MessageChain([Plain(msg)]))
@@ -622,8 +618,16 @@ caption: {media_caption.caption}"""
             )
             return
 
+        changes = await self.plugin.db.get_relation_changes(
+            bot_name, session_id, user_id, limit=3
+        )
         report = build_user_profile_report(
-            bot_name, nickname, session_id, user_id, record
+            bot_name,
+            nickname,
+            session_id,
+            user_id,
+            record,
+            recent_relation_changes=list(reversed(changes)),
         )
         mode = self.plugin.conf.get("report_config", {}).get("render_mode", "文本响应")
         if mode == "图片响应":
@@ -640,17 +644,31 @@ caption: {media_caption.caption}"""
                     Path(path).unlink(missing_ok=True)
                 return
 
-        profile_lines = "\n".join(
-            f"• {label}：{value}" for label, value in report["profile_fields"].items()
-        )
-        msg = (
-            f"【{report['title']}】\n"
-            f"🤖 机器人：{report['nickname']} ({report['bot_name']})\n"
-            f"👤 用户 ID：{report['user_id']}\n"
-            f"🤝 好感度：{report['relation']}\n"
-            f"🏷️ 关系称谓：{report['relation_title']}\n\n"
-            f"{profile_lines}"
-        )
+        lines = [
+            f"用户 ID：{report['user_id']}",
+        ]
+        if report["relation"] is not None:
+            lines.extend(
+                [
+                    f"好感度：{report['relation']:.1f}",
+                    f"基础分：{report['base_relation']} + 互动分：{report['interaction_score']:.1f}",
+                    f"近期分：{report['recent_score']:.1f} · 长期分：{report['long_term_score']:.1f} · 共 {report['total_count']} 次评价",
+                ]
+            )
+        if report["profile_fields"]:
+            lines.append("")
+            lines.extend(
+                f"• {label}：{value}"
+                for label, value in report["profile_fields"].items()
+            )
+        if report["recent_relation_changes"]:
+            lines.extend(["", "最近互动评价："])
+            for change in report["recent_relation_changes"]:
+                lines.append(
+                    f"• {change['time']} 互动评价 {change['delta']:+d}"
+                    f"\n  {change['reason']}"
+                )
+        msg = "\n".join(lines)
         yield await event.send(MessageChain([Plain(msg)]))
 
     @staticmethod

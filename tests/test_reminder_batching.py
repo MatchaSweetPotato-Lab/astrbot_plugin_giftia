@@ -52,7 +52,7 @@ def runtime(monkeypatch):
                 }
             },
         },
-        passive_memory_manager=SimpleNamespace(mark_silence_summary_armed=AsyncMock()),
+        passive_memory_manager=SimpleNamespace(reset_silence_counter=AsyncMock()),
         context=SimpleNamespace(send_message=AsyncMock(return_value=True)),
     )
     manager = ChatManager(plugin)
@@ -114,7 +114,7 @@ async def test_simultaneous_reminders_share_one_reply_and_keep_each_creator(runt
     assert "请完成以下 2 个任务" in prompt
     assert runtime.calls[0]["task_creator_names"] == {"200": "Alice", "201": "Bob"}
     runtime.manager.action_dispatcher.dispatch_actions.assert_awaited_once()
-    runtime.plugin.passive_memory_manager.mark_silence_summary_armed.assert_awaited_once()
+    runtime.plugin.passive_memory_manager.reset_silence_counter.assert_awaited_once()
     assert runtime.plugin.replying_status["bot:100"] == 0
 
 

@@ -74,10 +74,15 @@ class Database(ProfileStoreMixin):
         )
 
     async def get_messages_by_id_range(
-        self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        start_id: int,
+        end_id: int,
+        limit: int | None = None,
     ) -> list[MessageData]:
         return await self.chat_history_repo.get_messages_by_id_range(
-            bot_name, group_or_user_id, start_id, end_id
+            bot_name, group_or_user_id, start_id, end_id, limit=limit
         )
 
     async def get_user_messages_after_id(

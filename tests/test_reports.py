@@ -37,6 +37,23 @@ def test_default_report_and_text_escape(service):
     assert "Content-Security-Policy" in rendered
 
 
+def test_profile_default_hides_legacy_empty_values_without_requiring_history(service):
+    data = service.get_template("user_profile")["sample_data"]
+    data.pop("recent_relation_changes")
+    data["relation"] = "暂无记录"
+    data["profile_fields"] = {"称呼": "小明", "互动态度": "暂无记录", "头像描述": ""}
+    rendered = service.render_html("user_profile", data)
+    assert "<h2>称呼</h2>" in rendered
+    assert "暂无记录" not in rendered
+    for omitted in (
+        "<h2>互动态度</h2>",
+        "<h2>头像描述</h2>",
+        '<section class="relationship">',
+        '<section class="history">',
+    ):
+        assert omitted not in rendered
+
+
 @pytest.mark.parametrize("memory", [None, "", " \n\t", "<想法> & 灵感\n下一步"])
 def test_status_thought_is_rendered_with_empty_fallback_and_escaping(service, memory):
     status = Status(memory=memory)
@@ -240,4 +257,3 @@ def test_delete_asset(service, tmp_path):
 
     with pytest.raises(ValueError, match="图片名称无效"):
         service.delete_asset("../test.webp")
-

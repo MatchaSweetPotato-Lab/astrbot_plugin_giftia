@@ -323,6 +323,12 @@ class WebUIManager:
             desc="Get user profiles list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/relation_history",
+            view_handler=self.web_api.get_user_relation_history,
+            methods=["GET"],
+            desc="Get paginated user affinity history",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user/filter_options",
             view_handler=self.web_api.get_user_profile_filter_options,
             methods=["GET"],

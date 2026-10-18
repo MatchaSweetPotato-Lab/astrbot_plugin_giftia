@@ -1,9 +1,10 @@
 from datetime import datetime
 
+from .relation_history_store import RelationHistoryStoreMixin
 from .utils import parse_aliases
 
 
-class ProfileStoreMixin:
+class ProfileStoreMixin(RelationHistoryStoreMixin):
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> str | None:
@@ -14,7 +15,17 @@ class ProfileStoreMixin:
         parts = [
             f"{k}：{v}"
             for k, v in record.items()
-            if v and k not in ("aliases", "relation", "title")
+            if v
+            and k
+            in (
+                "call_name",
+                "personality",
+                "interests",
+                "attitude",
+                "agreements",
+                "extra",
+                "avatar_description",
+            )
         ]
         return "\n".join(parts) if parts else None
 
@@ -238,12 +249,8 @@ class ProfileStoreMixin:
                 up.agreements,
                 up.extra,
                 up.avatar_description,
-                COALESCE(up.relation, r.relation) AS relation,
-                CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
+                up.title
             FROM user_profiles up
-            LEFT JOIN relations r ON up.bot_name = r.bot_name
-                AND up.group_or_user_id = r.group_or_user_id
-                AND up.user_id = r.user_id
             WHERE up.user_id = ? AND up.group_or_user_id = ? AND up.bot_name = ?
             LIMIT 1
             """,
@@ -254,6 +261,9 @@ class ProfileStoreMixin:
             return None
 
         record = dict(row)
+        record.update(
+            await self.get_relation_score(bot_name, group_or_user_id, user_id)
+        )
         record["aliases"] = await self.get_user_aliases_text(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -289,8 +299,7 @@ class ProfileStoreMixin:
                 up.agreements,
                 up.extra,
                 up.avatar_description,
-                COALESCE(up.relation, r.relation) AS relation,
-                CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title,
+                up.title,
                 (
                     SELECT ch.nickname
                     FROM chat_history ch
@@ -303,9 +312,6 @@ class ProfileStoreMixin:
                     LIMIT 1
                 ) AS nickname
             FROM user_profiles up
-            LEFT JOIN relations r ON up.bot_name = r.bot_name
-                AND up.group_or_user_id = r.group_or_user_id
-                AND up.user_id = r.user_id
             WHERE up.bot_name = ?
               AND up.group_or_user_id = ?
               AND (
@@ -376,6 +382,11 @@ class ProfileStoreMixin:
 
         results = [dict(row) for row in rows]
         for item in results:
+            item.update(
+                await self.get_relation_score(
+                    bot_name, group_or_user_id, item["user_id"]
+                )
+            )
             item["aliases"] = await self.get_user_aliases_text(
                 bot_name=item["bot_name"],
                 group_or_user_id=item["group_or_user_id"],
@@ -389,7 +400,7 @@ class ProfileStoreMixin:
         bot_name: str,
         group_or_user_id: str,
         user_id: str,
-        relation: int | None = None,
+        base_relation: int | None = None,
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
     ):
@@ -408,8 +419,10 @@ class ProfileStoreMixin:
         for column in profile_columns:
             if column in profile_fields:
                 update_fields.insert(-1, f"{column}=excluded.{column}")
-        if relation is not None:
-            update_fields.insert(-1, "relation=excluded.relation")
+        if base_relation is not None:
+            if type(base_relation) is not int:
+                raise ValueError("Base affinity must be an integer")
+            update_fields.insert(-1, "base_relation=excluded.base_relation")
         if title is not None:
             update_fields.insert(-1, "title=excluded.title")
         update_clause = ",\n                ".join(update_fields)
@@ -427,7 +440,7 @@ class ProfileStoreMixin:
                 agreements,
                 extra,
                 avatar_description,
-                relation,
+                base_relation,
                 title,
                 created_at,
                 updated_at
@@ -448,7 +461,7 @@ class ProfileStoreMixin:
                 profile_fields.get("agreements"),
                 profile_fields.get("extra"),
                 profile_fields.get("avatar_description"),
-                relation,
+                base_relation if base_relation is not None else 0,
                 title,
                 update_time,
                 update_time,
@@ -473,16 +486,12 @@ class ProfileStoreMixin:
     ):
         """删除用户画像"""
         await self.conn.execute(
-            """
-            DELETE FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
-            """,
-            (user_id, group_or_user_id, bot_name),
+            "DELETE FROM relation_changes WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+            (bot_name, group_or_user_id, user_id),
         )
         await self.conn.execute(
             """
-            DELETE FROM relations WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
+            DELETE FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
             """,
             (user_id, group_or_user_id, bot_name),
         )
@@ -498,14 +507,12 @@ class ProfileStoreMixin:
     async def delete_group_user_profiles(self, bot_name: str, group_or_user_id: str):
         """删除整个群的用户画像"""
         await self.conn.execute(
-            """
-            DELETE FROM user_profiles WHERE group_or_user_id = ? AND bot_name = ?
-            """,
-            (group_or_user_id, bot_name),
+            "DELETE FROM relation_changes WHERE bot_name=? AND group_or_user_id=?",
+            (bot_name, group_or_user_id),
         )
         await self.conn.execute(
             """
-            DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?
+            DELETE FROM user_profiles WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (group_or_user_id, bot_name),
         )
@@ -570,120 +577,46 @@ class ProfileStoreMixin:
         )
         await self.conn.commit()
 
-    async def upsert_relation(
-        self, bot_name: str, group_or_user_id: str, user_id: str, relation: int
-    ):
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await self.conn.execute(
-            """
-            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, relation, title, created_at, updated_at)
-            VALUES (
-                ?, ?, ?, ?,
-                (
-                    SELECT title
-                    FROM relations
-                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-                    LIMIT 1
-                ),
-                ?, ?
-            )
-            ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
-                relation=excluded.relation,
-                title=CASE
-                    WHEN user_profiles.title IS NULL THEN excluded.title
-                    ELSE user_profiles.title
-                END,
-                updated_at=excluded.updated_at
-            """,
-            (
-                bot_name,
-                group_or_user_id,
-                user_id,
-                relation,
-                user_id,
-                group_or_user_id,
-                bot_name,
-                update_time,
-                update_time,
-            ),
-        )
-        await self.conn.commit()
-
-    # 更新关系头衔
     async def upsert_relation_title(
         self, bot_name: str, group_or_user_id: str, user_id: str, title: str
     ):
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        await self.conn.execute(
-            """
-            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, relation, title, created_at, updated_at)
-            VALUES (
-                ?, ?, ?,
-                (
-                    SELECT relation
-                    FROM relations
-                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-                    LIMIT 1
-                ),
-                ?, ?, ?
-            )
-            ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
-                relation=CASE
-                    WHEN user_profiles.relation IS NULL THEN excluded.relation
-                    ELSE user_profiles.relation
-                END,
-                title=excluded.title,
-                updated_at=excluded.updated_at
-            """,
-            (
-                bot_name,
-                group_or_user_id,
-                user_id,
-                user_id,
-                group_or_user_id,
-                bot_name,
-                title,
-                update_time,
-                update_time,
-            ),
-        )
-        await self.conn.commit()
+        """Store a title without changing the affinity base.
 
-    # 获取关系数据
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            user_id: Member whose title is changed.
+            title: Complete replacement title.
+        """
+        await self.upsert_user_profile(bot_name, group_or_user_id, user_id, title=title)
+
     async def get_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str
-    ) -> tuple[int, str]:
-        async with self.conn.execute(
-            """
-            SELECT relation, title FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
-            """,
-            (user_id, group_or_user_id, bot_name),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row and (row["relation"] is not None or row["title"] is not None):
-            return row["relation"] if row["relation"] is not None else 0, row[
-                "title"
-            ] or ""
+    ) -> tuple[float, str]:
+        """Read derived affinity and the stored title.
 
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            user_id: Member whose relationship is requested.
+
+        Returns:
+            Final affinity and title, defaulting to fifty and an empty title.
+        """
+        score = await self.get_relation_score(bot_name, group_or_user_id, user_id)
         async with self.conn.execute(
-            """
-            SELECT relation, title FROM relations WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
-            LIMIT 1
-            """,
-            (user_id, group_or_user_id, bot_name),
+            "SELECT title FROM user_profiles WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+            (bot_name, group_or_user_id, user_id),
         ) as cursor:
             row = await cursor.fetchone()
-        if row:
-            return row["relation"], row["title"]
-        return 0, ""
+        return score["relation"], (row["title"] or "") if row else ""
 
     async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
         """删除指定群或私聊的所有好感度和头衔数据"""
         await self.conn.execute(
             """
             UPDATE user_profiles
-            SET relation = NULL, title = NULL, updated_at = ?
+            SET base_relation = 0, title = NULL, attitude_evaluated_change_id = 0, updated_at = ?
             WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (
@@ -693,10 +626,8 @@ class ProfileStoreMixin:
             ),
         )
         await self.conn.execute(
-            """
-            DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?
-            """,
-            (group_or_user_id, bot_name),
+            "DELETE FROM relation_changes WHERE bot_name=? AND group_or_user_id=?",
+            (bot_name, group_or_user_id),
         )
         await self.conn.commit()
 

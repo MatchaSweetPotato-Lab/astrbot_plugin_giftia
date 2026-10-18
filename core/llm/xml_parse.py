@@ -462,15 +462,6 @@ class XmlParse:
                             }
                         )
 
-                elif tag_name == "delete_memory":
-                    memory_id = self._attr_str(child, "id", "")
-                    if memory_id:
-                        result.delete_memories.append(memory_id)
-                    else:
-                        logger.error(
-                            f"Delete memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
-
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
                     text = self._attr_str(child, "arguments", "") or child.get_text(

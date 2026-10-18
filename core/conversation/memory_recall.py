@@ -41,8 +41,24 @@ async def search_memories_with_rerank(
     limit_key: str | None = None,
     default_limit: int = 5,
     log_context: str = "记忆召回",
+    record_hits: bool = True,
 ) -> list[dict]:
-    """Search memories with shared embedding/rerank configuration handling."""
+    """Search memories using the shared embedding and rerank settings.
+
+    Args:
+        plugin: Plugin providing memory storage and model configuration.
+        bot_name: Owning bot configuration.
+        group_or_user_id: Owning conversation.
+        query: Semantic search text.
+        recent_messages: Messages identifying the active participants.
+        limit_key: Optional configuration key overriding the candidate limit.
+        default_limit: Candidate limit when no configured value is available.
+        log_context: Context included in retrieval failure logs.
+        record_hits: Record hits immediately; batch callers may defer until deduplication.
+
+    Returns:
+        Recalled memory records, optionally filtered by the reranker.
+    """
     if not plugin.embedding_conf.get("enabled", False):
         return []
 
@@ -75,7 +91,7 @@ async def search_memories_with_rerank(
                 top_k=conf_int(plugin.rerank_conf, "top_k", search_limit),
                 threshold=conf_float(plugin.rerank_conf, "threshold", 0.45),
             )
-        if memories:
+        if memories and record_hits:
             await plugin.data_cache.record_memory_hits(memories)
         return memories or []
     except Exception as e:

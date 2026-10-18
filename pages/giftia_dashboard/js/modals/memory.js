@@ -8,104 +8,117 @@ function normalizeMemoryImportance(value) {
     return Math.min(10, Math.max(1, importance));
 }
 
+let editingMemory = null;
+
 // 1. Add Memory
 window.openAddMemoryModal = function() {
-    document.getElementById("add-mem-bot").value = "";
-    document.getElementById("add-mem-group").value = "";
-    document.getElementById("add-mem-associated-ids").value = "";
-    document.getElementById("add-mem-importance").value = "5";
-    document.getElementById("add-mem-text").value = "";
-    window.openModal("add-memory-modal");
+    document.getElementById('add-mem-bot').value = document.getElementById('memory-bot-name').value;
+    document.getElementById('add-mem-group').value = document.getElementById('memory-group-id').value;
+    document.getElementById('add-mem-associated-ids').value = document.getElementById('memory-associated-user-id').value.trim();
+    for (const field of ['topic', 'text']) {
+        document.getElementById(`add-mem-${field}`).value = '';
+    }
+    document.getElementById('add-mem-importance').value = '5';
+    window.openModal('add-memory-modal');
 };
 
 window.submitAddMemory = async function() {
-    const botName = document.getElementById("add-mem-bot").value.trim();
-    const groupId = document.getElementById("add-mem-group").value.trim();
-    const associatedIds = document.getElementById("add-mem-associated-ids").value.trim();
-    const importance = normalizeMemoryImportance(document.getElementById("add-mem-importance").value);
-    const text = document.getElementById("add-mem-text").value.trim();
-
-    if (!botName || !groupId || !text) {
-        window.showToast("请填写完整参数！");
+    const body = {
+        bot_name: document.getElementById('add-mem-bot').value.trim(),
+        group_or_user_id: document.getElementById('add-mem-group').value.trim(),
+        topic: document.getElementById('add-mem-topic').value.trim(),
+        associated_user_ids: document.getElementById('add-mem-associated-ids').value.trim(),
+        importance: normalizeMemoryImportance(document.getElementById('add-mem-importance').value),
+        text: document.getElementById('add-mem-text').value.trim()
+    };
+    if (!body.bot_name || !body.group_or_user_id || !body.associated_user_ids || !body.topic || !body.text) {
+        window.showToast('请填写 Bot、会话、关联群友、主题和记忆文本');
         return;
     }
-
+    const button = document.getElementById('add-mem-save');
+    button.disabled = true;
     try {
-        const res = await window.apiPost("/memories/add", {
-            bot_name: botName,
-            group_or_user_id: groupId,
-            text: text,
-            user_id: "admin",
-            associated_user_ids: associatedIds,
-            importance: importance
-        });
-        if (res.status === "success") {
-            window.showToast("保存记忆成功！");
-            window.closeModal("add-memory-modal");
-            window.GiftiaApp.loadMemories();
-        } else {
-            window.showToast(`保存失败: ${res.message}`);
+        const res = await window.apiPost('/memories/add', body);
+        if (res.status !== 'success') throw new Error(res.message || '保存失败');
+        window.showToast('保存成功，已定位到人工录入的记忆');
+        window.closeModal('add-memory-modal');
+        for (const [field, value] of [['bot-name', body.bot_name], ['group-id', body.group_or_user_id]]) {
+            const select = document.getElementById(`memory-${field}`);
+            if (!Array.from(select.options).some(option => option.value === value)) select.append(new Option(value, value));
+            select.value = value;
         }
+        document.getElementById('memory-search').value = '';
+        document.getElementById('memory-associated-user-id').value = '';
+        window.GiftiaApp.resetPagination('memories');
+        await window.GiftiaApp.refreshScopedFilters('memories', true);
+        await window.GiftiaApp.loadMemories();
     } catch (e) {
-        window.showToast(`发生错误: ${e.message}`);
+        window.showToast(`保存失败: ${e.message}`);
+    } finally {
+        button.disabled = false;
     }
 };
 
 // 2. Edit Memory
-window.openEditMemoryModal = function(id, bot, group, textEncoded, associatedIds, importance) {
-    const text = decodeURIComponent(textEncoded);
-    document.getElementById("edit-mem-id").value = id;
-    document.getElementById("edit-mem-bot").value = bot;
-    document.getElementById("edit-mem-group").value = group;
-    document.getElementById("edit-mem-associated-ids").value = associatedIds || "";
-    document.getElementById("edit-mem-importance").value = normalizeMemoryImportance(importance);
-    document.getElementById("edit-mem-text").value = text;
-    window.openModal("edit-memory-modal");
+window.openEditMemoryModal = function(item) {
+    editingMemory = item;
+    const meta = item.metadata || {};
+    document.getElementById('edit-mem-id').value = item.memory_id;
+    document.getElementById('edit-mem-revision').value = item.revision;
+    document.getElementById('edit-mem-bot').value = item.bot_name;
+    document.getElementById('edit-mem-group').value = item.group_or_user_id;
+    document.getElementById('edit-mem-identity').textContent = [
+        meta.manual_entry ? '人工录入' : '',
+        meta.topic || ''
+    ].filter(Boolean).join(' · ');
+    document.getElementById('edit-mem-associated-ids').value = Array.isArray(meta.associated_user_ids)
+        ? meta.associated_user_ids.join(',') : (meta.user_id || '');
+    document.getElementById('edit-mem-importance').value = normalizeMemoryImportance(item.importance);
+    document.getElementById('edit-mem-text').value = item.text;
+    window.openModal('edit-memory-modal');
 };
 
 window.submitEditMemory = async function() {
-    const id = document.getElementById("edit-mem-id").value;
-    const bot = document.getElementById("edit-mem-bot").value;
-    const group = document.getElementById("edit-mem-group").value;
-    const associatedIds = document.getElementById("edit-mem-associated-ids").value.trim();
-    const importance = normalizeMemoryImportance(document.getElementById("edit-mem-importance").value);
-    const text = document.getElementById("edit-mem-text").value.trim();
-
-    if (!text) {
-        window.showToast("记忆文本不能为空！");
+    if (!editingMemory) return;
+    const body = {
+        memory_id: document.getElementById('edit-mem-id').value,
+        bot_name: document.getElementById('edit-mem-bot').value,
+        group_or_user_id: document.getElementById('edit-mem-group').value,
+        revision: Number(document.getElementById('edit-mem-revision').value),
+        associated_user_ids: document.getElementById('edit-mem-associated-ids').value.trim(),
+        importance: normalizeMemoryImportance(document.getElementById('edit-mem-importance').value),
+        text: document.getElementById('edit-mem-text').value.trim()
+    };
+    if (!body.text) {
+        window.showToast('记忆文本不能为空');
         return;
     }
-
+    const button = document.getElementById('edit-mem-save');
+    button.disabled = true;
     try {
-        const res = await window.apiPost("/memories/update", {
-            memory_id: id,
-            bot_name: bot,
-            group_or_user_id: group,
-            text: text,
-            user_id: "admin",
-            associated_user_ids: associatedIds,
-            importance: importance
-        });
-        if (res.status === "success") {
-            window.showToast("保存成功！");
-            window.closeModal("edit-memory-modal");
-            window.GiftiaApp.loadMemories();
-        } else {
-            window.showToast(`更新失败: ${res.message}`);
-        }
+        const res = await window.apiPost('/memories/update', body);
+        if (res.status !== 'success') throw new Error(res.message || '更新失败');
+        window.showToast('保存成功');
+        window.closeModal('edit-memory-modal');
+        editingMemory = null;
+        await window.GiftiaApp.refreshScopedFilters('memories', true);
+        await window.GiftiaApp.loadMemories();
     } catch (e) {
-        window.showToast(`发生错误: ${e.message}`);
+        window.showToast(`更新失败: ${e.message}`);
+    } finally {
+        button.disabled = false;
     }
 };
 
 // 3. Delete Memory
-window.deleteMemory = function(id) {
+window.deleteMemory = function(id, bot, group) {
     window.showConfirm("确认删除长期记忆", "确定要删除这条长期记忆吗？此操作无法撤销。", async () => {
         try {
-            const res = await window.apiPost("/memories/delete", { memory_id: id });
+            const res = await window.apiPost("/memories/delete", { memory_id: id, bot_name: bot, group_or_user_id: group });
             if (res.status === "success") {
                 window.showToast("记忆删除成功");
-                window.GiftiaApp.loadMemories();
+                await window.GiftiaApp.refreshScopedFilters('memories', true);
+                await window.GiftiaApp.loadMemories();
             } else {
                 window.showToast(`删除失败: ${res.message}`);
             }
@@ -223,6 +236,7 @@ function renderMemoryCleanCandidates(items, total, truncated) {
                 <div>
                     <div class="memory-clean-candidate-text">${window.escapeHtml(item.text)}</div>
                     <div class="memory-clean-candidate-meta">
+                        ${item.metadata?.manual_entry ? '<span>人工录入</span>' : ''}
                         <span>会话 ${window.escapeHtml(item.group_or_user_id || "-")}</span>
                         <span>重要度 ${item.importance}</span>
                         <span>命中 ${item.hit_count || 0} 次</span>

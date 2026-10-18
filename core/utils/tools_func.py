@@ -313,7 +313,14 @@ class ToolsFunc:
         return {"status": "success", "message": msg, "deleted_count": deleted_count}
 
     async def auto_clean_chat_history(self, config: dict | None = None) -> dict:
-        """自动清理聊天记录（方案 A 并集删除，保护保底条数）。"""
+        """Clean processed history while preserving pending sources and recent rows.
+
+        Args:
+            config: Optional cleanup settings; otherwise read saved settings.
+
+        Returns:
+            Cleanup outcome and deleted message count.
+        """
         if config is None:
             raw_cfg = await self.db.get_kv_data("auto_clean_chat_history_config")
             config = self.normalize_auto_clean_chat_history_config(raw_cfg)
