@@ -173,7 +173,15 @@ def build_decision_prompt(
     # 3. 动态触发区：当前发言人画像、机器人状态（常驻状态与即时心境）、当前消息与当前时间戳
     user_profile_block = build_user_profile_block(
         user_id=user_id,
-        user_profile=user_profile,
+        user_profile=(
+            {
+                key: value
+                for key, value in user_profile.items()
+                if key != "avatar_description"
+            }
+            if isinstance(user_profile, dict)
+            else user_profile
+        ),
         user_relation=user_relation,
         nickname=curr_nickname,
     )
