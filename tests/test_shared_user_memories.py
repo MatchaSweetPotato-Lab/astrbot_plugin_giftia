@@ -11,11 +11,10 @@ import pytest_asyncio
 
 from core.conversation.memory_recall import search_memories_with_rerank
 from core.conversation.reply_pipeline import ReplyPipeline
-from core.conversation.tool_executor import ToolExecutor
 from core.database.data_cache import DataCache
 from core.database.database import Database
+from core.llm.native_tools import SearchMemoryTool
 from core.llm.prompt import build_reply_prompt
-from core.llm.xml_parse import XmlParse
 from core.memory.memory import LTM, get_memory_schema
 from core.memory.passive_memory import PassiveMemoryManager
 from core.utils.schemas import MessageData
@@ -274,21 +273,26 @@ async def test_sources_and_evidence_survive_recall_cache_without_entering_fact_t
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target,expected", [("alice", "alice"), ("", "bob")])
-async def test_xml_search_targets_user_without_reinterpreting_it_as_a_group(
+async def test_native_search_targets_user_without_reinterpreting_it_as_a_group(
     runtime, target, expected
 ):
     rt = runtime
     await rt.seed("alice", ["alice"])
     await rt.seed("bob", ["bob"])
-    result = await XmlParse(rt.cache, None).decode_llm_xml(
-        f'<search_memory user_id="{target}">topic</search_memory>', "current"
+    rt.plugin.adapter_id_map = {"adapter": "bot"}
+    rt.plugin.bot_map = {"bot": {}}
+    event = SimpleNamespace(
+        platform_meta=SimpleNamespace(id="adapter"),
+        get_group_id=lambda: "current",
+        get_sender_id=lambda: "bob",
+        get_sender_name=lambda: "Bob",
     )
-    assert result.search_memories == [(target, "topic")]
-    relevant, other = [], []
-    await ToolExecutor(rt.plugin).execute_queries(
-        "bot", "current", result, [MessageData(user_id="bob")], relevant, other
+    context = SimpleNamespace(context=SimpleNamespace(event=event, extra={}))
+    result = json.loads(
+        await SearchMemoryTool(plugin=rt.plugin).call(context, "topic", target)
     )
-    assert [item["memory_id"] for item in relevant] == [expected]
+    assert result["count"] == 1
+    assert f"fact {expected} &lt;&amp;&gt;" in result["memory_context"]
 
 
 @pytest.mark.asyncio

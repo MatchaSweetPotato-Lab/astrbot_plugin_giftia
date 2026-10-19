@@ -99,7 +99,7 @@ function renderBotsGrid() {
                         TTS 语音: ${ttsEnabled ? escapeHtml(bot.tts_config?.provider_type || '已开启') : '未开启'}
                     </span>
                     <span class="badge badge-purple">
-                        交互标签: ${activeFeaturesCount} 项
+                        交互功能: ${activeFeaturesCount} 项
                     </span>
                 </div>
 
@@ -337,7 +337,7 @@ function renderSingleProviderSelect(selectId, providers, selectedId) {
 }
 
 /**
- * Render Interactive XML Features checkboxes grid.
+ * Render interactive feature checkboxes.
  */
 function renderInteractiveFeaturesCheckboxes(selectedFeatures) {
     const container = document.getElementById('bot-form-interactive-grid');

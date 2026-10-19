@@ -17,6 +17,7 @@ from ..utils.schemas import (
     MediaCaption,
     MessageData,
 )
+from .native_tools import NATIVE_TOOL_CONFIG_KEYS
 from .prompt import (
     USER_PROFILE_FIELDS,
     build_user_relation,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from ...main import Giftia
 
 TOOLS_NAMESPACE = [
+    *NATIVE_TOOL_CONFIG_KEYS,
     "search_chat_history",
     "get_message_context",
     "search_user_profile",

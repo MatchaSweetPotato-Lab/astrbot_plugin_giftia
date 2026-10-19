@@ -4,16 +4,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
+
 from core.conversation.action_dispatcher import ActionDispatcher
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.llm.preset_prompts import build_xml_instructions
 from core.llm.xml_parse import XmlParse
 from core.utils.scheduler import Scheduler
 from core.utils.schemas import MessageData, Status
-
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-    AiocqhttpMessageEvent,
-)
 
 
 @pytest.fixture
@@ -116,31 +116,6 @@ def runtime():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("platform", ["aiocqhttp", "qq_official_webhook"])
-@pytest.mark.parametrize("private", [False, True])
-async def test_scheduled_creator_is_explicit_and_does_not_change_routing(
-    runtime, platform, private
-):
-    runtime.event.get_platform_name.return_value = platform
-    if private:
-        runtime.event.get_group_id.return_value = ""
-        runtime.event.unified_msg_origin = "adapter:FriendMessage:group"
-    await runtime.run(
-        '<schedule_task user_id="alice" creator_nickname="Wrong" '
-        'group_id="elsewhere" time="0 9 * * *">Remind Bob</schedule_task>'
-    )
-    runtime.plugin.task_manager.add_job.assert_called_once()
-    job = runtime.plugin.task_manager.add_job.call_args.kwargs["kwargs"]
-    assert job["user_id"] == "alice"
-    assert job["user_name"] == "Alice"
-    assert job["remind_message"] == "Remind Bob"
-    assert job["group_id"] == ("" if private else "group")
-    assert job["group_or_user_id"] == "group"
-    assert job["unified_msg_origin"] == runtime.event.unified_msg_origin
-    assert job["adapter_id"] == "adapter"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("tag", ["task_board", "short_task"])
 @pytest.mark.parametrize("platform", ["aiocqhttp", "generic"])
 async def test_short_task_creator_comes_from_each_request(runtime, tag, platform):
@@ -156,10 +131,9 @@ async def test_short_task_creator_comes_from_each_request(runtime, tag, platform
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool", ["schedule_task", "task_board"])
 @pytest.mark.parametrize("creator", ["", "unknown", "recalled", "operation", "late"])
 async def test_invalid_creator_returns_feedback_then_allows_correction(
-    runtime, tool, creator
+    runtime, creator
 ):
     runtime.history.extend(
         [
@@ -169,18 +143,14 @@ async def test_invalid_creator_returns_feedback_then_allows_correction(
     )
     frozen = list(runtime.history)
     runtime.history.append(MessageData(user_id="late", nickname="Late"))
-    attributes = 'time="0 9 * * *"' if tool == "schedule_task" else 'action="create"'
     creator_attr = f'user_id="{creator}"' if creator else ""
     chunks = await runtime.run(
-        f"<{tool} {attributes} {creator_attr}>For Bob</{tool}>",
-        f'<{tool} {attributes} user_id="alice">For Bob</{tool}>',
+        f'<task_board action="create" {creator_attr}>For Bob</task_board>',
+        '<task_board action="create" user_id="alice">For Bob</task_board>',
         recent_messages=frozen,
+        reply_messages=frozen[:2],
     )
-    calls = (
-        runtime.plugin.task_manager.add_job.call_args_list
-        if tool == "schedule_task"
-        else runtime.plugin.task_board.create_task.await_args_list
-    )
+    calls = runtime.plugin.task_board.create_task.await_args_list
     assert len(calls) == 1
     assert len(chunks) == 2
     error = chunks[0].xml_tool_results[0]["results"]
@@ -192,6 +162,15 @@ async def test_invalid_creator_returns_feedback_then_allows_correction(
         ]
     )
     assert "late" not in chunks[1].task_creator_names
+    first, second = runtime.plugin.call_llm.call_llm_reply.await_args_list
+    first_context, second_context = (
+        first.kwargs["tool_context"],
+        second.kwargs["tool_context"],
+    )
+    assert first_context is second_context and first_context["request_id"]
+    assert first_context["bot_name"] == "bot" and first_context["session_id"] == "group"
+    assert first_context["user_ids"] == ["alice", "bob"]
+    assert not {"late", "recalled", "operation"} & first_context["creator_names"].keys()
     assert (
         runtime.plugin.data_cache.add_message.await_args_list[0].args[2].role
         == "operation_log"
@@ -199,53 +178,35 @@ async def test_invalid_creator_returns_feedback_then_allows_correction(
 
 
 @pytest.mark.asyncio
-async def test_correction_does_not_replay_successful_task(runtime):
+async def test_correction_does_not_replay_successful_task_board_action(runtime):
     await runtime.run(
-        '<schedule_task user_id="alice" time="0 9 * * *">First</schedule_task>'
+        '<task_board action="create" user_id="alice">First</task_board>'
         '<task_board action="create">Second</task_board>',
         '<task_board action="create" user_id="bob">Second</task_board>',
     )
-    runtime.plugin.task_manager.add_job.assert_called_once()
-    runtime.plugin.task_board.create_task.assert_awaited_once()
-    assert (
-        runtime.plugin.task_board.create_task.await_args.kwargs["creator_user_id"]
-        == "bob"
-    )
+    assert [
+        call.kwargs["creator_user_id"]
+        for call in runtime.plugin.task_board.create_task.await_args_list
+    ] == ["alice", "bob"]
 
 
 @pytest.mark.asyncio
 async def test_reminder_creator_survives_history_expiry(runtime):
     runtime.history.clear()
     await runtime.run(
-        '<schedule_task user_id="alice" time="0 9 * * *">Follow-up</schedule_task>',
+        '<task_board action="create" user_id="alice">Follow-up</task_board>',
         remind_message="Alice(alice): Follow-up",
         task_creator_names={"alice": "Alice"},
     )
-    job = runtime.plugin.task_manager.add_job.call_args.kwargs["kwargs"]
-    assert (job["user_id"], job["user_name"]) == ("alice", "Alice")
-
-
-@pytest.mark.asyncio
-async def test_queried_task_preserves_original_creator_when_recreated(runtime):
-    runtime.plugin.task_manager.get_prefix_jobs.return_value = ["创建者：Carol(carol)"]
-    runtime.plugin.task_manager.get_session_jobs_data.return_value = [
-        {"user_id": "carol", "user_name": "Carol"}
-    ]
-    await runtime.run(
-        "<all_task/>",
-        '<schedule_task user_id="carol" time="0 9 * * *">Recreated</schedule_task>',
-    )
-    job = runtime.plugin.task_manager.add_job.call_args.kwargs["kwargs"]
-    assert (job["user_id"], job["user_name"]) == ("carol", "Carol")
-    prompt = runtime.plugin.call_llm.call_llm_reply.await_args_list[1].kwargs[
-        "user_prompt"
-    ]
-    assert "Carol(carol)" in prompt
+    job = runtime.plugin.task_board.create_task.await_args.kwargs
+    assert (job["creator_user_id"], job["creator_nickname"]) == ("alice", "Alice")
 
 
 def test_task_instructions_describe_creator_parameter():
     prompt = build_xml_instructions(enabled_features=None)
-    assert '<schedule_task user_id="创建者ID"' in prompt
+    assert "<schedule_task" not in prompt
+    assert "<all_task" not in prompt
+    assert "<delete_task" not in prompt
     assert '<task_board action="create" user_id="创建者ID"' in prompt
     assert "user_id 为任务创建者的用户 ID，必填。" in prompt
 

@@ -188,19 +188,19 @@
     "tools_config": {
         "description": "函数调用工具",
         "type": "object",
-        "hint": "对于XML格式的工具，这里不再写开关，直接在系统提示词中加入/删除XML代码即可。",
+        "hint": "所有已注册函数工具统一遵循调用方式配置；记忆查询和定时任务管理的可用范围仅由下方工具开关及人格工具列表控制。",
         "items": {
             "use_source_tools": {
                 "description": "启用原生函数调用工具",
                 "type": "bool",
                 "default": true,
-                "hint": "启用原生的函数调用工具，需提供商支持。无论是否启用此项，XML工具都可以被调用。"
+                "hint": "启用所有可用函数工具的原生调用，需提供商支持。开启强制 XML 时统一改用 XML 规范；两项均关闭时不注入函数工具，内置 XML 互动动作仍可使用。"
             },
             "force_xml_tools": {
                 "description": "强制使用 XML 标签调用工具",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，将从原生工具列表中获取工具，并以 XML 格式写入系统提示词，而不会将原生 tools 结构传给 LLM（对模型遵循指令能力要求较高，建议在能力较强的模型上使用）。"
+                "hint": "将全部可用函数工具以 XML 格式写入系统提示词，统一通过 tool_call 标签调用，不向模型传递原生 tools。记忆查询和定时任务管理也遵循此规范。"
             },
             "max_loop": {
                 "description": "工具调用轮数上限",
@@ -219,6 +219,18 @@
                 "type": "bool",
                 "default": true,
                 "hint": "用于AI检索聊天记录"
+            },
+            "search_memory_enabled": {
+                "description": "启用记忆查询工具",
+                "type": "bool",
+                "default": true,
+                "hint": "控制 search_memory 工具，原生和 XML 调用均生效。关闭不影响自动记忆召回。"
+            },
+            "scheduled_tasks_enabled": {
+                "description": "启用定时任务工具",
+                "type": "bool",
+                "default": true,
+                "hint": "统一控制定时任务的创建、查看和删除工具，原生和 XML 调用均生效。关闭不取消已有提醒。"
             },
             "get_message_context_enabled": {
                 "description": "启用上下文搜索工具",

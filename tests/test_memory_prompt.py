@@ -6,18 +6,21 @@ from unittest.mock import AsyncMock, Mock
 from xml.etree.ElementTree import fromstring
 
 import pytest
-from core.bot.bot_config_manager import BotConfigManager
+
+from core.bot.bot_config_manager import (
+    DEFAULT_INTERACTIVE_FEATURES,
+    INTERACTIVE_FEATURES_METADATA,
+    BotConfigManager,
+)
 from core.conversation.decision_engine import DecisionEngine
-from core.conversation.tool_executor import ToolExecutor
+from core.llm.native_tools import SearchMemoryTool
 from core.llm.preset_prompts import build_xml_instructions
 from core.llm.prompt import build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     Decision,
-    FeatureKey,
     MessageData,
     SessionRecallMemory,
-    XmlLlmResult,
 )
 
 
@@ -119,21 +122,27 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
         {"id": "m2", "text": "相同正文", "metadata": {"topic": "观星"}},
     ]
     search = AsyncMock(return_value=records)
-    monkeypatch.setattr(
-        "core.conversation.tool_executor.search_memories_with_rerank", search
+    monkeypatch.setattr("core.llm.native_tools.search_memories_with_rerank", search)
+    plugin = SimpleNamespace(
+        embedding_conf={"enabled": True},
+        adapter_id_map={"adapter": "bot"},
+        bot_map={"bot": {}},
     )
-    executor = ToolExecutor(SimpleNamespace(embedding_conf={"enabled": True}))
-    relevant = [records[0]]
-    other = []
-    result = XmlLlmResult(search_memories=[("", "过往约定")])
-    await executor.execute_queries("bot", "group", result, [], relevant, other)
-    assert relevant == records
-    assert relevant[1]["metadata"]["topic"] == "观星"
+    event = SimpleNamespace(
+        platform_meta=SimpleNamespace(id="adapter"),
+        get_group_id=lambda: "group",
+        get_sender_id=lambda: "A",
+        get_sender_name=lambda: "Alice",
+    )
+    context = SimpleNamespace(context=SimpleNamespace(event=event, extra={}))
+    tool = SearchMemoryTool(plugin=plugin)
+    result = json.loads(await tool.call(context, "过往约定"))
+    assert result["count"] == 2
+    assert result["memory_context"].count("相同正文") == 2
+    assert "m1" not in result["memory_context"]
     search.return_value = []
-    relevant.clear()
-    await executor.execute_queries("bot", "group", result, [], relevant, other)
-    assert relevant == []
-    assert "没有找到相关记忆" in other[0]
+    result = json.loads(await tool.call(context, "过往约定"))
+    assert result["count"] == 0 and result["memory_context"] == ""
 
 
 @pytest.mark.asyncio
@@ -194,7 +203,7 @@ async def test_decision_passes_records_without_aliasing_pending_cache(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_retired_delete_tag_cannot_create_an_action_and_search_remains_available():
+async def test_retired_memory_tags_cannot_create_actions():
     cache = SimpleNamespace(delete_memory=AsyncMock())
     result = await XmlParse(cache, None).decode_llm_xml(
         '<delete_memory id="m1"/><search_memory>过往约定</search_memory><message>我想起来了</message>',
@@ -202,19 +211,29 @@ async def test_retired_delete_tag_cannot_create_an_action_and_search_remains_ava
     )
     assert result is not None
     assert not hasattr(result, "delete_memories")
-    assert result.search_memories == [("", "过往约定")]
+    assert not hasattr(result, "search_memories")
     cache.delete_memory.assert_not_awaited()
-    instructions = build_xml_instructions([FeatureKey.MEMORY_QUERY])
-    assert "<search_memory>" in instructions and "delete_memory" not in instructions
+    instructions = build_xml_instructions(["memory_query", "schedule_task"])
+    assert "<search_memory>" not in instructions and "delete_memory" not in instructions
 
 
-def test_memory_query_switch_inherits_existing_setting():
+def test_function_tools_are_removed_from_bot_features_and_legacy_settings():
     manager = BotConfigManager.__new__(BotConfigManager)
     manager.plugin = Mock()
+    retired = {"memory_query", "memory_query_delete", "schedule_task"}
+    assert not retired.intersection(DEFAULT_INTERACTIVE_FEATURES)
+    assert not retired.intersection(
+        item["key"] for item in INTERACTIVE_FEATURES_METADATA
+    )
     for old, expected in [
+        (None, DEFAULT_INTERACTIVE_FEATURES),
         ([], []),
-        (["memory_query_delete"], ["memory_query"]),
-        (["memory_query_delete", "memory_query"], ["memory_query"]),
+        (["memory_query_delete"], []),
+        (["memory_query_delete", "memory_query", "schedule_task", "poke"], ["poke"]),
+        (
+            ["memory_query(记忆查询)", "schedule_task(定时任务)", "task_board"],
+            ["task_board"],
+        ),
     ]:
         assert (
             manager.normalize_bot_config({"enabled_interactive_features": old})[

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import mcp
@@ -8,8 +9,8 @@ from astrbot.api.message_components import Image
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
+from ..llm.native_tools import NATIVE_CONTEXT_KEY
 from ..utils.schemas import MessageData, XmlLlmResult
-from .memory_recall import search_memories_with_rerank
 
 
 class ToolExecutor:
@@ -19,79 +20,18 @@ class ToolExecutor:
     async def execute_queries(
         self,
         bot_name: str,
-        group_or_user_id: str,
         llm_result: XmlLlmResult,
-        recent_messages: list,
-        relevant_memories: list[dict],
         other_data: list[str],
     ) -> None:
-        """在有序输出派发完成后填充查询上下文。
+        """Populate history query context after ordered output dispatch.
 
         Args:
-            bot_name: 机器人配置名称。
-            group_or_user_id: 当前会话 ID。
-            llm_result: 解析后的查询请求结果。
-            recent_messages: 用于记忆召回的近期消息列表。
-            relevant_memories: 就地追加的相关记忆结果。
-            other_data: 就地追加的查询数据结果。
+            bot_name: Bot configuration name.
+            llm_result: Parsed history and message-context queries.
+            other_data: Query results appended in place.
         """
 
-        # 1. 查询定时任务
-        if llm_result.all_tasks:
-            for group_id in llm_result.all_tasks:
-                if not group_id:
-                    group_id = group_or_user_id
-                task_id_prefix = bot_name + "_" + group_id + "_"
-                tasks = self.plugin.task_manager.get_prefix_jobs(task_id_prefix)
-                if not tasks:
-                    other_data.append("# 查询到的定时任务\n这个群没有设置定时任务")
-                else:
-                    other_data.append("# 查询到的定时任务\n" + "\n".join(tasks))
-                if str(group_id) == str(group_or_user_id):
-                    # Preserve verified ownership when replacing a queried task.
-                    for task in self.plugin.task_manager.get_session_jobs_data(
-                        bot_name, group_or_user_id
-                    ):
-                        creator_id = str(task.get("user_id") or "")
-                        if creator_id:
-                            llm_result.task_creator_names.setdefault(
-                                creator_id, task.get("user_name") or creator_id
-                            )
-
-        # 2. 处理 RAG 检索
-        if llm_result.search_memories and self.plugin.embedding_conf.get(
-            "enabled", False
-        ):
-            found_memory = False
-            seen_memory_ids = {
-                memory.get("memory_id") or memory.get("id")
-                for memory in relevant_memories
-            }
-            for target_user_id, query in llm_result.search_memories:
-                memory_results = await search_memories_with_rerank(
-                    self.plugin,
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    query=query,
-                    recent_messages=recent_messages,
-                    log_context="工具记忆检索",
-                    user_ids=[target_user_id] if target_user_id else None,
-                )
-
-                if memory_results:
-                    found_memory = True
-
-                for memory in memory_results:
-                    memory_id = memory.get("memory_id") or memory.get("id")
-                    if memory_id not in seen_memory_ids:
-                        relevant_memories.append(memory)
-                        seen_memory_ids.add(memory_id)
-            if not found_memory and len(relevant_memories) == 0:
-                other_data.append(
-                    "<memory_search_result>没有找到相关记忆</memory_search_result>"
-                )
-
-        # 3. 搜索聊天历史记录
+        # Search chat history.
         if llm_result.search_histories:
             for item in llm_result.search_histories:
                 limit = min(item.get("limit", 30), 50)
@@ -114,7 +54,7 @@ class ToolExecutor:
                     ]
                     other_data.append("# 查询到的历史记录\n" + "\n".join(lines))
 
-        # 4. 获取消息上下文
+        # Read the context surrounding a message.
         if llm_result.get_message_contexts:
             for item in llm_result.get_message_contexts:
                 limit = min(item.get("limit", 30), 50)
@@ -151,6 +91,7 @@ class ToolExecutor:
         group_or_user_id: str,
         tool_name: str,
         tool_args: dict,
+        tool_context: dict | None = None,
     ) -> dict:
         """执行单个 XML 工具，并在派发下一个输出前直接发送工具生成的图片。
 
@@ -161,6 +102,7 @@ class ToolExecutor:
             group_or_user_id: 当前会话 ID。
             tool_name: 请求调用的工具名称（可带命名空间）。
             tool_args: 解析后的工具调用参数。
+            tool_context: Trusted run scope shared across tool calls and continuations.
 
         Returns:
             包含执行状态和文本输出的工具执行结果字典，供下一轮 LLM 循环消费。
@@ -177,7 +119,17 @@ class ToolExecutor:
                 result.append("工具不存在")
             else:
                 run_context = AgentContextWrapper(
-                    context=AstrAgentContext(context=self.plugin.context, event=event),
+                    context=AstrAgentContext(
+                        context=self.plugin.context,
+                        event=event,
+                        extra={
+                            NATIVE_CONTEXT_KEY: json.dumps(
+                                tool_context, ensure_ascii=False
+                            )
+                        }
+                        if tool_context is not None
+                        else {},
+                    ),
                     tool_call_timeout=self.plugin.tools_config.get("timeout", 120),
                 )
                 async for tool_result in FunctionToolExecutor.execute(
@@ -194,6 +146,12 @@ class ToolExecutor:
                                     MessageChain([Image.fromBase64(content.data)])
                                 )
                                 result.append("图片已直接发送给用户")
+                if tool_context is not None:
+                    tool_context.update(
+                        json.loads(
+                            run_context.context.extra.get(NATIVE_CONTEXT_KEY, "{}")
+                        )
+                    )
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
             result.append(f"工具执行失败: {e}")

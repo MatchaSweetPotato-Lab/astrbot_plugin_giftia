@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from xml.etree.ElementTree import fromstring
 
 import pytest
+
 from core.conversation.media_captioner import MediaCaptioner
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
@@ -583,29 +584,27 @@ async def test_current_and_cached_automatic_memories_share_one_prompt_budget(
 
 
 @pytest.mark.asyncio
-async def test_zero_injection_limit_disables_automatic_work_but_preserves_explicit_search(
+async def test_zero_injection_limit_disables_automatic_work_but_recognizes_native_tools(
     runtime,
 ):
     runtime.cache.merge_session_recalled_memories("bot", "group", [memory("cached")])
     runtime.plugin.embedding_conf["inject_limit"] = 0
-    runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("", "explicit query")]),
-        XmlLlmResult(),
-    ]
-    runtime.search.return_value = [memory("tool-result")]
+    runtime.plugin.call_llm.call_llm_reply.return_value = XmlLlmResult(
+        native_tools_called=["search_memory"]
+    )
     await runtime.run(
         reply_messages=[MessageData(user_id="alice", content="automatic query")],
         relevant_memories=[memory("decision-result")],
     )
-    runtime.search.assert_awaited_once()
-    assert runtime.search.call_args.kwargs["query"] == "explicit query"
+    runtime.search.assert_not_awaited()
+    runtime.plugin.db.update_message_reply_decision.assert_not_awaited()
     prompts = [
         call.kwargs["user_prompt"]
         for call in runtime.plugin.call_llm.call_llm_reply.await_args_list
     ]
     assert all("<session_recalled_memories>" not in prompt for prompt in prompts)
     assert all("decision-result" in prompt for prompt in prompts)
-    assert "tool-result" in prompts[1]
+    assert len(prompts) == 1
     runtime.cache.get_memories.assert_not_awaited()
 
 
@@ -616,10 +615,10 @@ async def test_recall_survives_tool_turns_and_retired_mode_switch_is_ignored(run
         MediaCaption(hash_val="cat", caption="smirking cat")
     ]
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("", "explicit query")]),
+        XmlLlmResult(tools_to_call=[("other_tool", {})]),
         XmlLlmResult(),
     ]
-    runtime.search.side_effect = [[memory("automatic")], [memory("explicit")]]
+    runtime.search.return_value = [memory("automatic")]
     messages = [
         MessageData(message_id="a1", user_id="alice", content="[图片:cat]"),
         MessageData(message_id="b1", user_id="bob", content="[图片:missing]"),
@@ -628,14 +627,13 @@ async def test_recall_survives_tool_turns_and_retired_mode_switch_is_ignored(run
     pending = []
     await runtime.run(reply_messages=messages, pending_recall_memories=pending)
     calls = runtime.search.await_args_list
-    assert len(calls) == 2 and "smirking cat" in calls[0].kwargs["query"]
-    assert calls[1].kwargs["query"] == "explicit query"
+    assert len(calls) == 1 and "smirking cat" in calls[0].kwargs["query"]
     prompts = [
         call.kwargs["user_prompt"]
         for call in runtime.plugin.call_llm.call_llm_reply.await_args_list
     ]
     assert all("automatic" in prompt for prompt in prompts)
-    assert "explicit" in prompts[1]
+    assert len(prompts) == 2
     for prompt in prompts:
         assert (
             prompt.index('message_id="a1"')

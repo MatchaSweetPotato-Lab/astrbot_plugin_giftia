@@ -189,14 +189,6 @@ def build_xml_instructions(
                 '  * **踢人**: `<kick user_id="用户ID"/>`。'
             )
 
-    if is_enabled(FeatureKey.SCHEDULE_TASK):
-        interactive_lines.append(
-            "- **定时任务**:\n"
-            '  * **添加任务**: `<schedule_task user_id="创建者ID" time="cron表达式或ISO8601时间">提醒内容</schedule_task>`。user_id 为任务创建者的用户 ID，必填。\n'
-            '  * **删除任务**: `<delete_task task_id="任务ID"/>`。如果要修改/合并定时提醒，必须先删除旧任务，再添加新任务。\n'
-            '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
-        )
-
     if is_enabled(FeatureKey.SLANG):
         interactive_lines.append(
             "- **黑话管理**:\n"
@@ -210,11 +202,6 @@ def build_xml_instructions(
             '  * **创建任务**: `<task_board action="create" user_id="创建者ID">一句自然语言任务</task_board>`。user_id 为任务创建者的用户 ID，必填。\n'
             '  * **完成任务**: `<task_board action="complete" task_id="任务ID">完成原因</task_board>`。只有在你已经实际完成任务要求，或用户明确确认该任务已完成时才使用。\n'
             '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
-        )
-
-    if is_enabled(FeatureKey.MEMORY_QUERY):
-        interactive_lines.append(
-            '- **记忆检索**: `<search_memory>检索问题</search_memory>`，可加 `user_id="目标用户ID"` 指定用户。同一 Bot 内按关联用户跨群检索，省略用户时以本批参与者为范围；没有用户关联的旧记忆只在当前会话检索。用于补充与过往回忆、约定等相关的内容。'
         )
 
     if is_enabled(FeatureKey.PERSISTENT_STATUS):

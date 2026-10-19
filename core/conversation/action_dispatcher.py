@@ -629,6 +629,7 @@ class ActionDispatcher:
                         group_or_user_id,
                         tool_name,
                         tool_args,
+                        tool_context=llm_result.tool_context or None,
                     )
                 )
                 sent_index += 1
@@ -780,6 +781,7 @@ class ActionDispatcher:
                         group_or_user_id,
                         tool_name,
                         tool_args,
+                        tool_context=llm_result.tool_context or None,
                     )
                 )
                 sent_index += 1
@@ -899,35 +901,31 @@ class ActionDispatcher:
             self.plugin.tts_manager.preprocess_signatures(llm_result, bot_conf)
 
         common_logs = []
-        # Validate both creation tools against identities visible in this reply.
+        # Validate task-board creation against identities visible in this reply.
         # The routing event may belong to a different member of the message batch.
-        for field_name, tool_name in (
-            ("schedule_tasks", "schedule_task"),
-            ("task_board_actions", "task_board"),
-        ):
-            valid_requests = []
-            for item in getattr(llm_result, field_name):
-                if tool_name == "task_board" and item.get("action") != "create":
-                    valid_requests.append(item)
-                    continue
-                creator_user_id = str(item.get("user_id") or "").strip()
-                if creator_user_id and creator_user_id in llm_result.task_creator_names:
-                    item["user_id"] = creator_user_id
-                    valid_requests.append(item)
-                    continue
-                reason = (
-                    "创建失败：缺少创建者 user_id。"
-                    if not creator_user_id
-                    else "创建失败：user_id 不在本轮上下文中。"
-                )
-                log = (
-                    f"<{tool_name} action='create' user_id={quoteattr(creator_user_id)} "
-                    f"result='failed' reason={quoteattr(reason)} "
-                    f"content={quoteattr(item.get('content') or '')}/>"
-                )
-                common_logs.append(log)
-                llm_result.xml_tool_results.append({"name": tool_name, "results": log})
-            setattr(llm_result, field_name, valid_requests)
+        valid_requests = []
+        for item in llm_result.task_board_actions:
+            if item.get("action") != "create":
+                valid_requests.append(item)
+                continue
+            creator_user_id = str(item.get("user_id") or "").strip()
+            if creator_user_id and creator_user_id in llm_result.task_creator_names:
+                item["user_id"] = creator_user_id
+                valid_requests.append(item)
+                continue
+            reason = (
+                "创建失败：缺少创建者 user_id。"
+                if not creator_user_id
+                else "创建失败：user_id 不在本轮上下文中。"
+            )
+            log = (
+                f"<task_board action='create' user_id={quoteattr(creator_user_id)} "
+                f"result='failed' reason={quoteattr(reason)} "
+                f"content={quoteattr(item.get('content') or '')}/>"
+            )
+            common_logs.append(log)
+            llm_result.xml_tool_results.append({"name": "task_board", "results": log})
+        llm_result.task_board_actions = valid_requests
 
         task_board_logs = await self._dispatch_task_board_actions(
             event=event,
@@ -1017,45 +1015,6 @@ class ActionDispatcher:
 
         if is_aiocqhttp or is_qq_official:
             success_logs = list(common_logs)
-            # 8. 添加定时任务
-            if llm_result.schedule_tasks:
-                for item in llm_result.schedule_tasks:
-                    time_expr = item["time_expr"]
-                    creator_user_id = item["user_id"]
-                    task_id = f"{bot_name}_{group_or_user_id}_{uuid.uuid4().hex[:6]}"
-                    kwargs = {
-                        "unified_msg_origin": event.unified_msg_origin,
-                        "adapter_id": get_adapter_id(event),
-                        "bot_name": bot_name,
-                        "nickname": nickname,
-                        "self_id": event.get_self_id(),
-                        "platform_name": event.get_platform_name(),
-                        "user_id": creator_user_id,
-                        "user_name": llm_result.task_creator_names[creator_user_id],
-                        "group_id": event.get_group_id(),
-                        "group_or_user_id": group_or_user_id,
-                        "remind_message": item["content"],
-                    }
-                    err_msg = self.plugin.task_manager.add_job(
-                        task_id,
-                        "remind",
-                        time_expr,
-                        kwargs=kwargs,
-                    )
-                    success_logs.append(
-                        f"<schedule_task task_id={quoteattr(task_id)} "
-                        f"user_id={quoteattr(creator_user_id)} "
-                        f"time_expr={quoteattr(time_expr)} result={quoteattr(err_msg or 'success')}/>"
-                    )
-
-            # 9. 删除定时任务
-            if llm_result.delete_schedule_tasks:
-                for task_id in llm_result.delete_schedule_tasks:
-                    err_msg = self.plugin.task_manager.remove_job(task_id)
-                    success_logs.append(
-                        f"<delete_task task_id={task_id} result={err_msg or 'success'}/>"
-                    )
-
             # 10. 添加表情包日志
             if llm_result.add_stickers:
                 for sticker_id in llm_result.add_stickers:

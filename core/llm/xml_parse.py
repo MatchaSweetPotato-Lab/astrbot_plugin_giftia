@@ -418,13 +418,6 @@ class XmlParse:
                         }
                     )
 
-                elif tag_name == "search_memory":
-                    text = child.get_text(strip=True)
-                    if text:
-                        result.search_memories.append(
-                            (self._attr_str(child, "user_id", ""), text)
-                        )
-
                 elif tag_name == "search_chat_history":
                     keyword = self._attr_str(child, "keyword", "")
                     user_id = self._attr_str(child, "user_id", "")
@@ -483,35 +476,6 @@ class XmlParse:
                             f"Tool call数据不完整或解析失败: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
                         raise ValueError(f"Malformed tool call in XML: {text}")
-
-                elif tag_name == "schedule_task":
-                    task_time = self._attr_str(child, "time", "")
-                    text = child.get_text(strip=True)
-                    if task_time and text:
-                        result.schedule_tasks.append(
-                            {
-                                "time_expr": task_time,
-                                "content": text,
-                                "user_id": self._attr_str(child, "user_id", ""),
-                            }
-                        )
-                    else:
-                        logger.error(
-                            f"Schedule task数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
-
-                elif tag_name == "delete_task":
-                    task_id = self._attr_str(child, "task_id", "")
-                    if task_id:
-                        result.delete_schedule_tasks.append(task_id)
-                    else:
-                        logger.error(
-                            f"Delete task数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
-
-                elif tag_name == "all_task":
-                    group_id = self._attr_str(child, "group_id", group_or_user_id)
-                    result.all_tasks.append(group_id)
 
                 elif tag_name in ("task_board", "short_task"):
                     action = self._attr_str(child, "action", "").lower().strip()

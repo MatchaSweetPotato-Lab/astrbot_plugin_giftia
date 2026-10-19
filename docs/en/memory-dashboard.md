@@ -91,14 +91,42 @@ Decision models can request retrieval. With embeddings enabled, replies continue
 
 User-associated memories can be recalled across conversations within the same bot. Any matching `associated_user_ids` account is sufficient, regardless of the source conversation; bots remain isolated. SQLite filters participants and valid index revisions before vector retrieval, candidate limits and reranking, then rechecks scope and revisions when loading current records. Legacy entries without explicit associated accounts, including records with only the old `user_id` field or malformed metadata, remain local to their source conversation. Stored facts, sources and evidence remain in place without merging, copying or extracting them again.
 
-Decision requests use the current batch's participants; automatic replies search separately for each current speaker. Explicit retrieval accepts `<search_memory user_id="12345">past agreement</search_memory>`; omitting `user_id` uses the current participants. Raw chat-history queries, `/读取近期记忆` and the dashboard's source-conversation filters retain their conversation scope.
+Decision requests use the current batch's participants; automatic replies search separately for each current speaker. Explicit retrieval uses the `search_memory` function tool, for example with `{"query":"past agreement","user_id":"12345"}`; omitting `user_id` uses the current participants. Raw chat-history queries, `/读取近期记忆` and the dashboard's source-conversation filters retain their conversation scope.
 
 Internal context labels recalled entries from other groups or private conversations without including evidence excerpts. Potentially private information requires the same user's explicit permission before disclosure, and foreign facts must not be presented as events in the current conversation. Session pools retain source labels, match current participants before reusing foreign entries and remove copies when their source conversation is cleared.
 
 Automatic retrieval runs once per reply. Pending messages are grouped by `user_id`, preserving each user's message order, and each group is searched separately. The reply prompt retains the original conversation order. Media placeholders use only completed, cached `caption` content in their original position, excluding `text`, genre, character and source fields. Media without a usable caption is skipped while ordinary text remains; an empty user group is not searched. Each user's candidates are reranked against that user's query, then merged and deduplicated by memory ID. A memory receives at most one automatic hit per batch. The per-user candidate setting controls each search, while the injection limit bounds the combined current automatic results and older pool entries, preferring current results. Setting that limit to 0 disables automatic retrieval and injection while leaving explicit decision and tool searches available. Recalls enter the pool only after the reply succeeds, with the existing TTL and capacity eviction preserved.
 
-All retrieval paths share a renderer for factual text and available event timestamps. Observation periods in older records remain supported. Unknown event times use a separately labelled creation timestamp; edit times never substitute for event times. Prompt context omits memory types, states, internal IDs, account lists and evidence excerpts. IDs still deduplicate records, with explicit search results taking precedence over cached copies. The model retains `<search_memory>`; `<delete_memory>` is not advertised or executed.
+All retrieval paths share a renderer for factual text and available event timestamps. Observation periods in older records remain supported. Unknown event times use a separately labelled creation timestamp; edit times never substitute for event times. Prompt context omits memory types, states, internal IDs, account lists and evidence excerpts. IDs still deduplicate records. Explicit searches return separate `search_memory` results so the model can refine its query before replying; `<delete_memory>` is not advertised or executed.
 
 This simplification preserves semantic retrieval, optional reranking, session-pool TTL and capacity limits. It adds neither importance/time decay nor retrieval of subsequent changes to a recalled fact.
 
 Scheduled history cleanup and the run-now action using automatic cleanup settings protect messages beyond each bot/conversation's durable processing cursor. Missing or invalid progress, failed extraction and in-flight batches do not release pending sources. Successfully processed batches remain subject to age/count rules and minimum recent-message retention. Evidence snapshots survive source-history cleanup.
+
+## Memory and scheduled-task tools
+
+The plugin's **Function calling tools** settings include two global switches, both enabled by default:
+
+- **Enable memory query tool** (`tools_config.search_memory_enabled`) controls `search_memory`. Disabling it leaves automatic memory recall available.
+- **Enable scheduled-task tools** (`tools_config.scheduled_tasks_enabled`) controls `create_scheduled_task`, `list_scheduled_tasks` and `delete_scheduled_task` together. Disabling it does not cancel or stop existing reminders.
+
+Disabled tools are not registered or injected, and existing invocation paths also reject execution. Both switches apply to native and XML calls. Tool availability is controlled only by these plugin switches and the persona tool allowlist. Older configurations without these keys default to enabled.
+
+The former Memory query (`记忆查询`) and Scheduled tasks (`设置/查看/删除定时任务`) checkboxes under **Bot management → Edit configuration → Built-in interactions** (`机器人管理 → 编辑配置 → 内置交互功能`) have moved to the two global switches under **Plugin settings → Function calling tools** (`插件配置 → 函数调用工具`). They are no longer displayed or checked in Bot configuration. Legacy Bot keys `memory_query`, `memory_query_delete` and `schedule_task` are removed during load/save normalization and excluded from the interaction count; other XML interaction checkboxes retain their behavior. The bot card's “Interaction tags” (`交互标签`) counter now reads “Interaction features” (`交互功能`).
+
+![Bot settings without the retired memory and reminder checkboxes, using sample configuration](../images/native-tools-settings.png)
+
+| Retired XML entry | Function tool | Arguments |
+| --- | --- | --- |
+| `<search_memory>` | `search_memory` | `query`, optional `user_id` |
+| `<schedule_task>` | `create_scheduled_task` | Creator `user_id`, five-field Cron or ISO8601 `time_expr`, reminder `content` |
+| `<all_task>` | `list_scheduled_tasks` | None |
+| `<delete_task>` | `delete_scheduled_task` | Actual `task_id` returned by listing |
+
+With native calling, the model can refine a memory query or list reminders and then delete one by its returned ID, all before producing the final XML reply. Missing time, content or creator details can be clarified with the user and supplied in a later conversation turn. The retired dedicated tags no longer execute. When forced XML is enabled, use the standard `<tool_call name="tool_name">JSON arguments</tool_call>` format, for example `<tool_call name="search_memory">{"query":"past agreement","user_id":"12345"}</tool_call>`.
+
+The same calling specification applies to every registered function tool, including these four. With `tools_config.use_source_tools` enabled and `force_xml_tools` disabled, all available function tools use native calling, which the reply provider must support. Enabling `force_xml_tools` injects every available function tool into the system prompt as XML, regardless of the native switch, and passes no native tools to the model. Execution results enter subsequent reply context for further calls. Disabling both switches omits function tools. `/工具解析` exports the standard XML declaration for any registered tool. Existing built-in XML interaction actions remain available.
+
+Both modes share the same implementation, batch participants and trusted creator context, and respect `max_loop`. Failures after native execution starts do not replay potentially completed operations through another provider.
+
+Task listing and deletion only handle non-system reminders belonging to the current Bot and conversation. Creators must come from trusted context for this reply batch or tasks listed in this conversation; the model cannot choose another conversation. Repeating an identical creation request in one reply batch returns the existing task. A later independent request can create another reminder. Results include the actual task ID, status and available next-run time, so attempted calls alone do not establish success.

@@ -1,6 +1,7 @@
 import asyncio
 import random
 import re
+import uuid
 from copy import deepcopy
 
 from astrbot.api import logger
@@ -34,12 +35,8 @@ class ReplyPipeline:
             "ban",
             "kick",
             "leave",
-            "search_memories",
             "tools_to_call",
             "native_tools_called",
-            "schedule_tasks",
-            "delete_schedule_tasks",
-            "all_tasks",
             "add_stickers",
             "send_stickers",
             "search_histories",
@@ -194,6 +191,7 @@ class ReplyPipeline:
         meme_tags: str | None = None,
         recent_messages: list[MessageData] | None = None,
         task_creator_names: dict[str, str] | None = None,
+        tool_context: dict | None = None,
     ):
         """
         集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
@@ -409,6 +407,28 @@ class ReplyPipeline:
                 )
             task_creator_names[str(event.get_self_id())] = nickname
 
+        if tool_context is None:
+            tool_context = {
+                "bot_name": bot_name,
+                "session_id": str(group_or_user_id),
+                "request_id": uuid.uuid4().hex,
+                "creator_names": {
+                    str(uid): str(name or uid)
+                    for uid, name in (task_creator_names or {}).items()
+                },
+                "user_ids": sorted(
+                    {
+                        str(msg.user_id)
+                        for msg in reply_messages
+                        if msg.user_id
+                        and str(msg.user_id) != str(event.get_self_id())
+                        and msg.role == "message"
+                        and not msg.is_recalled
+                    }
+                )
+                or [str(event.get_sender_id())],
+            }
+
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
         persona_id = str(llm_reply_conf.get("persona_id") or "default").strip()
 
@@ -536,6 +556,7 @@ class ReplyPipeline:
                 else ""
             ),
             timeout=self.plugin.tools_config.get("timeout", 120),
+            tool_context=tool_context,
             use_meme_manager=getattr(self.plugin, "use_meme_manager", False),
         )
 
@@ -585,7 +606,12 @@ class ReplyPipeline:
             )
 
         # 8. 产生 LLM 回复结果供 Dispatcher 处理
-        llm_result.task_creator_names = dict(task_creator_names or {})
+        task_creator_names = {
+            **(task_creator_names or {}),
+            **tool_context.get("creator_names", {}),
+        }
+        llm_result.task_creator_names = dict(task_creator_names)
+        llm_result.tool_context = tool_context
         yield llm_result
 
         # 初始化参数用于潜在的下一次递归
@@ -598,10 +624,7 @@ class ReplyPipeline:
         tool_results.extend(llm_result.xml_tool_results)
         await self.tool_executor.execute_queries(
             bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
             llm_result=llm_result,
-            recent_messages=reply_messages or recent_messages,
-            relevant_memories=relevant_memories,
             other_data=other_data,
         )
 
@@ -609,8 +632,6 @@ class ReplyPipeline:
         if (
             len(llm_result.tools_to_call) > 0
             or len(llm_result.xml_tool_results) > 0
-            or len(llm_result.search_memories) > 0
-            or len(llm_result.all_tasks) > 0
             or len(llm_result.search_histories) > 0
             or len(llm_result.get_message_contexts) > 0
         ):
@@ -631,5 +652,6 @@ class ReplyPipeline:
                 meme_tags=meme_tags,
                 recent_messages=recent_messages,
                 task_creator_names=llm_result.task_creator_names,
+                tool_context=tool_context,
             ):
                 yield chunk

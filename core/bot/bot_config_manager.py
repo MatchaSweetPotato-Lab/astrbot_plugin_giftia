@@ -15,7 +15,6 @@ INTERACTIVE_FEATURES_METADATA = [
     {"key": FeatureKey.LIKE, "label": "点赞名片", "note": "仅OneBot"},
     {"key": FeatureKey.DELETE, "label": "撤回自身消息", "note": ""},
     {"key": FeatureKey.GROUP_ADMIN, "label": "群管禁言/踢人", "note": "踢人仅OneBot"},
-    {"key": FeatureKey.SCHEDULE_TASK, "label": "设置/查看/删除定时任务", "note": ""},
     {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
     {
         "key": FeatureKey.SLANG,
@@ -23,7 +22,6 @@ INTERACTIVE_FEATURES_METADATA = [
         "note": "",
     },
     {"key": FeatureKey.STICKER, "label": "表情包发送与收集", "note": ""},
-    {"key": FeatureKey.MEMORY_QUERY, "label": "记忆查询", "note": ""},
     {"key": FeatureKey.SET_CALL_NAME, "label": "设置/修改用户称呼", "note": ""},
     {
         "key": FeatureKey.SET_AVATAR,
@@ -312,8 +310,8 @@ class BotConfigManager:
                     continue
                 s = str(f).strip()
                 key = s.split("(")[0].strip() if "(" in s else s
-                if key == "memory_query_delete":
-                    key = FeatureKey.MEMORY_QUERY
+                if key in ("memory_query", "memory_query_delete", "schedule_task"):
+                    continue
                 if key and key not in normalized_features:
                     normalized_features.append(key)
             bot["enabled_interactive_features"] = normalized_features
