@@ -116,7 +116,6 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         if not completion_text:
             return False
 
-        logger.info(f"[Giftia Passive Memory] 好感度维护返回内容:\n{completion_text}")
         alias_messages = [
             (str(msg.user_id or ""), str(msg.content or ""))
             for msg in context.get("alias_observation_messages") or []
