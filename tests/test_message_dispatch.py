@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from core.conversation import chat_manager as chat_module
 from core.conversation.chat_manager import ChatManager
 from core.utils.schemas import MessageData, XmlLlmResult
 
@@ -13,7 +14,13 @@ from astrbot.api.message_components import At
 
 
 @pytest.fixture
-def runtime():
+def runtime(monkeypatch):
+    monkeypatch.setattr(
+        chat_module,
+        "SESSION_WAIT_STEPS",
+        tuple((n, c, 0.0) for n, c, _ in chat_module.SESSION_WAIT_STEPS),
+    )
+    monkeypatch.setattr(chat_module, "SESSION_MIN_INTERVAL", 0.0)
     plugin = SimpleNamespace(
         _terminated=False,
         adapter_id_map={"adapter": "bot"},

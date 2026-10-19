@@ -279,7 +279,17 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         query: str,
         limit: int = 5,
     ) -> list[dict]:
-        """在当前会话内模糊搜索用户画像"""
+        """Search profiles by account ID, nickname, preferred name, alias or avatar.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            query: Text to match against member identifiers, names or avatars.
+            limit: Maximum number of matching members, capped at twenty.
+
+        Returns:
+            Matching profiles with current scores and aliases.
+        """
         query = (query or "").strip()
         if not query:
             return []
@@ -293,13 +303,8 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.group_or_user_id,
                 up.bot_name,
                 up.call_name,
-                up.personality,
-                up.interests,
                 up.attitude,
-                up.agreements,
-                up.extra,
                 up.avatar_description,
-                up.title,
                 (
                     SELECT ch.nickname
                     FROM chat_history ch
@@ -325,12 +330,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                       AND ua.user_id = up.user_id
                       AND ua.alias LIKE ?
                 )
-                OR up.title LIKE ?
-                OR up.personality LIKE ?
-                OR up.interests LIKE ?
-                OR up.attitude LIKE ?
-                OR up.agreements LIKE ?
-                OR up.extra LIKE ?
                 OR up.avatar_description LIKE ?
                 OR EXISTS (
                     SELECT 1
@@ -364,12 +363,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 like,  # up.user_id
                 like,  # up.call_name
                 like,  # ua.alias
-                like,  # up.title
-                like,  # up.personality
-                like,  # up.interests
-                like,  # up.attitude
-                like,  # up.agreements
-                like,  # up.extra
                 like,  # up.avatar_description
                 like,  # ch.nickname
                 query,  # ORDER BY exact user_id

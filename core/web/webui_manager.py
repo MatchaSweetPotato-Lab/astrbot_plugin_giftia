@@ -329,6 +329,12 @@ class WebUIManager:
             desc="Get paginated user affinity history",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/relation_history/save",
+            view_handler=self.web_api.save_user_relation_history,
+            methods=["POST"],
+            desc="Add, edit or delete user interaction ratings",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user/filter_options",
             view_handler=self.web_api.get_user_profile_filter_options,
             methods=["GET"],

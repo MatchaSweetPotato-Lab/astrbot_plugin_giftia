@@ -1038,6 +1038,30 @@
             <p id="user-relation-history-scope" class="muted-text"></p>
             <div id="user-relation-history-content" class="modal-body">
                 <section id="user-relation-history-summary" class="relation-score-summary" aria-label="好感度详情"></section>
+                <div class="relation-history-toolbar">
+                    <p class="muted-text">修改评价后，好感度会自动重新计算。</p>
+                    <div class="relation-history-toolbar-actions">
+                        <button type="button" class="btn btn-secondary btn-small" variant="text" onclick="loadUserRelationHistory()">刷新</button>
+                        <button id="user-relation-add" type="button" class="btn btn-primary btn-small" variant="tonal" onclick="openUserRelationEditor()" disabled>新增评价</button>
+                    </div>
+                </div>
+                <form id="user-relation-editor" class="relation-history-editor" hidden onsubmit="event.preventDefault(); submitUserRelationChange()">
+                    <h3 id="user-relation-editor-title">新增互动评价</h3>
+                    <div class="form-group">
+                        <label for="user-relation-delta">评价得分</label>
+                        <input id="user-relation-delta" type="number" min="-5" max="5" step="1" value="1" required aria-describedby="user-relation-delta-hint">
+                        <small id="user-relation-delta-hint" class="muted-text">填写 -5～+5 的非零整数，表示这次互动的评价强度。</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="user-relation-reason">评价内容</label>
+                        <textarea id="user-relation-reason" rows="3" maxlength="120" required placeholder="记录具体互动及评价理由，最多 120 字"></textarea>
+                    </div>
+                    <p id="user-relation-editor-error" class="relation-editor-error" role="alert" hidden></p>
+                    <div class="relation-editor-actions">
+                        <button type="button" class="btn btn-secondary btn-small" variant="text" onclick="closeUserRelationEditor()">取消</button>
+                        <button id="user-relation-save" type="submit" class="btn btn-primary btn-small" variant="tonal">保存评价</button>
+                    </div>
+                </form>
                 <div id="user-relation-history-list" aria-live="polite"></div>
             </div>
             <div id="user-relation-history-pagination" class="pagination-container"></div>

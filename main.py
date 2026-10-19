@@ -76,14 +76,6 @@ class Giftia(Star):
         self.msg_number = msg_history.get("msg_number", 300)
         self.block_command_messages = msg_history.get("block_command_messages", False)
 
-        # Retain the persisted section and timing keys when upgrading existing installs.
-        session_config = self.conf.get("concurrent_config", {})
-        self.decision_interval = max(0, session_config.get("group_throttle_time", 5))
-        self.session_debounce_time = max(0, session_config.get("user_debounce_time", 3))
-        self.session_max_debounce_time = max(
-            0, session_config.get("user_max_debounce_time", 30)
-        )
-        self.batch_max_messages = max(1, session_config.get("batch_max_messages", 50))
         # Analysis windows are consumed once per decision batch.
         self.active_reply_counters: dict[str, int] = {}
         # 表情包配置

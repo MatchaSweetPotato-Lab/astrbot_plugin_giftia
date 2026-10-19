@@ -514,6 +514,51 @@ async def test_changes_arriving_during_inference_stay_pending(runtime):
 
 
 @pytest.mark.asyncio
+async def test_manual_history_edit_rejects_inflight_tone_and_recalculates_review_score(
+    runtime,
+):
+    await runtime.cache.set_user_profile(
+        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
+    )
+    for _ in range(5):
+        await runtime.cache.update_relation("bot", "group", "user", 1, "原评价")
+    changes = await runtime.db.get_relation_changes("bot", "group", "user")
+
+    async def edit_during_review(*args, **kwargs):
+        await runtime.db.mutate_relation_history(
+            "bot",
+            "group",
+            "user",
+            action="update",
+            expected_revision=0,
+            change_id=changes[0]["id"],
+            delta=-5,
+            reason="修正为严重冒犯",
+        )
+        return '{"attitude": "过期结论"}'
+
+    runtime.manager._call_summary_llm.side_effect = edit_during_review
+    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
+    assert (await runtime.db.get_user_profile_record("bot", "group", "user"))[
+        "attitude"
+    ] == "礼貌交流"
+    pending = await runtime.db.get_pending_attitude_evaluations("bot", "group")
+    assert pending[0]["evaluated_id"] == 0
+    assert pending[0]["history_revision"] == 1
+    runtime.manager._call_summary_llm.side_effect = None
+    runtime.manager._call_summary_llm.return_value = '{"attitude": null}'
+    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
+    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
+    assert payload["current_relation"] == pytest.approx(900 / 19)
+    assert payload["current_relation"] != changes[-1]["relation_after"]
+    assert all(
+        "relation_before" not in row and "relation_after" not in row
+        for row in payload["relation_changes"]
+    )
+    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
+
+
+@pytest.mark.asyncio
 async def test_deleting_and_recreating_profile_during_review_rejects_stale_result(
     runtime,
 ):

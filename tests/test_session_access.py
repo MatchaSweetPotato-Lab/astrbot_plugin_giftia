@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from core.bot.bot_config_manager import BotConfigManager
+from core.conversation import chat_manager as chat_module
 from core.conversation.chat_manager import ChatManager
 from core.handlers.commands import CommandHandler
 from core.utils.schemas import MessageData, XmlLlmResult
@@ -38,7 +39,13 @@ def plugin_method(name):
 
 
 @pytest.fixture
-def runtime(tmp_path):
+def runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        chat_module,
+        "SESSION_WAIT_STEPS",
+        tuple((n, c, 0.0) for n, c, _ in chat_module.SESSION_WAIT_STEPS),
+    )
+    monkeypatch.setattr(chat_module, "SESSION_MIN_INTERVAL", 0.0)
     plugin = SimpleNamespace(
         bot_map={},
         adapter_id_map={},

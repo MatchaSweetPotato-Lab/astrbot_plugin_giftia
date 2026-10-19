@@ -4,6 +4,7 @@ import re
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..database.relation_history_store import RelationHistoryConflictError
 from .web_helpers import USER_PROFILE_FIELD_KEYS
 
 
@@ -163,6 +164,13 @@ class ProfileApi:
         try:
             scope = (bot_name, group_or_user_id, user_id)
             async with self.giftia.db.conn.execute(
+                "SELECT relation_history_revision FROM user_profiles "
+                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                scope,
+            ) as cursor:
+                profile = await cursor.fetchone()
+            revision = profile[0] if profile else 0
+            async with self.giftia.db.conn.execute(
                 "SELECT COUNT(*) FROM relation_changes "
                 "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
                 scope,
@@ -178,6 +186,15 @@ class ProfileApi:
                 (*scope, limit, (page - 1) * limit),
             ) as cursor:
                 items = [dict(row) for row in await cursor.fetchall()]
+            score = await self.giftia.db.get_relation_score(*scope)
+            async with self.giftia.db.conn.execute(
+                "SELECT relation_history_revision FROM user_profiles "
+                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                scope,
+            ) as cursor:
+                profile = await cursor.fetchone()
+            if revision != (profile[0] if profile else 0):
+                return error_response("互动评价历史已更新，请重试", status_code=409)
             return json_response(
                 {
                     "status": "success",
@@ -186,12 +203,55 @@ class ProfileApi:
                         "total": total,
                         "page": page,
                         "limit": limit,
+                        "revision": revision,
+                        "score": score,
                     },
                 }
             )
         except Exception as error:
             logger.error("[Giftia API] get_user_relation_history error: %s", error)
             return error_response("获取好感度变化历史失败")
+
+    async def save_user_relation_history(self):
+        """Add, edit or delete a scoped interaction rating and invalidate scores.
+
+        Returns:
+            A JSON response with the new revision and derived score components.
+        """
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return error_response("请求内容必须是对象")
+            scope = [
+                body.get(key) for key in ("bot_name", "group_or_user_id", "user_id")
+            ]
+            if any(not isinstance(value, str) or not value.strip() for value in scope):
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+            scope = [value.strip() for value in scope]
+            result = await self.giftia.db.mutate_relation_history(
+                *scope,
+                action=body.get("action"),
+                expected_revision=body.get("revision"),
+                change_id=body.get("id"),
+                delta=body.get("delta"),
+                reason=body.get("reason", ""),
+            )
+            fmt_key = ":".join(scope)
+            self.giftia.data_cache.user_profiles.pop(fmt_key, None)
+            self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
+            self.giftia.data_cache.relations.pop(fmt_key, None)
+            return json_response({"status": "success", "data": result})
+        except RelationHistoryConflictError as error:
+            return error_response(str(error), status_code=409)
+        except LookupError as error:
+            return error_response(str(error), status_code=404)
+        except ValueError as error:
+            return error_response(str(error))
+        except Exception:
+            logger.exception("[Giftia API] Failed to save user interaction history")
+            return error_response("保存互动评价失败", status_code=500)
 
     async def get_user_profile_filter_options(self):
         """Get bot/session filter options for user profiles."""

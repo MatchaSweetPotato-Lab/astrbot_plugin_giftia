@@ -27,12 +27,25 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 from astrbot.core.utils.session_lock import session_lock_manager
 
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
+from ..utils.message_markdown import normalize_qq_markdown_chain
 from ..utils.message_media import format_node_components
 from ..utils.notice_parse import NoticeParseResult
 from ..utils.schemas import MessageData, XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
 from .reply_pipeline import ReplyPipeline
+
+SESSION_MIN_INTERVAL = 2.0
+SESSION_BATCH_LIMIT = 50
+# Minimum message count, minimum body characters, and seconds to wait.
+SESSION_WAIT_STEPS = (
+    (12, 161, 0.8),
+    (8, 101, 1.5),
+    (5, 61, 3.0),
+    (3, 31, 6.0),
+    (2, 11, 10.0),
+    (1, 0, 15.0),
+)
 
 _bot_msg_id_capture_ctx: contextvars.ContextVar[list[str] | None] = (
     contextvars.ContextVar("_bot_msg_id_capture_ctx", default=None)
@@ -101,12 +114,18 @@ def _patch_bot_for_message_id_capture(bot: Any) -> None:
 
 @dataclass
 class QueuedMessage:
-    """A parsed message with an admission choice evaluated exactly once."""
+    """A parsed message with its admission choice and original body size.
+
+    Attributes:
+        text_length: Non-whitespace characters in top-level user-authored text,
+            excluding mention metadata, quoted content and generated captions.
+    """
 
     event: AstrMessageEvent
     message: MessageData
     force_reply: bool
     arrived_at: float
+    text_length: int
 
 
 @dataclass
@@ -119,7 +138,6 @@ class SessionState:
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
     last_started: float = float("-inf")
-    last_arrival: float = 0
     effects_started: bool = False
 
 
@@ -558,8 +576,12 @@ class ChatManager:
         )
         state.seen.append(message.message_id)
         now = time.monotonic()
-        state.pending.append(QueuedMessage(event, message, trigger, now))
-        state.last_arrival = now
+        text_length = sum(
+            len("".join(component.text.split()))
+            for component in normalize_qq_markdown_chain(event.get_messages() or [])
+            if isinstance(component, Plain)
+        )
+        state.pending.append(QueuedMessage(event, message, trigger, now, text_length))
         state.wake.set()
         # The previous worker may have finished while the pending state was saved.
         busy = state.task is not None and not state.task.done()
@@ -618,21 +640,27 @@ class ChatManager:
             group_or_user_id: Stored conversation identifier.
             state: Queue and timing state owned by this worker.
         """
-        debounce = max(0, getattr(self.plugin, "session_debounce_time", 0))
-        max_wait = max(0, getattr(self.plugin, "session_max_debounce_time", 30))
-        interval = max(0, getattr(self.plugin, "decision_interval", 0))
-        batch_limit = max(1, getattr(self.plugin, "batch_max_messages", 50))
         try:
             while state.pending and not getattr(self.plugin, "_terminated", False):
-                # Only one timer exists per session. New messages extend the quiet
-                # period, but neither the maximum wait nor the cooldown deadline.
                 state.wake.clear()
+                pending_count = len(state.pending)
+                # Twelve ready messages already select the shortest wait. Avoid
+                # rescanning a large backlog while the previous reply is running.
+                characters = (
+                    sum(item.text_length for item in state.pending)
+                    if pending_count < SESSION_WAIT_STEPS[0][0]
+                    else 0
+                )
+                wait_seconds = next(
+                    seconds
+                    for count, length, seconds in SESSION_WAIT_STEPS
+                    if pending_count >= count or characters >= length
+                )
+                # The first ready message anchors the deadline. More content can
+                # only bring it forward, including arrivals during a model call.
                 ready_at = max(
-                    min(
-                        state.last_arrival + debounce,
-                        state.pending[0].arrived_at + max_wait,
-                    ),
-                    state.last_started + interval,
+                    state.pending[0].arrived_at + wait_seconds,
+                    state.last_started + SESSION_MIN_INTERVAL,
                 )
                 remaining = ready_at - time.monotonic()
                 if remaining > 0:
@@ -656,7 +684,9 @@ class ChatManager:
                             )
                             state.current = [
                                 state.pending.popleft()
-                                for _ in range(min(batch_limit, len(state.pending)))
+                                for _ in range(
+                                    min(SESSION_BATCH_LIMIT, len(state.pending))
+                                )
                             ]
                             later_ids = {
                                 item.message.message_id for item in state.pending
@@ -739,7 +769,7 @@ class ChatManager:
                                 state.pending.popleft()
                                 for _ in range(
                                     min(
-                                        batch_limit - len(state.current),
+                                        SESSION_BATCH_LIMIT - len(state.current),
                                         len(state.pending),
                                     )
                                 )
@@ -816,7 +846,9 @@ class ChatManager:
                         if not state.current:
                             state.current = [
                                 state.pending.popleft()
-                                for _ in range(min(batch_limit, len(state.pending)))
+                                for _ in range(
+                                    min(SESSION_BATCH_LIMIT, len(state.pending))
+                                )
                             ]
                         await self._set_batch_status(
                             bot_name,

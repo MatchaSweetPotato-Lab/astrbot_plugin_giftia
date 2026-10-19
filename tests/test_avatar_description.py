@@ -150,6 +150,7 @@ async def avatar_runtime():
         cache.db = db
         cache.user_profile_records = {}
         cache.user_profiles = {}
+        cache.relations = {}
         cache.is_bot_muted = Mock(return_value=False)
         cache.add_message = AsyncMock()
         plugin = SimpleNamespace(

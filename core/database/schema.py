@@ -195,6 +195,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 base_relation INTEGER NOT NULL DEFAULT 0,
                 title TEXT,
                 attitude_evaluated_change_id INTEGER NOT NULL DEFAULT 0,
+                relation_history_revision INTEGER NOT NULL DEFAULT 0,
                 bot_name TEXT NOT NULL,
                 created_at DATETIME,
                 updated_at DATETIME
@@ -212,6 +213,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             "ALTER TABLE user_profiles ADD COLUMN base_relation INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE user_profiles ADD COLUMN title TEXT",
             "ALTER TABLE user_profiles ADD COLUMN attitude_evaluated_change_id INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE user_profiles ADD COLUMN relation_history_revision INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 await cursor.execute(column_sql)

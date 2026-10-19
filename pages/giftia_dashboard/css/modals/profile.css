@@ -101,6 +101,61 @@
     overflow-wrap: anywhere;
 }
 
+.relation-history-toolbar,
+.relation-history-toolbar-actions,
+.relation-editor-actions,
+.relation-change-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.relation-history-toolbar {
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.relation-history-toolbar p {
+    margin: 0;
+    font-size: 12px;
+}
+
+.relation-history-toolbar button {
+    flex-shrink: 0;
+}
+
+.relation-history-editor {
+    margin-bottom: 16px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+}
+
+.relation-history-editor[hidden] {
+    display: none;
+}
+
+.relation-history-editor h3 {
+    margin: 0 0 16px;
+    font-size: 15px;
+}
+
+.relation-history-editor input[type="number"] {
+    max-width: 160px;
+}
+
+.relation-change-actions {
+    margin-top: 8px;
+}
+
+.relation-editor-error {
+    color: var(--danger, #ef4444);
+    font-size: 13px;
+}
+
 .inline-input-action {
     display: flex;
     gap: 8px;

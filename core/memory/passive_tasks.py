@@ -320,15 +320,20 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                         {
                             "user_id": user_id,
                             "current_attitude": (profile or {}).get("attitude") or "",
-                            "current_relation": history[-1]["relation_after"],
+                            "current_relation": (
+                                await self.plugin.db.get_relation_score(
+                                    bot_name,
+                                    group_or_user_id,
+                                    user_id,
+                                    through_id=through_id,
+                                )
+                            )["relation"],
                             "evaluated_through_id": evaluated_id,
                             "relation_changes": [
                                 {
                                     "id": change["id"],
                                     "time": change["occurred_at"],
                                     "delta": change["delta"],
-                                    "relation_before": change["relation_before"],
-                                    "relation_after": change["relation_after"],
                                     "reason": change["reason"],
                                     "is_new": change["id"] > evaluated_id,
                                 }
@@ -373,6 +378,7 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                         expected_cursor=evaluated_id,
                         through_id=through_id,
                         attitude=attitude,
+                        expected_history_revision=candidate["history_revision"],
                     ):
                         break
                     fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
