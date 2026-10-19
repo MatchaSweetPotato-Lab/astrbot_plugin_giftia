@@ -145,13 +145,14 @@ class DataCache:
         *,
         observed_by_bot: bool = False,
     ) -> None:
-        """Cache and persist a message, then queue confirmed bot output as observed.
+        """Persist a message and observe confirmed bot output in an active conversation.
 
         Args:
             bot_name: Owning bot configuration.
             group_id: Owning conversation.
             msg_data: Message to store, assigning a local ID when necessary.
-            observed_by_bot: Whether this is the bot's successfully sent output.
+            observed_by_bot: Whether this is successfully sent bot output, eligible
+                for observation while the conversation is active or replying.
         """
         import time
 
@@ -191,9 +192,17 @@ class DataCache:
             msg_data.message_id = f"local_{uuid.uuid4().hex}"
         fmt_key = f"{bot_name}:{group_id}"
         self.recent_messages[fmt_key].append(msg_data)
+        observe_output = (
+            observed_by_bot
+            and getattr(self.plugin, "passive_memory_enabled", False)
+            and (
+                getattr(self.plugin, "active_reply_counters", {}).get(fmt_key, 0) > 0
+                or getattr(self.plugin, "replying_status", {}).get(fmt_key, 0) > 0
+            )
+        )
         # 将消息写入数据库
         await self.db.insert_message(bot_name=bot_name, message=msg_data)
-        if observed_by_bot and getattr(self.plugin, "passive_memory_enabled", False):
+        if observe_output:
             await self.plugin.passive_memory_manager.observe_messages(
                 bot_name, group_id, msg_data.user_id, [msg_data]
             )

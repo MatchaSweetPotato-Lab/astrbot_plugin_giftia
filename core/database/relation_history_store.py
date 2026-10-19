@@ -187,6 +187,8 @@ class RelationHistoryStoreMixin:
         through_id: int | None = None,
         oldest_first: bool = False,
         offset: int = 0,
+        *,
+        current_session_only: bool = False,
     ) -> list[dict]:
         """Read a bounded affinity history in chronological order.
 
@@ -199,18 +201,23 @@ class RelationHistoryStoreMixin:
             through_id: Inclusive frozen upper boundary.
             oldest_first: Select the oldest matching records for backlog processing.
             offset: Number of matching records to skip in the selected order.
+            current_session_only: Restrict display records to the current conversation.
+                Scores and counts are calculated separately from shared history.
 
         Returns:
             Matching records ordered from oldest to newest.
         """
         order = "ASC" if oldest_first else "DESC"
+        session_clause = "AND group_or_user_id=? " if current_session_only else ""
+        params = [bot_name, user_id]
+        if current_session_only:
+            params.append(group_or_user_id)
         async with self.conn.execute(
             "SELECT * FROM relation_changes WHERE bot_name=? "
-            "AND user_id=? AND id>? AND (? IS NULL OR id<=?) "
+            f"AND user_id=? {session_clause}AND id>? AND (? IS NULL OR id<=?) "
             f"ORDER BY id {order} LIMIT ? OFFSET ?",
             (
-                bot_name,
-                user_id,
+                *params,
                 after_id,
                 through_id,
                 through_id,

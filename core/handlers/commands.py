@@ -618,8 +618,9 @@ caption: {media_caption.caption}"""
             )
             return
 
+        # Shared scores and counts are already in record; only display history is local.
         changes = await self.plugin.db.get_relation_changes(
-            bot_name, session_id, user_id, limit=3
+            bot_name, session_id, user_id, limit=3, current_session_only=True
         )
         report = build_user_profile_report(
             bot_name,
@@ -666,12 +667,7 @@ caption: {media_caption.caption}"""
             for change in report["recent_relation_changes"]:
                 lines.append(
                     f"• {change['time']} 互动评价 {change['delta']:+d}"
-                    + (
-                        f" [{change['source_label']}]"
-                        if change.get("source_label")
-                        else ""
-                    )
-                    + f"\n  {change['reason']}"
+                    f"\n  {change['reason']}"
                 )
         msg = "\n".join(lines)
         yield await event.send(MessageChain([Plain(msg)]))

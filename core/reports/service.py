@@ -110,16 +110,19 @@ class ReportService:
                         },
                         recent_relation_changes=[
                             {
+                                "group_or_user_id": "10001",
                                 "delta": 2,
                                 "reason": "他主动关心我的近况，我表达了感谢",
                                 "occurred_at": "2026-10-18T14:00:00+08:00",
                             },
                             {
+                                "group_or_user_id": "10001",
                                 "delta": -1,
                                 "reason": "他反复打断我的解释，我提醒了交流边界",
                                 "occurred_at": "2026-10-17T15:30:00+08:00",
                             },
                             {
+                                "group_or_user_id": "10001",
                                 "delta": 1,
                                 "reason": "他分享今天的趣事，我顺着话题聊了几句",
                                 "occurred_at": "2026-10-16T12:00:00+08:00",
@@ -147,7 +150,7 @@ class ReportService:
                     "total_count": "全部互动评价条数",
                     "recent_count": "近期样本数，最多10条",
                     "profile_fields": "非空画像字段字典（中文标签 → 展示文本）；空字段不包含在内",
-                    "recent_relation_changes": "最近最多三次互动评价，最新在前；展示delta（评价强度）、reason和time；另含occurred_at、created_at、group_or_user_id和非本群记录的source_label；无历史时为空数组",
+                    "recent_relation_changes": "当前会话最近最多三次互动评价，最新在前；包含delta（评价强度）、reason、time、occurred_at和created_at；无历史时为空数组，不包含其他会话记录",
                     "report_type": "报告类型标识",
                 },
             ),

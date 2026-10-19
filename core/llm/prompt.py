@@ -902,6 +902,10 @@ def build_user_profile_block(
             "最近互动评价（已参与计分，评价值不等于最终好感度增减）：\n"
             + "\n".join(changes)
         )
+        if any(change.get("source_label") for change in (relation_changes or [])[-3:]):
+            parts.append(
+                "非本会话互动记录若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
+            )
 
     if not parts:
         return ""

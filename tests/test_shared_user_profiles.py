@@ -206,6 +206,7 @@ async def test_shared_cache_keeps_aliases_local_and_invalidates_scores_across_gr
     prompt = build_user_profile_block("user", a, None, relation_changes=history)
     assert "[来源群聊：group-b]" in prompt
     assert "来源群聊：group-a" not in prompt
+    assert "禁止在对外回复中披露记录内容或来源" in prompt
     assert (await rt.cache.get_user_relation("bot", "group-a", "user")) == (
         await rt.cache.get_user_relation("bot", "group-b", "user")
     )
@@ -243,6 +244,24 @@ async def test_attitude_review_uses_one_shared_cursor_and_cross_group_reasons(
     ] == "熟络，常互相接梗"
     assert await rt.db.get_pending_attitude_evaluations("bot", "group-a") == []
     assert await rt.db.get_pending_attitude_evaluations("bot", "group-b") == []
+
+
+@pytest.mark.asyncio
+async def test_public_history_filters_source_before_pagination_without_changing_internal_history(
+    shared_runtime,
+):
+    rt = shared_runtime
+    for index in range(4):
+        await rt.cache.update_relation("bot", "group-a", "user", 1, f"local {index}")
+    for index in range(5):
+        await rt.cache.update_relation("bot", "group-b", "user", 1, f"foreign {index}")
+    local = await rt.db.get_relation_changes(
+        "bot", "group-a", "user", limit=3, current_session_only=True
+    )
+    assert [row["reason"] for row in local] == ["local 1", "local 2", "local 3"]
+    assert all(row["group_or_user_id"] == "group-a" for row in local)
+    shared = await rt.db.get_relation_changes("bot", "group-a", "user", limit=3)
+    assert [row["reason"] for row in shared] == ["foreign 2", "foreign 3", "foreign 4"]
 
 
 @pytest.mark.asyncio
