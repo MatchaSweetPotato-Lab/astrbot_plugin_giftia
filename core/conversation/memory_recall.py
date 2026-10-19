@@ -42,6 +42,7 @@ async def search_memories_with_rerank(
     default_limit: int = 5,
     log_context: str = "记忆召回",
     record_hits: bool = True,
+    user_ids: list[str] | None = None,
 ) -> list[dict]:
     """Search memories using the shared embedding and rerank settings.
 
@@ -55,6 +56,7 @@ async def search_memories_with_rerank(
         default_limit: Candidate limit when no configured value is available.
         log_context: Context included in retrieval failure logs.
         record_hits: Record hits immediately; batch callers may defer until deduplication.
+        user_ids: Explicit target accounts, or None to infer the current participants.
 
     Returns:
         Recalled memory records, optionally filtered by the reranker.
@@ -83,6 +85,7 @@ async def search_memories_with_rerank(
             recent_messages=recent_messages,
             limit=search_limit,
             threshold=threshold,
+            user_ids=user_ids,
         )
         if memories and plugin.rerank_conf.get("enabled", False):
             memories = await plugin.ltm.rerank_memories(

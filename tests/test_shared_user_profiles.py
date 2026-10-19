@@ -206,7 +206,8 @@ async def test_shared_cache_keeps_aliases_local_and_invalidates_scores_across_gr
     prompt = build_user_profile_block("user", a, None, relation_changes=history)
     assert "[来源群聊：group-b]" in prompt
     assert "来源群聊：group-a" not in prompt
-    assert "禁止在对外回复中披露记录内容或来源" in prompt
+    assert "若可能涉及隐私，则不能对外披露" in prompt
+    assert "除非取得同一用户明确许可" in prompt
     assert (await rt.cache.get_user_relation("bot", "group-a", "user")) == (
         await rt.cache.get_user_relation("bot", "group-b", "user")
     )

@@ -456,6 +456,16 @@ def build_reply_prompt(
         user_prompt.append(active_user_briefs_block)
 
     # Recalled context includes this batch and memories retained by the session pool.
+    if (relevant_block or session_block) and any(
+        memory_metadata(
+            item if isinstance(item, dict) else {"metadata": item.metadata}
+        ).get("source_label")
+        for item in [*(relevant_memories or []), *(session_recalled_memories or [])]
+    ):
+        user_prompt.append(
+            "<memory_usage_rules>标注来源的记忆来自其他会话，不要误认为本会话发生的经历。"
+            "若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。</memory_usage_rules>"
+        )
     if session_block:
         user_prompt.append(
             "<session_recalled_memories>\n"
@@ -789,6 +799,9 @@ def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
             continue
         metadata = memory_metadata(item)
         attrs = []
+        source_label = str(metadata.get("source_label") or "").strip()
+        if source_label:
+            attrs.append(f"source={quoteattr(source_label)}")
         times = {
             field: item.get(field) or metadata.get(field)
             for field in (

@@ -191,7 +191,8 @@ async def test_tool_history_shared_across_groups_and_isolated_by_bot_and_member(
     assert f"bot/{session}/123#002" in result
     assert "bot/other/123#002" in result
     assert "来源群聊：other" in result
-    assert "禁止在对外回复中披露记录内容或来源" in result
+    assert "若可能涉及隐私，则不能对外披露" in result
+    assert "除非取得同一用户明确许可" in result
     for omitted in (f"other/{session}/123#", f"bot/{session}/456#"):
         assert omitted not in result
 

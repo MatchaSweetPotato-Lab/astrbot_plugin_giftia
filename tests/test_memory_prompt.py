@@ -125,7 +125,7 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
     executor = ToolExecutor(SimpleNamespace(embedding_conf={"enabled": True}))
     relevant = [records[0]]
     other = []
-    result = XmlLlmResult(search_memories=[("group", "过往约定")])
+    result = XmlLlmResult(search_memories=[("", "过往约定")])
     await executor.execute_queries("bot", "group", result, [], relevant, other)
     assert relevant == records
     assert relevant[1]["metadata"]["topic"] == "观星"
@@ -202,7 +202,7 @@ async def test_retired_delete_tag_cannot_create_an_action_and_search_remains_ava
     )
     assert result is not None
     assert not hasattr(result, "delete_memories")
-    assert result.search_memories == [("group", "过往约定")]
+    assert result.search_memories == [("", "过往约定")]
     cache.delete_memory.assert_not_awaited()
     instructions = build_xml_instructions([FeatureKey.MEMORY_QUERY])
     assert "<search_memory>" in instructions and "delete_memory" not in instructions

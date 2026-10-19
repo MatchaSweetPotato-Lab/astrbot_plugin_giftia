@@ -273,6 +273,29 @@ async def test_reminder_without_reply_messages_keeps_recipient_profile(runtime):
 
 
 @pytest.mark.asyncio
+async def test_foreign_pool_memories_follow_current_participants_without_losing_cache(
+    runtime,
+):
+    foreign = memory("foreign-alice", text="Alice's foreign fact")
+    foreign["metadata"] = {
+        "associated_user_ids": ["alice"],
+        "source_session_id": "other-group",
+        "source_label": "来源群聊：other-group",
+    }
+    runtime.cache.merge_session_recalled_memories(
+        "bot", "group", [foreign, memory("local", text="local fact")]
+    )
+    await runtime.run(reply_messages=[MessageData(user_id="bob", content="hello")])
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    assert "Alice's foreign fact" not in prompt
+    assert "local fact" in prompt
+    await runtime.run(reply_messages=[MessageData(user_id="alice", content="hello")])
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    assert "Alice's foreign fact" in prompt
+    assert "来源群聊：other-group" in prompt
+
+
+@pytest.mark.asyncio
 async def test_reply_keeps_all_profiles_across_tool_turns_without_new_arrivals(runtime):
     runtime.cache.get_user_relation.return_value = (50.0, "")
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
@@ -382,6 +405,7 @@ async def test_interleaved_users_search_separately_with_caption_only_and_origina
         second,
     ]
     assert all(call.kwargs["recent_messages"] == messages for call in calls)
+    assert [call.kwargs["user_ids"] for call in calls] == [["alice"], ["bob"]]
     assert all(call.kwargs["threshold"] == 0.7 for call in calls)
     assert messages == original
 
@@ -565,7 +589,7 @@ async def test_zero_injection_limit_disables_automatic_work_but_preserves_explic
     runtime.cache.merge_session_recalled_memories("bot", "group", [memory("cached")])
     runtime.plugin.embedding_conf["inject_limit"] = 0
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("group", "explicit query")]),
+        XmlLlmResult(search_memories=[("", "explicit query")]),
         XmlLlmResult(),
     ]
     runtime.search.return_value = [memory("tool-result")]
@@ -592,7 +616,7 @@ async def test_recall_survives_tool_turns_and_retired_mode_switch_is_ignored(run
         MediaCaption(hash_val="cat", caption="smirking cat")
     ]
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("group", "explicit query")]),
+        XmlLlmResult(search_memories=[("", "explicit query")]),
         XmlLlmResult(),
     ]
     runtime.search.side_effect = [[memory("automatic")], [memory("explicit")]]

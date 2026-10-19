@@ -421,7 +421,9 @@ class XmlParse:
                 elif tag_name == "search_memory":
                     text = child.get_text(strip=True)
                     if text:
-                        result.search_memories.append((group_or_user_id, text))
+                        result.search_memories.append(
+                            (self._attr_str(child, "user_id", ""), text)
+                        )
 
                 elif tag_name == "search_chat_history":
                     keyword = self._attr_str(child, "keyword", "")

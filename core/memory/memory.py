@@ -393,7 +393,7 @@ class LTM:
     async def search_memory(
         self,
         bot_name: str,
-        group_or_user_id: str,
+        group_or_user_id: str | None,
         query: str,
         limit: int = 5,
         threshold: float = 0.7,
@@ -405,7 +405,7 @@ class LTM:
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
+            group_or_user_id: Source conversation, or None for all of this bot's sessions.
             query: Semantic search text.
             limit: Maximum number of candidates.
             threshold: Maximum accepted vector distance.
@@ -438,8 +438,10 @@ class LTM:
 
             try:
                 scoped_bot = bot_name.replace("'", "''")
-                scoped_session = group_or_user_id.replace("'", "''")
-                condition = f"bot_name = '{scoped_bot}' AND group_or_user_id = '{scoped_session}'"
+                condition = f"bot_name = '{scoped_bot}'"
+                if group_or_user_id is not None:
+                    scoped_session = group_or_user_id.replace("'", "''")
+                    condition += f" AND group_or_user_id = '{scoped_session}'"
                 if exclude_ids:
                     excluded = ",".join(
                         "'" + key.replace("'", "''") + "'" for key in exclude_ids
@@ -482,7 +484,7 @@ class LTM:
     def _search_memory_sync(
         self,
         bot_name: str,
-        group_or_user_id: str,
+        group_or_user_id: str | None,
         query: str,
         limit: int,
         threshold: float,
@@ -494,7 +496,7 @@ class LTM:
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
+            group_or_user_id: Source conversation, or None for all of this bot's sessions.
             query: Semantic search text.
             limit: Maximum number of candidates.
             threshold: Maximum accepted vector distance.
@@ -523,10 +525,10 @@ class LTM:
                 query_vector = query_vector.tolist()
 
             scoped_bot = bot_name.replace("'", "''")
-            scoped_session = group_or_user_id.replace("'", "''")
-            condition = (
-                f"bot_name = '{scoped_bot}' AND group_or_user_id = '{scoped_session}'"
-            )
+            condition = f"bot_name = '{scoped_bot}'"
+            if group_or_user_id is not None:
+                scoped_session = group_or_user_id.replace("'", "''")
+                condition += f" AND group_or_user_id = '{scoped_session}'"
             if exclude_ids:
                 excluded = ",".join(
                     "'" + key.replace("'", "''") + "'" for key in exclude_ids

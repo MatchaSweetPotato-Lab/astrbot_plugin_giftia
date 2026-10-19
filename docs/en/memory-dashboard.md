@@ -59,7 +59,7 @@ The public `recent_relation_changes` array contains at most three current-conver
 
 ![Profile report with empty fields omitted and the latest three interaction ratings, using example data](../images/user-profile-report-history.png)
 
-Internal reply context and profile tools retain records from other conversations and their sources, with explicit instructions against disclosing or retelling those records or sources in public replies.
+Internal reply context and profile tools retain records from other conversations and their sources. Potentially private information must not be disclosed without the same user's explicit permission.
 
 Final affinity = base score + interaction score. The base defaults to zero and is set by an administrator under Profile management → Edit → Affinity base score. Negative integers are allowed; the scope is the bot and member, shared across groups and private conversations. Interaction scores start at 50 and stay within 0–100; the base can take final affinity outside that range. Calculations retain full precision, while the UI, reports and prompts show one decimal place.
 
@@ -88,6 +88,12 @@ In the decision audit, “已归档消息边界 ID” is now “已归纳消息�
 Existing memory text and evidence remain stored, without invented sources. New databases omit memory type, status, expiry-state and consolidation-progress columns. Extra columns and old consolidation jobs in existing databases are unused; initialization does not delete or rebuild historical data. Extraction follows the current JSON Schema with factual fields and message evidence only.
 
 Decision models can request retrieval. With embeddings enabled, replies continue using the session recall pool. Old `session_recall_enabled` values are ignored; `/读取近期记忆` remains available.
+
+User-associated memories can be recalled across conversations within the same bot. Any matching `associated_user_ids` account is sufficient, regardless of the source conversation; bots remain isolated. SQLite filters participants and valid index revisions before vector retrieval, candidate limits and reranking, then rechecks scope and revisions when loading current records. Legacy entries without explicit associated accounts, including records with only the old `user_id` field or malformed metadata, remain local to their source conversation. Stored facts, sources and evidence remain in place without merging, copying or extracting them again.
+
+Decision requests use the current batch's participants; automatic replies search separately for each current speaker. Explicit retrieval accepts `<search_memory user_id="12345">past agreement</search_memory>`; omitting `user_id` uses the current participants. Raw chat-history queries, `/读取近期记忆` and the dashboard's source-conversation filters retain their conversation scope.
+
+Internal context labels recalled entries from other groups or private conversations without including evidence excerpts. Potentially private information requires the same user's explicit permission before disclosure, and foreign facts must not be presented as events in the current conversation. Session pools retain source labels, match current participants before reusing foreign entries and remove copies when their source conversation is cleared.
 
 Automatic retrieval runs once per reply. Pending messages are grouped by `user_id`, preserving each user's message order, and each group is searched separately. The reply prompt retains the original conversation order. Media placeholders use only completed, cached `caption` content in their original position, excluding `text`, genre, character and source fields. Media without a usable caption is skipped while ordinary text remains; an empty user group is not searched. Each user's candidates are reranked against that user's query, then merged and deduplicated by memory ID. A memory receives at most one automatic hit per batch. The per-user candidate setting controls each search, while the injection limit bounds the combined current automatic results and older pool entries, preferring current results. Setting that limit to 0 disables automatic retrieval and injection while leaving explicit decision and tool searches available. Recalls enter the pool only after the reply succeeds, with the existing TTL and capacity eviction preserved.
 

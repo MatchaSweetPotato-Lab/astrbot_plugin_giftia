@@ -67,14 +67,15 @@ class ToolExecutor:
                 memory.get("memory_id") or memory.get("id")
                 for memory in relevant_memories
             }
-            for target_group_or_user_id, query in llm_result.search_memories:
+            for target_user_id, query in llm_result.search_memories:
                 memory_results = await search_memories_with_rerank(
                     self.plugin,
                     bot_name=bot_name,
-                    group_or_user_id=target_group_or_user_id,
+                    group_or_user_id=group_or_user_id,
                     query=query,
                     recent_messages=recent_messages,
                     log_context="工具记忆检索",
+                    user_ids=[target_user_id] if target_user_id else None,
                 )
 
                 if memory_results:

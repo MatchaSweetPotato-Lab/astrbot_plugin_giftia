@@ -277,7 +277,7 @@ class XmlLlmResult:
     kick: list[tuple[str, str]] = field(default_factory=list)
     # 退群，同上。群号
     leave: list[str] = field(default_factory=list)
-    # 长期记忆。群号/用户ID，内容
+    # Memory search: optional target user ID and semantic query.
     search_memories: list[tuple[str, str]] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(

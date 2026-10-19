@@ -1041,6 +1041,14 @@ class DataCache:
     async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
         """删除全部记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
+        for key, pool in self.session_recalled_memories.items():
+            if key.startswith(f"{bot_name}:"):
+                for memory_id, memory in list(pool.items()):
+                    source = memory_metadata({"metadata": memory.metadata}).get(
+                        "source_session_id"
+                    )
+                    if source == group_or_user_id:
+                        pool.pop(memory_id, None)
         targets = [
             self.group_profiles,
             self.memories,

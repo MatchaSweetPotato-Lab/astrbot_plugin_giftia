@@ -8,6 +8,7 @@ from astrbot.api.event import AstrMessageEvent
 
 from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt, prepare_reply_message_context
+from ..memory.atomic import memory_metadata
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
@@ -141,7 +142,7 @@ class ReplyPipeline:
             user_queries.setdefault(str(message.user_id), []).append(content)
 
         candidates = []
-        for parts in user_queries.values():
+        for user_id, parts in user_queries.items():
             candidates.extend(
                 await search_memories_with_rerank(
                     self.plugin,
@@ -152,6 +153,7 @@ class ReplyPipeline:
                     limit_key="session_recall_search_limit",
                     log_context="会话记忆自动召回",
                     record_hits=False,
+                    user_ids=[user_id] if user_id else None,
                 )
             )
         candidates.sort(
@@ -267,6 +269,11 @@ class ReplyPipeline:
                 str(memory.get("memory_id") or memory.get("id") or "")
                 for memory in relevant_memories
             }
+            recall_users = {
+                str(msg.user_id)
+                for msg in reply_messages
+                if msg.user_id and msg.role == "message" and not msg.is_recalled
+            } or {str(event.get_sender_id())}
             # Pending recalls survive tool turns without mutating the pool before success.
             for memory in [*pending_recall_memories, *cached_memories]:
                 if len(session_recalled_memories) >= max_items:
@@ -276,6 +283,18 @@ class ReplyPipeline:
                     if isinstance(memory, dict)
                     else memory.memory_id
                 )
+                metadata = memory_metadata(
+                    memory
+                    if isinstance(memory, dict)
+                    else {"metadata": memory.metadata}
+                )
+                source = metadata.get("source_session_id")
+                if source and source != group_or_user_id:
+                    associated = {
+                        str(uid) for uid in metadata.get("associated_user_ids", [])
+                    }
+                    if not associated & recall_users:
+                        continue
                 if memory_id and memory_id not in seen_ids:
                     seen_ids.add(memory_id)
                     session_recalled_memories.append(memory)
@@ -581,7 +600,7 @@ class ReplyPipeline:
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             llm_result=llm_result,
-            recent_messages=recent_messages,
+            recent_messages=reply_messages or recent_messages,
             relevant_memories=relevant_memories,
             other_data=other_data,
         )

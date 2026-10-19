@@ -214,7 +214,7 @@ def build_xml_instructions(
 
     if is_enabled(FeatureKey.MEMORY_QUERY):
         interactive_lines.append(
-            "- **记忆检索**: `<search_memory>检索问题</search_memory>`。用于检索自身的长期记忆，补充与过往回忆、约定等相关的内容。"
+            '- **记忆检索**: `<search_memory>检索问题</search_memory>`，可加 `user_id="目标用户ID"` 指定用户。同一 Bot 内按关联用户跨群检索，省略用户时以本批参与者为范围；没有用户关联的旧记忆只在当前会话检索。用于补充与过往回忆、约定等相关的内容。'
         )
 
     if is_enabled(FeatureKey.PERSISTENT_STATUS):
