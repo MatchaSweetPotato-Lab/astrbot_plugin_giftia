@@ -366,6 +366,44 @@ async def test_review_sees_fifty_reasons_new_markers_and_only_related_direct_mes
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "```json\n{}\n```",
+        "```\n{}\n```",
+        "```json {} ```",
+        "评估结果：\n```json\n{}\n```",
+    ],
+)
+@pytest.mark.parametrize("attitude", ["欢喜冤家，日常互怼拌嘴，偶尔温馨互动", None])
+async def test_markdown_review_updates_attitude_and_consumes_pending_history(
+    runtime, wrapper, attitude
+):
+    await runtime.cache.set_user_profile(
+        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
+    )
+    for _ in range(5):
+        await runtime.cache.update_relation("bot", "group", "user", 1, "日常互动")
+    profile_before = await runtime.cache.get_user_profile_record("bot", "group", "user")
+    changes_before = await runtime.db.get_relation_changes("bot", "group", "user")
+    runtime.manager._call_summary_llm.return_value = wrapper.format(
+        json.dumps({"attitude": attitude}, ensure_ascii=False)
+    )
+
+    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
+
+    profile = await runtime.cache.get_user_profile_record("bot", "group", "user")
+    assert profile["attitude"] == (attitude or "礼貌交流")
+    assert profile["relation"] == profile_before["relation"]
+    assert (
+        await runtime.db.get_relation_changes("bot", "group", "user") == changes_before
+    )
+    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
+    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
+    assert runtime.manager._call_summary_llm.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_large_backlog_is_reviewed_in_bounded_windows_without_skipping_changes(
     runtime,
 ):
@@ -418,6 +456,9 @@ async def test_failed_small_backlog_tail_remains_eligible_for_periodic_retry(run
         '{"attitude": "无"}',
         json.dumps({"attitude": "长" * 21}),
         '{"attitude": "友好", "relation": 99}',
+        '```json\n{"attitude": 1}\n```',
+        '```json\n{"attitude": "友好", "relation": 99}\n```',
+        '```json\n{"attitude": "长长长长长长长长长长长长长长长长长长长长长"}\n```',
     ],
 )
 async def test_invalid_review_preserves_cursor_and_periodic_retry_needs_no_new_messages(

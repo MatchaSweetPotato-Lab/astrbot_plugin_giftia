@@ -5,6 +5,7 @@ import re
 from astrbot.api import logger
 
 from ..database.utils import parse_aliases
+from ..llm.json_parse import parse_markdown_json
 from ..llm.preset_prompts import DEFAULT_PASSIVE_ATTITUDE_SUMMARY_PROMPT
 from ..llm.prompt import normalize_profile_value, truncate_message_content
 from ..utils.token_utils import extract_tokens_robust
@@ -354,7 +355,7 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                     )
-                    response = json.loads(completion or "")
+                    response = parse_markdown_json(completion or "")
                     if not isinstance(response, dict) or set(response) != {"attitude"}:
                         raise ValueError("Expected exactly one attitude field")
                     attitude = response["attitude"]
