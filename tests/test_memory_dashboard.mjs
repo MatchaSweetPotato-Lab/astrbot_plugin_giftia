@@ -319,3 +319,134 @@ test('affinity history escapes failures and offers retry and empty states', asyn
     await list.querySelector('button').onclick();
     assert.match(list.innerHTML, /暂无互动评价记录/);
 });
+
+test('editing a rating submits scoped content, score and the loaded revision', async () => {
+    let revision = 7;
+    let rating = { id: 42, delta: 1, reason: '<script>original</script>' };
+    let affinity = 54.5;
+    let refreshed = 0;
+    window.apiGet = async () => ({ status: 'success', data: {
+        items: [rating], revision, page: 1, total: 1, limit: 10,
+        score: { relation: affinity, interaction_score: affinity, total_count: 1 }
+    } });
+    window.GiftiaApp.loadUserProfiles = async () => { refreshed++; };
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    const html = get('user-relation-history-list').innerHTML;
+    assert.match(html, /data-relation-action="edit"/);
+    assert.match(html, /data-relation-action="delete"/);
+    assert.match(html, /&lt;script&gt;original/);
+    assert.doesNotMatch(html, /<script>|onclick=/);
+    window.openUserRelationEditor(0);
+    assert.equal(get('user-relation-reason').value, '<script>original</script>');
+    get('user-relation-delta').value = '-3';
+    get('user-relation-reason').value = 'corrected interaction';
+    let submitted;
+    window.apiPost = async (path, body) => {
+        submitted = { path, body };
+        rating = { ...rating, delta: body.delta, reason: body.reason };
+        revision++;
+        affinity = 38.5;
+        return { status: 'success' };
+    };
+    await window.submitUserRelationChange();
+    assert.deepEqual(submitted, { path: '/profiles/user/relation_history/save', body: {
+        bot_name: 'bot', group_or_user_id: 'group', user_id: 'A', action: 'update',
+        revision: 7, id: 42, delta: -3, reason: 'corrected interaction'
+    } });
+    assert.equal(get('user-relation-editor').hidden, true);
+    assert.match(get('user-relation-history-list').innerHTML, /corrected interaction/);
+    assert.match(get('user-relation-history-summary').innerHTML, /38\.5/);
+    assert.equal(refreshed, 1);
+});
+
+test('adding a rating to empty history creates one entry and blocks duplicate submits', async () => {
+    window.apiGet = async () => ({ status: 'success', data: { items: [], revision: 0, total: 0, page: 1, limit: 10 } });
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    assert.equal(get('user-relation-add').disabled, false);
+    window.openUserRelationEditor();
+    get('user-relation-delta').value = '2';
+    get('user-relation-reason').value = 'new positive interaction';
+    let finish;
+    const submitted = [];
+    window.apiPost = (path, body) => {
+        submitted.push(body);
+        return new Promise(resolve => { finish = resolve; });
+    };
+    const pending = window.submitUserRelationChange();
+    await window.submitUserRelationChange();
+    assert.equal(submitted.length, 1);
+    assert.deepEqual(submitted[0], { bot_name: 'bot', group_or_user_id: 'group', user_id: 'A',
+        action: 'add', revision: 0, delta: 2, reason: 'new positive interaction' });
+    assert.equal(get('user-relation-save').disabled, true);
+    finish({ status: 'success' });
+    await pending;
+    assert.equal(get('user-relation-save').disabled, false);
+});
+
+test('invalid ratings remain in the editor without making a request', async () => {
+    window.apiGet = async () => ({ status: 'success', data: { items: [], revision: 0, total: 0, page: 1, limit: 10 } });
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    let submitted = false;
+    window.apiPost = async () => { submitted = true; };
+    for (const [delta, reason] of [[0, 'reason'], [6, 'reason'], [1.5, 'reason'], [1, '  ']]) {
+        window.openUserRelationEditor();
+        get('user-relation-delta').value = String(delta);
+        get('user-relation-reason').value = reason;
+        await window.submitUserRelationChange();
+        assert.equal(get('user-relation-editor-error').hidden, false);
+        assert.equal(get('user-relation-editor').hidden, false);
+    }
+    assert.equal(submitted, false);
+});
+
+test('deleting the final entry on a page confirms and reloads the remaining last page', async () => {
+    let deleted = false;
+    let confirmed;
+    let submitted;
+    let loadedPage;
+    window.apiGet = async (path, params) => {
+        loadedPage = params.page;
+        return { status: 'success', data: { items: deleted ? [] : [{ id: 11, delta: -1, reason: 'old reason' }],
+            revision: deleted ? 5 : 4, total: deleted ? 10 : 11, page: deleted ? 1 : params.page, limit: 10 } };
+    };
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    await window.loadUserRelationHistory(2);
+    window.showConfirm = (title, message, callback) => { confirmed = callback; };
+    window.apiPost = async (path, body) => { submitted = body; deleted = true; return { status: 'success' }; };
+    window.deleteUserRelationChange(0);
+    assert.equal(deleted, false);
+    await confirmed();
+    assert.deepEqual(submitted, { bot_name: 'bot', group_or_user_id: 'group', user_id: 'A', action: 'delete', id: 11, revision: 4 });
+    assert.equal(loadedPage, 2);
+    assert.match(get('user-relation-history-list').innerHTML, /暂无互动评价记录/);
+});
+
+test('failed saves preserve unsaved content and display an inline error', async () => {
+    window.apiGet = async () => ({ status: 'success', data: { items: [{ id: 1, delta: 1, reason: 'original' }], revision: 0, total: 1, page: 1, limit: 10 } });
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    window.openUserRelationEditor(0);
+    get('user-relation-reason').value = 'unsaved revision';
+    window.apiPost = async () => ({ status: 'error', message: '历史已更新，请刷新后重试' });
+    await window.submitUserRelationChange();
+    assert.equal(get('user-relation-reason').value, 'unsaved revision');
+    assert.equal(get('user-relation-editor').hidden, false);
+    assert.match(get('user-relation-editor-error').textContent, /历史已更新/);
+    assert.equal(get('user-relation-save').disabled, false);
+});
+
+test('a late save cannot replace the history of a newly selected member', async () => {
+    window.apiGet = async (path, params) => ({ status: 'success', data: {
+        items: [{ id: 1, delta: 1, reason: `member ${params.user_id}` }], revision: 0, total: 1, page: 1, limit: 10
+    } });
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
+    window.openUserRelationEditor(0);
+    let finish;
+    window.apiPost = () => new Promise(resolve => { finish = resolve; });
+    const pending = window.submitUserRelationChange();
+    await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'other', user_id: 'B' });
+    finish({ status: 'success' });
+    await pending;
+    assert.match(get('user-relation-history-scope').textContent, /B · bot \/ other/);
+    assert.match(get('user-relation-history-list').innerHTML, /member B/);
+    assert.doesNotMatch(get('user-relation-history-list').innerHTML, /member A/);
+});

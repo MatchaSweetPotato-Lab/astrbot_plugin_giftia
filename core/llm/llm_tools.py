@@ -17,7 +17,12 @@ from ..utils.schemas import (
     MediaCaption,
     MessageData,
 )
-from .prompt import USER_PROFILE_FIELDS, build_user_relation, normalize_profile_value
+from .prompt import (
+    USER_PROFILE_FIELDS,
+    build_user_relation,
+    format_memory_time,
+    normalize_profile_value,
+)
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -170,18 +175,23 @@ class GetMessageContextTool(FunctionTool):
 class SearchUserProfileTool(FunctionTool):
     plugin: Any = None
     name: str = "search_user_profile"
-    description: str = "在当前会话内模糊搜索成员画像。可用 user_id、昵称、你的称呼、其他外号等关键词定位成员。"
+    description: str = "在当前会话内按用户ID、昵称、你的称呼、其他外号或头像描述模糊搜索成员画像，并分页查看每位成员的互动评价历史。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词，可填写用户ID、昵称、你的称呼、其他外号或画像关键词。",
+                    "description": "搜索关键词，仅匹配用户ID、昵称、你的称呼、其他外号或头像描述。",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "返回数量，默认5，最大20。",
+                    "description": "匹配成员数量，默认5，最大20，不影响互动评价历史的页面大小。",
+                },
+                "page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "每位成员的互动评价历史页码，从1开始，每页固定10条，最新在前；省略时展示最近10条，超出末页时返回末页。",
                 },
             },
             "required": ["query"],
@@ -206,6 +216,27 @@ class SearchUserProfileTool(FunctionTool):
             if value:
                 lines.append(f"- {label}：{value}")
 
+        history = item.get("relation_history")
+        if history is not None:
+            total = history["total"]
+            pages = max(1, (total + 9) // 10)
+            lines.extend(
+                [
+                    "互动评价历史（已参与计分，评价值不等于最终好感度增减）：",
+                    f"第 {history['page']}/{pages} 页；每页 10 条，共 {total} 条",
+                ]
+            )
+            for change in history["items"]:
+                timestamp = format_memory_time(
+                    change.get("occurred_at") or change.get("created_at") or ""
+                )
+                reason = normalize_profile_value(change.get("reason"))
+                lines.append(
+                    f"- [{timestamp}] 互动评价 {int(change['delta']):+d}：{reason}"
+                )
+            if not history["items"]:
+                lines.append("暂无互动评价记录")
+
         return "\n".join(lines)
 
     async def call(
@@ -213,6 +244,7 @@ class SearchUserProfileTool(FunctionTool):
         context: ContextWrapper[AstrAgentContext],
         query: str,
         limit: int = 5,
+        page: int = 1,
     ):
         if self.plugin is None:
             logger.warning("SearchUserProfileTool 未绑定插件实例")
@@ -225,6 +257,14 @@ class SearchUserProfileTool(FunctionTool):
             return "检索失败：未找到对应的 bot_name"
 
         group_or_user_id = event.get_group_id() or event.get_sender_id()
+        try:
+            if isinstance(page, bool) or not isinstance(page, (int, str)):
+                raise ValueError
+            clean_page = int(page)
+            if clean_page < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            return "查询失败：互动评价历史页码必须是正整数"
         try:
             clean_limit = min(max(1, int(limit or 5)), 20)
         except (TypeError, ValueError):
@@ -250,6 +290,22 @@ class SearchUserProfileTool(FunctionTool):
         ]
         if not results:
             return f"未在当前会话找到与「{query}」相关的成员画像"
+
+        for item in results:
+            total = item["total_count"]
+            history_page = min(clean_page, max(1, (total + 9) // 10))
+            changes = await plugin.db.get_relation_changes(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=item["user_id"],
+                limit=10,
+                offset=(history_page - 1) * 10,
+            )
+            item["relation_history"] = {
+                "items": list(reversed(changes)),
+                "total": total,
+                "page": history_page,
+            }
 
         return "查询到的成员画像:\n" + "\n\n".join(
             self._format_profile_result(item) for item in results

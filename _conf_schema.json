@@ -261,7 +261,7 @@
                 "description": "启用用户画像查询工具",
                 "type": "bool",
                 "default": true,
-                "hint": "允许AI在当前会话内通过用户ID、昵称、你的称呼或其他外号模糊查询成员画像"
+                "hint": "允许AI在当前会话内通过用户ID、昵称、你的称呼、其他外号或头像描述模糊查询成员画像，并分页查看互动评价历史"
             },
             "inspect_forward_message_enabled": {
                 "description": "启用合并转发按需查看工具",
