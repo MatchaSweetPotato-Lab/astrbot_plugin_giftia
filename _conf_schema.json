@@ -185,37 +185,6 @@
             }
         }
     },
-    "concurrent_config": {
-        "description": "会话批处理",
-        "type": "object",
-        "hint": "每个会话串行处理消息批次；冷却期间积累消息，到期自动处理。保留原配置存储键以沿用已有时间设置。",
-        "items": {
-            "group_throttle_time": {
-                "description": "会话决策最小间隔",
-                "type": "int",
-                "default": 5,
-                "hint": "同一会话两次决策开始时间的最小间隔（秒），适用于群聊和私聊。期间消息合并保留，不丢弃。"
-            },
-            "user_debounce_time": {
-                "description": "会话消息防抖",
-                "type": "int",
-                "default": 3,
-                "hint": "会话内连续消息的合并等待时间（秒），跨用户一起聚合。0 表示不等待。"
-            },
-            "user_max_debounce_time": {
-                "description": "会话最大合并等待",
-                "type": "int",
-                "default": 30,
-                "hint": "从首条待处理消息准备完成起计算的最大防抖等待（秒）。不缩短决策冷却，也不打断正在执行的回复。"
-            },
-            "batch_max_messages": {
-                "description": "每批待处理消息上限",
-                "type": "int",
-                "default": 50,
-                "hint": "每轮决策或回复最多处理多少条新消息。超出部分保留到后续批次，不受历史消息条数限制；最小为 1。"
-            }
-        }
-    },
     "tools_config": {
         "description": "函数调用工具",
         "type": "object",

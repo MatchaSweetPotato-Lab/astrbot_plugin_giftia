@@ -1,24 +1,35 @@
 """Behavioral tests for batch boundaries, timers, and failure outcomes."""
 
 import asyncio
+import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from xml.etree.ElementTree import fromstring
 
 import pytest
+import pytest_asyncio
+from core.conversation import chat_manager as chat_module
 from core.conversation.chat_manager import ChatManager
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.llm.prompt import build_decision_prompt, build_reply_prompt
 from core.memory.passive_memory import PassiveMemoryManager
 from core.utils.schemas import MessageData, Status, XmlLlmResult
 
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import At, Image, Plain, Reply
+
+WAIT_STEPS = chat_module.SESSION_WAIT_STEPS
 
 
 @pytest.fixture
 def runtime(monkeypatch):
+    # Existing boundary tests bypass elapsed time; timer tests restore the policy.
+    monkeypatch.setattr(
+        chat_module, "SESSION_WAIT_STEPS", tuple((n, c, 0.0) for n, c, _ in WAIT_STEPS)
+    )
+    monkeypatch.setattr(chat_module, "SESSION_MIN_INTERVAL", 0.0)
     histories = defaultdict(list)
     outcomes = {}
     locks = defaultdict(asyncio.Lock)
@@ -43,10 +54,6 @@ def runtime(monkeypatch):
         replying_status={},
         active_reply_counters={},
         msg_number=300,
-        session_debounce_time=0,
-        session_max_debounce_time=0.1,
-        decision_interval=0,
-        batch_max_messages=50,
         db=SimpleNamespace(
             chat_history_repo=SimpleNamespace(
                 update_processing_status=AsyncMock(side_effect=status)
@@ -72,15 +79,21 @@ def runtime(monkeypatch):
         SimpleNamespace(acquire_lock=acquire),
     )
 
-    async def send(mid, session="group", user="user"):
+    async def send(
+        mid, session="group", user="user", *, text=None, chain=None, private=False
+    ):
+        text = mid if text is None else text
+        chain = [Plain(text)] if chain is None else chain
+        origin_type = "FriendMessage" if private else "GroupMessage"
         event = SimpleNamespace(
-            unified_msg_origin=f"adapter:GroupMessage:{session}",
-            get_group_id=lambda: session,
+            unified_msg_origin=f"adapter:{origin_type}:{session}",
+            get_group_id=lambda: "" if private else session,
             get_sender_id=lambda: user,
             get_self_id=lambda: "self",
             get_sender_name=lambda: user,
+            get_messages=lambda: chain,
         )
-        msg = MessageData(message_id=mid, content=mid, user_id=user, nickname=user)
+        msg = MessageData(message_id=mid, content=text, user_id=user, nickname=user)
         async with plugin.parse_locks[f"bot:{event.unified_msg_origin}"]:
             histories[session].append(msg)
             await manager._enqueue_message(event, "bot", session, msg)
@@ -103,6 +116,61 @@ def runtime(monkeypatch):
         outcomes=outcomes,
         locks=locks,
     )
+
+
+@pytest_asyncio.fixture
+async def scheduled_runtime(runtime, monkeypatch):
+    """Run the production scheduling policy against explicit virtual deadlines."""
+    clock = SimpleNamespace(now=100.0, waits=[], waiting=asyncio.Event(), deadlines={})
+
+    async def wait_for(awaitable, timeout):
+        waiter = asyncio.ensure_future(awaitable)
+        expired = asyncio.get_running_loop().create_future()
+        clock.deadlines[expired] = clock.now + timeout
+        clock.waits.append(timeout)
+        clock.waiting.set()
+        try:
+            done, _ = await asyncio.wait(
+                (waiter, expired), return_when=asyncio.FIRST_COMPLETED
+            )
+            if waiter in done:
+                return waiter.result()
+            raise asyncio.TimeoutError
+        finally:
+            clock.deadlines.pop(expired, None)
+            waiter.cancel()
+            expired.cancel()
+            await asyncio.gather(waiter, expired, return_exceptions=True)
+
+    async def advance(seconds):
+        clock.waiting.clear()
+        clock.now += seconds
+        for expired, deadline in list(clock.deadlines.items()):
+            if deadline <= clock.now and not expired.done():
+                expired.set_result(None)
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(chat_module, "SESSION_WAIT_STEPS", WAIT_STEPS)
+    monkeypatch.setattr(chat_module, "SESSION_MIN_INTERVAL", 2.0)
+    monkeypatch.setattr(
+        chat_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.now, time=time.time),
+    )
+    monkeypatch.setattr(
+        chat_module,
+        "asyncio",
+        SimpleNamespace(**(vars(asyncio) | {"wait_for": wait_for})),
+    )
+    clock.advance = advance
+    runtime.clock = clock
+    try:
+        yield runtime
+    finally:
+        tasks = list(runtime.plugin.running_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -240,7 +308,6 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
 
     plugin.passive_memory_enabled = True
     plugin.active_reply_counters["bot:group"] = active_counter
-    plugin.session_debounce_time = 0.01
     plugin.db.get_kv_data = AsyncMock(
         side_effect=lambda key, default: stored.get(key, default)
     )
@@ -282,14 +349,117 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
 
 
 @pytest.mark.asyncio
-async def test_cooldown_wakes_without_another_message(runtime):
-    runtime.plugin.decision_interval = 0.05
+@pytest.mark.parametrize(
+    "count,characters,expected",
+    [
+        (1, 0, 15.0),
+        (1, 1, 15.0),
+        (1, 10, 15.0),
+        (1, 11, 10.0),
+        (1, 30, 10.0),
+        (1, 31, 6.0),
+        (1, 60, 6.0),
+        (1, 61, 3.0),
+        (1, 100, 3.0),
+        (1, 101, 1.5),
+        (1, 160, 1.5),
+        (1, 161, 0.8),
+        (2, 0, 10.0),
+        (3, 0, 6.0),
+        (4, 0, 6.0),
+        (5, 0, 3.0),
+        (7, 0, 3.0),
+        (8, 0, 1.5),
+        (11, 0, 1.5),
+        (12, 0, 0.8),
+        (2, 161, 0.8),
+        (6, 40, 3.0),
+        (4, 101, 1.5),
+    ],
+)
+async def test_dynamic_wait_uses_the_shorter_count_or_text_tier(
+    scheduled_runtime, count, characters, expected
+):
+    runtime = scheduled_runtime
+    for index in range(count):
+        await runtime.send(str(index), text="字" * characters if index == 0 else "")
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits == [pytest.approx(expected)]
+    runtime.manager.decision_engine.evaluate_decision.assert_not_awaited()
+    await runtime.clock.advance(expected)
+    await runtime.drain()
+    call = runtime.manager.decision_engine.evaluate_decision.await_args
+    assert len(call.kwargs["pending_messages"]) == count
+    assert set(runtime.outcomes.values()) == {"handled"}
+
+
+@pytest.mark.asyncio
+async def test_new_arrivals_shorten_the_first_message_deadline(scheduled_runtime):
+    runtime = scheduled_runtime
     await runtime.send("A")
-    await runtime.drain()
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits[-1] == 15.0
+    await runtime.clock.advance(4)
     await runtime.send("B")
-    await runtime.send("C")
-    assert runtime.manager.decision_engine.evaluate_decision.await_count == 1
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits[-1] == 6.0
+    await runtime.clock.advance(6)
     await runtime.drain()
+    call = runtime.manager.decision_engine.evaluate_decision.await_args
+    assert [m.message_id for m in call.kwargs["pending_messages"]] == ["A", "B"]
+
+
+@pytest.mark.asyncio
+async def test_arrivals_in_the_same_tier_never_extend_wait(scheduled_runtime):
+    runtime = scheduled_runtime
+    await runtime.send("A", text="字" * 40)
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits[-1] == 6.0
+    await runtime.clock.advance(5)
+    await runtime.send("B")
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits[-1] == 1.0
+    await runtime.clock.advance(1)
+    await runtime.drain()
+    runtime.manager.decision_engine.evaluate_decision.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_arrivals_past_the_shorter_deadline_start_immediately(scheduled_runtime):
+    runtime = scheduled_runtime
+    await runtime.send("A")
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    await runtime.clock.advance(4)
+    for mid in ["B", "C", "D", "E"]:
+        await runtime.send(mid)
+    await runtime.drain()
+    assert runtime.clock.waits == [15.0]
+    call = runtime.manager.decision_engine.evaluate_decision.await_args
+    assert [m.message_id for m in call.kwargs["pending_messages"]] == list("ABCDE")
+
+
+@pytest.mark.asyncio
+async def test_cooldown_wakes_without_another_message(scheduled_runtime):
+    runtime = scheduled_runtime
+    starts = []
+
+    async def decide(**kwargs):
+        starts.append(runtime.clock.now)
+        return False, None, None, None
+
+    runtime.manager.decision_engine.evaluate_decision.side_effect = decide
+    await runtime.send("A", text="字" * 161)
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    await runtime.clock.advance(0.8)
+    await runtime.drain()
+    await runtime.send("B", text="字" * 161)
+    await runtime.send("C")
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits[-1] == 2.0
+    assert len(starts) == 1
+    await runtime.clock.advance(2)
+    await runtime.drain()
+    assert starts[1] - starts[0] == pytest.approx(2.0)
     calls = runtime.manager.decision_engine.evaluate_decision.await_args_list
     assert [[m.message_id for m in c.kwargs["pending_messages"]] for c in calls] == [
         ["A"],
@@ -298,22 +468,141 @@ async def test_cooldown_wakes_without_another_message(runtime):
 
 
 @pytest.mark.asyncio
-async def test_maximum_debounce_prevents_continuous_arrival_starvation(runtime):
-    runtime.plugin.session_debounce_time = 0.1
-    runtime.plugin.session_max_debounce_time = 0.04
-    started = asyncio.Event()
+@pytest.mark.parametrize("phase", ["decision", "reply", "shared_lock"])
+async def test_time_spent_busy_counts_toward_the_next_deadline(
+    scheduled_runtime, phase
+):
+    runtime = scheduled_runtime
+    started, release = asyncio.Event(), asyncio.Event()
+    batches = []
 
     async def decide(**kwargs):
+        batches.append([m.message_id for m in kwargs["pending_messages"]])
+        if len(batches) == 1 and phase == "decision":
+            started.set()
+            await release.wait()
+        return len(batches) == 1 and phase == "reply", None, None, None
+
+    async def reply(**kwargs):
         started.set()
-        return False, None, None, None
+        await release.wait()
+        yield XmlLlmResult()
 
     runtime.manager.decision_engine.evaluate_decision.side_effect = decide
-    await runtime.send("A")
-    for i in range(4):
-        await asyncio.sleep(0.01)
-        await runtime.send(str(i))
-    await asyncio.wait_for(started.wait(), 0.05)
+    runtime.manager.reply_pipeline.dispatch_llm_reply_loop = reply
+    if phase == "shared_lock":
+        lock = runtime.locks["adapter:GroupMessage:group"]
+        await lock.acquire()
+    await runtime.send("A", text="字" * 161)
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    await runtime.clock.advance(0.8)
+    if phase != "shared_lock":
+        await asyncio.wait_for(started.wait(), 1)
+    await runtime.send("B")
+    await runtime.clock.advance(16)
+    if phase == "shared_lock":
+        lock.release()
+    else:
+        release.set()
     await runtime.drain()
+    assert runtime.clock.waits == [pytest.approx(0.8)]
+    assert batches == ([["A", "B"]] if phase == "shared_lock" else [["A"], ["B"]])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("force_reply", [False, True])
+@pytest.mark.parametrize("mentions_bot", [False, True])
+async def test_private_and_mention_messages_follow_the_same_wait(
+    scheduled_runtime, private, force_reply, mentions_bot
+):
+    runtime = scheduled_runtime
+    runtime.manager.decision_engine.get_trigger.return_value = force_reply
+    chain = [At(qq="self")] if mentions_bot else [Plain("你好")]
+    await runtime.send("A", chain=chain, private=private)
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits == [15.0]
+    await runtime.clock.advance(15)
+    await runtime.drain()
+    call = runtime.manager.decision_engine.evaluate_decision.await_args
+    assert call.kwargs["force_reply"] is force_reply
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "chain,characters",
+    [
+        ([At(qq="1234567890123456789", name="很长的昵称" * 20)], 0),
+        ([At(qq="self"), Plain(" 你好\n世界\t ")], 4),
+        ([Reply(id="quote", chain=[Plain("引用正文" * 100)]), Plain("收到")], 2),
+        ([Image(file="https://example.invalid/" + "x" * 200), Plain("看看")], 2),
+        (
+            [
+                Plain(
+                    "[@很长的昵称](mqqapi://markdown/mention?at_type=1&at_tinyid=1234567890)"
+                    "收到消息了吗"
+                ),
+                At(qq="1234567890", name="不同的群名片"),
+                Plain("收到消息了吗"),
+            ],
+            6,
+        ),
+    ],
+)
+async def test_wait_counts_only_original_body_characters(
+    scheduled_runtime, chain, characters
+):
+    runtime = scheduled_runtime
+    original = deepcopy(chain)
+    await runtime.send("A", text="解析包装、账号和媒体转述" * 100, chain=chain)
+    state = next(iter(runtime.manager.sessions.values()))
+    assert state.pending[0].text_length == characters
+    assert chain == original
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits == [15.0]
+    await runtime.clock.advance(15)
+    await runtime.drain()
+
+
+@pytest.mark.asyncio
+async def test_wait_uses_combined_body_lengths_from_all_pending_messages(
+    scheduled_runtime,
+):
+    runtime = scheduled_runtime
+    for mid in ["A", "B"]:
+        await runtime.send(mid, text="字" * 31)
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    assert runtime.clock.waits == [3.0]
+    await runtime.clock.advance(3)
+    await runtime.drain()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_timer_marks_waiting_messages_interrupted(scheduled_runtime):
+    runtime = scheduled_runtime
+    await runtime.send("A")
+    await asyncio.wait_for(runtime.clock.waiting.wait(), 1)
+    task = next(iter(runtime.plugin.running_tasks.values()))
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert runtime.outcomes[("group", "A")] == "interrupted"
+    assert runtime.clock.deadlines == {}
+    runtime.manager.decision_engine.evaluate_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_timer_runs_without_new_messages_and_ignores_legacy_settings(
+    runtime, monkeypatch
+):
+    runtime.plugin.session_debounce_time = 999
+    runtime.plugin.session_max_debounce_time = 999
+    runtime.plugin.decision_interval = 999
+    monkeypatch.setattr(chat_module, "SESSION_WAIT_STEPS", WAIT_STEPS)
+    monkeypatch.setattr(chat_module, "SESSION_MIN_INTERVAL", 2.0)
+    await runtime.send("A", text="字" * 161)
+    await runtime.drain()
+    assert runtime.outcomes[("group", "A")] == "handled"
+    runtime.manager.decision_engine.evaluate_decision.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -349,19 +638,24 @@ async def test_reminder_lock_defers_decision_until_reminder_finishes(runtime):
 
 @pytest.mark.asyncio
 async def test_large_batches_keep_unseen_messages_for_later(runtime):
+    # Persisted limits from earlier releases cannot override the fixed capacity.
     runtime.plugin.batch_max_messages = 2
-    runtime.plugin.session_debounce_time = 0.01
-    for mid in ["A", "B", "C", "D", "E"]:
+    messages = [f"m{index:03}" for index in range(101)]
+    for mid in messages:
         await runtime.send(mid)
     await runtime.drain()
     calls = runtime.manager.decision_engine.evaluate_decision.await_args_list
     assert [[m.message_id for m in c.kwargs["pending_messages"]] for c in calls] == [
-        ["A", "B"],
-        ["C", "D"],
-        ["E"],
+        messages[:50],
+        messages[50:100],
+        messages[100:],
     ]
     assert not calls[0].kwargs["recent_messages"]
-    assert [m.message_id for m in calls[1].kwargs["recent_messages"]] == ["A", "B"]
+    assert [m.message_id for m in calls[1].kwargs["recent_messages"]] == messages[38:50]
+    assert [m.message_id for m in calls[2].kwargs["recent_messages"]] == messages[
+        88:100
+    ]
+    assert len(runtime.outcomes) == 101
     assert set(runtime.outcomes.values()) == {"handled"}
 
 
@@ -721,9 +1015,9 @@ async def test_context_load_failure_finishes_failed_batch_without_busy_loop(runt
 
 @pytest.mark.asyncio
 async def test_absorbed_messages_respect_batch_capacity(runtime):
-    runtime.plugin.batch_max_messages = 2
     started, release = asyncio.Event(), asyncio.Event()
     batches, replies = [], []
+    arrivals = [f"B{index:03}" for index in range(51)]
 
     async def decide(**kwargs):
         batches.append([m.message_id for m in kwargs["pending_messages"]])
@@ -734,19 +1028,23 @@ async def test_absorbed_messages_respect_batch_capacity(runtime):
 
     async def reply(**kwargs):
         replies.append([m.message_id for m in kwargs["reply_messages"]])
-        assert "C" not in [m.message_id for m in kwargs["recent_messages"]]
+        assert not set(arrivals[49:]) & {
+            m.message_id for m in kwargs["recent_messages"]
+        }
         yield XmlLlmResult()
 
     runtime.manager.decision_engine.evaluate_decision.side_effect = decide
     runtime.manager.reply_pipeline.dispatch_llm_reply_loop = reply
     await runtime.send("A")
     await asyncio.wait_for(started.wait(), 2)
-    await runtime.send("B")
-    await runtime.send("C")
+    for mid in arrivals:
+        await runtime.send(mid)
     release.set()
     await runtime.drain()
-    assert replies == [["A", "B"]]
-    assert batches == [["A"], ["C"]]
+    assert replies == [["A", *arrivals[:49]]]
+    assert batches == [["A"], arrivals[49:]]
+    assert len(runtime.outcomes) == 52
+    assert set(runtime.outcomes.values()) == {"handled"}
 
 
 @pytest.mark.asyncio
