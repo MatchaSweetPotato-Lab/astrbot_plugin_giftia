@@ -35,7 +35,7 @@ window.openUserRelationHistoryModal = async function(item) {
         user_id: item.user_id
     };
     const name = item.call_name ? `${item.call_name}（${item.user_id}）` : String(item.user_id);
-    document.getElementById('user-relation-history-scope').textContent = `${name} · ${item.bot_name} / ${item.group_or_user_id}`;
+    document.getElementById('user-relation-history-scope').textContent = `${name} · ${item.bot_name} · 跨群共享（当前会话 ${item.group_or_user_id}）`;
     renderHistoryScore(item);
     window.openModal('user-relation-history-modal');
     await window.loadUserRelationHistory(1);

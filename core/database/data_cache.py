@@ -77,7 +77,7 @@ class DataCache:
         # 关系缓存
         self.relations: dict[
             str, tuple[float, str]
-        ] = {}  # bot_name:group_or_user_id:user_id -> (relation, title)
+        ] = {}  # bot_name:user_id -> (relation, title)
 
         # 使用 defaultdict 自动管理每个会话的 deque
         # lambda 确保每个新 key 都会得到一个指定长度的 deque
@@ -477,7 +477,7 @@ class DataCache:
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> str | None:
         """获取用户画像"""
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        fmt_key = f"{bot_name}:{user_id}"
         profile = self.user_profiles.get(fmt_key)
         if profile:
             return profile
@@ -496,19 +496,36 @@ class DataCache:
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict | None:
         """获取用户画像完整记录"""
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        fmt_key = f"{bot_name}:{user_id}"
         record = self.user_profile_records.get(fmt_key)
-        if record:
-            return record
-
-        record = await self.db.get_user_profile_record(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=user_id,
-        )
-        if record:
+        if record is None:
+            record = await self.db.get_user_profile_record(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+            )
+            if record is None:
+                return None
+            record = {key: value for key, value in record.items() if key != "aliases"}
             self.user_profile_records[fmt_key] = record
-        return record
+        return {
+            **record,
+            "aliases": await self.db.get_user_aliases_text(
+                bot_name, group_or_user_id, user_id
+            ),
+        }
+
+    def invalidate_user_profile(self, bot_name: str, user_id: str) -> None:
+        """Invalidate one user's shared profile and affinity in every conversation.
+
+        Args:
+            bot_name: Owning bot configuration.
+            user_id: User whose shared data has changed.
+        """
+        key = f"{bot_name}:{user_id}"
+        self.user_profile_records.pop(key, None)
+        self.user_profiles.pop(key, None)
+        self.relations.pop(key, None)
 
     async def set_user_profile(
         self,
@@ -521,7 +538,6 @@ class DataCache:
         alias_increment_count: bool = True,
     ) -> None:
         """设置用户画像"""
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         profile_fields = dict(profile_fields or {})
         aliases = profile_fields.pop("aliases", None)
         if aliases is not None:
@@ -547,9 +563,7 @@ class DataCache:
             title=title,
             profile_fields=profile_fields,
         )
-        self.user_profile_records.pop(fmt_key, None)
-        self.user_profiles.pop(fmt_key, None)
-        self.relations.pop(fmt_key, None)
+        self.invalidate_user_profile(bot_name, user_id)
 
     async def get_group_profile(
         self, bot_name: str, group_or_user_id: str
@@ -618,7 +632,6 @@ class DataCache:
         Returns:
             Whether this batch inserted a new affinity change.
         """
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         _, _, applied = await self.db.apply_relation_change(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -628,16 +641,14 @@ class DataCache:
             source_ids=source_ids,
             occurred_at=occurred_at,
         )
-        self.relations.pop(fmt_key, None)
-        self.user_profile_records.pop(fmt_key, None)
-        self.user_profiles.pop(fmt_key, None)
+        self.invalidate_user_profile(bot_name, user_id)
         return applied
 
     async def set_relation_title(
         self, bot_name: str, group_or_user_id: str, user_id: str, title: str
     ) -> None:
         """设置关系头衔"""
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        fmt_key = f"{bot_name}:{user_id}"
         current_relation, _ = await self.get_user_relation(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -657,7 +668,7 @@ class DataCache:
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> tuple[float, str]:
         """获取用户关系"""
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        fmt_key = f"{bot_name}:{user_id}"
         relation = self.relations.get(fmt_key)
         if relation:
             return relation
@@ -1031,16 +1042,15 @@ class DataCache:
         for cache in targets:
             cache.pop(fmt_key, None)
 
-        prefix = f"{fmt_key}:"
-        for cache_dict in [self.user_profiles, self.relations]:
+        prefix = f"{bot_name}:"
+        for cache_dict in [
+            self.user_profiles,
+            self.relations,
+            self.user_profile_records,
+        ]:
             keys_to_delete = [k for k in cache_dict.keys() if k.startswith(prefix)]
             for k in keys_to_delete:
                 cache_dict.pop(k, None)
-        keys_to_delete = [
-            k for k in self.user_profile_records.keys() if k.startswith(prefix)
-        ]
-        for k in keys_to_delete:
-            self.user_profile_records.pop(k, None)
 
         await asyncio.gather(
             self.db.delete_group_user_profiles(
@@ -1057,9 +1067,6 @@ class DataCache:
             ),
             self.db.delete_bot_status(
                 group_or_user_id=group_or_user_id, bot_name=bot_name
-            ),
-            self.db.delete_all_relations(
-                bot_name=bot_name, group_or_user_id=group_or_user_id
             ),
             self.db.delete_chat_history(
                 group_or_user_id=group_or_user_id, bot_name=bot_name

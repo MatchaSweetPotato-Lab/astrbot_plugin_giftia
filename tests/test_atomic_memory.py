@@ -307,7 +307,7 @@ async def test_bot_answer_can_establish_interaction_evidence(
         (None, "", "11111"),
     ],
 )
-async def test_summary_receives_scoped_call_names_without_rewriting_sources(
+async def test_summary_receives_shared_call_names_without_rewriting_sources(
     runtime, call_name, nickname, display_name
 ):
     from xml.etree.ElementTree import fromstring
@@ -320,10 +320,10 @@ async def test_summary_receives_scoped_call_names_without_rewriting_sources(
     )
     await runtime.db.conn.commit()
     for bot_name, session_id, user_id, name in [
-        ("bot", "group", "11111", call_name),
+        ("bot", "group", "11111", "旧称呼"),
         ("bot", "group", "22222", "小白"),
         ("other-bot", "group", "11111", "其他Bot的称呼"),
-        ("bot", "other-group", "11111", "其他会话的称呼"),
+        ("bot", "other-group", "11111", call_name),
         ("bot", "group", "33333", "本批未发言用户的称呼"),
     ]:
         await runtime.db.upsert_user_profile(
@@ -363,7 +363,7 @@ async def test_summary_receives_scoped_call_names_without_rewriting_sources(
     system_prompt, user_prompt = summary_call.args[1:]
     root = fromstring(user_prompt)
     assert root.find("active_users") is None
-    for omitted in ("其他Bot的称呼", "其他会话的称呼", "本批未发言用户的称呼"):
+    for omitted in ("其他Bot的称呼", "旧称呼", "本批未发言用户的称呼"):
         assert omitted not in user_prompt
     source = root.find("new_messages/message")
     assert source.attrib["user_id"] == "11111"

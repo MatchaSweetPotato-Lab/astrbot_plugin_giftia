@@ -10,6 +10,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.plugin = plugin
         self.passive_memory_locks: dict[str, asyncio.Lock] = {}
         self.summary_tasks: dict[str, asyncio.Task] = {}
+        self.attitude_review_locks: dict[str, asyncio.Lock] = {}
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()

@@ -160,10 +160,7 @@ async def test_missing_bot_and_missing_profile(command):
     plugin.conf["report_config"] = {"render_mode": "图片响应"}
     plugin.data_cache.get_user_profile_record.return_value = None
     _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
-    assert (
-        "当前会话中暂无用户 123 的画像记录"
-        in event.send.call_args.args[0].chain[0].text
-    )
+    assert "暂无用户 123 的画像记录" in event.send.call_args.args[0].chain[0].text
     plugin.html_render.assert_not_awaited()
 
 
@@ -276,8 +273,6 @@ def test_report_history_is_bounded_escaped_and_available_to_custom_templates(com
     changes = [
         {
             "delta": delta,
-            "relation_before": 10,
-            "relation_after": 10 + delta,
             "reason": reason,
             "occurred_at": "2026-10-18T14:00:00+08:00",
         }
@@ -324,22 +319,16 @@ async def test_profile_command_supplies_scoped_recent_history_to_text_and_image(
     plugin.db.get_relation_changes.return_value = [
         {
             "delta": 1,
-            "relation_before": 10,
-            "relation_after": 11,
             "reason": "earliest",
             "occurred_at": "2026-10-16T12:00:00+08:00",
         },
         {
             "delta": -2,
-            "relation_before": 11,
-            "relation_after": 9,
             "reason": "middle",
             "occurred_at": "2026-10-17T12:00:00+08:00",
         },
         {
             "delta": 3,
-            "relation_before": 9,
-            "relation_after": 12,
             "reason": "latest",
             "occurred_at": "2026-10-18T12:00:00+08:00",
         },

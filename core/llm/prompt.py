@@ -888,7 +888,13 @@ def build_user_profile_block(
                 change.get("occurred_at") or change.get("created_at") or ""
             )
             changes.append(
-                f"{escape(timestamp)} 互动评价 {int(change['delta']):+d}："
+                f"{escape(timestamp)} "
+                + (
+                    f"[{escape(str(change['source_label']))}] "
+                    if change.get("source_label")
+                    else ""
+                )
+                + f"互动评价 {int(change['delta']):+d}："
                 f"{escape(truncate_message_content(reason, 120))}"
             )
     if changes:

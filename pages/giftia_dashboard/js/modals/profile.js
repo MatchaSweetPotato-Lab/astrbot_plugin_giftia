@@ -178,7 +178,7 @@ window.deleteUserAlias = function(aliasEncoded) {
 };
 
 window.deleteUserProfile = function(bot, group, user) {
-    window.showConfirm("确认删除用户画像", "确定要删除该用户的画像总结吗？此操作不可逆。", async () => {
+    window.showConfirm("确认删除共享用户画像", "确定要删除该用户的共享画像、所有群的互动评价和外号吗？此操作不可逆。", async () => {
         try {
             const res = await window.apiPost("/profiles/user/delete", {
                 bot_name: bot,

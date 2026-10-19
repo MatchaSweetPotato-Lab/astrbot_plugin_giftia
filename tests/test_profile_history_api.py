@@ -29,6 +29,7 @@ async def profile_api(tmp_path, monkeypatch):
         app = FastAPI()
         handlers = {
             "profiles/user": api.get_user_profiles,
+            "profiles/user/filter_options": api.get_user_profile_filter_options,
             "profiles/user/relation_history": api.get_user_relation_history,
         }
 
@@ -64,13 +65,11 @@ async def seed_changes(plugin, count, scope=("bot", "group", "user")):
     await plugin.db.upsert_user_profile(*scope, base_relation=count)
     await plugin.db.conn.executemany(
         "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
-        "relation_before, relation_after, reason, occurred_at, created_at) "
-        "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+        "reason, occurred_at, created_at) "
+        "VALUES (?, ?, ?, 1, ?, ?, ?)",
         [
             (
                 *scope,
-                index,
-                index + 1,
                 f"互动理由 {index + 1}",
                 "2026-10-18T12:00:00+08:00",
                 "2026-10-18T12:01:00+08:00",
@@ -82,7 +81,7 @@ async def seed_changes(plugin, count, scope=("bot", "group", "user")):
 
 
 @pytest.mark.asyncio
-async def test_profile_cards_receive_latest_three_changes_in_each_exact_scope(
+async def test_profile_cards_receive_latest_three_changes_across_groups(
     profile_api,
 ):
     client, plugin = profile_api
@@ -96,11 +95,13 @@ async def test_profile_cards_receive_latest_three_changes_in_each_exact_scope(
     items = response.json()["data"]["items"]
     assert len(items) == 1
     assert [row["reason"] for row in items[0]["recent_relation_changes"]] == [
+        "互动理由 1",
         "互动理由 5",
         "互动理由 4",
-        "互动理由 3",
     ]
-    assert items[0]["recent_relation_changes"][0]["relation_after"] == 5
+    assert items[0]["recent_relation_changes"][0]["source_label"] == "来源群聊：other"
+    assert items[0]["total_count"] == 6
+    assert "relation_after" not in items[0]["recent_relation_changes"][0]
 
 
 @pytest.mark.asyncio
@@ -120,7 +121,7 @@ async def test_history_paginates_all_entries_beyond_model_window_without_duplica
         data = response.json()["data"]
         assert (data["total"], data["page"], data["limit"]) == (63, page, 10)
         assert len(data["items"]) == (10 if page < 7 else 3)
-        seen.extend(item["relation_after"] for item in data["items"])
+        seen.extend(item["id"] for item in data["items"])
     assert seen == list(range(63, 0, -1))
     data = (
         await client.get(
@@ -132,7 +133,7 @@ async def test_history_paginates_all_entries_beyond_model_window_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_history_isolated_by_bot_conversation_and_member(profile_api):
+async def test_history_shared_across_groups_and_isolated_by_bot_and_member(profile_api):
     client, plugin = profile_api
     for scope in [
         ("bot", "group", "user"),
@@ -147,8 +148,8 @@ async def test_history_isolated_by_bot_conversation_and_member(profile_api):
             params={"bot_name": "bot", "group_or_user_id": "group", "user_id": "user"},
         )
     ).json()["data"]
-    assert data["total"] == 2
-    assert [item["id"] for item in data["items"]] == [2, 1]
+    assert data["total"] == 4
+    assert [item["id"] for item in data["items"]] == [6, 5, 2, 1]
 
 
 @pytest.mark.asyncio
@@ -169,7 +170,7 @@ async def test_history_rejects_invalid_pages(profile_api, page):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["bot_name", "group_or_user_id", "user_id"])
+@pytest.mark.parametrize("missing", ["bot_name", "user_id"])
 async def test_history_requires_complete_scope(profile_api, missing):
     client, _ = profile_api
     scope = {"bot_name": "bot", "group_or_user_id": "group", "user_id": "user"}
@@ -309,7 +310,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
             plugin.data_cache.user_profile_records,
             plugin.data_cache.relations,
         ):
-            assert "bot:group:user" not in cache
+            assert "bot:user" not in cache
         assert (await plugin.data_cache.get_user_relation("bot", "group", "user"))[
             0
         ] == pytest.approx(expected)
@@ -319,7 +320,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     edited = next(item for item in history["items"] if item["id"] == target["id"])
     assert edited["reason"] == "修正为明显冒犯"
     assert edited["delta"] == -4
-    for field in ("occurred_at", "created_at", "relation_before", "relation_after"):
+    for field in ("occurred_at", "created_at", "group_or_user_id"):
         assert edited[field] == target[field]
     response = await client.post(
         "/profiles/user/relation_history/save",
@@ -387,7 +388,7 @@ async def test_history_mutations_require_concrete_text(profile_api, reason):
 @pytest.mark.parametrize("action", ["update", "delete"])
 @pytest.mark.parametrize(
     "other",
-    [("other", "group", "user"), ("bot", "other", "user"), ("bot", "group", "other")],
+    [("other", "group", "user"), ("bot", "group", "other")],
 )
 async def test_history_mutations_cannot_modify_another_scope(
     profile_api, action, other
@@ -533,3 +534,106 @@ async def test_history_read_does_not_pair_stale_rows_with_a_new_revision(
         params={"bot_name": "bot", "group_or_user_id": "group", "user_id": "user"},
     )
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_profile_filters_keep_session_membership_and_shared_fields(profile_api):
+    client, plugin = profile_api
+    await plugin.data_cache.set_user_profile(
+        "bot",
+        "group-a",
+        "user",
+        base_relation=10,
+        profile_fields={"call_name": "小明"},
+    )
+    await plugin.data_cache.set_user_profile(
+        "bot",
+        "group-b",
+        "user",
+        profile_fields={"avatar_description": "银发头像"},
+    )
+    for _ in range(3):
+        await plugin.db.upsert_user_aliases("bot", "group-a", "user", "阿明")
+        await plugin.db.upsert_user_aliases("bot", "group-b", "user", "明仔")
+    all_profiles = (
+        await client.get("/profiles/user", params={"bot_name": "bot"})
+    ).json()["data"]
+    assert all_profiles["total"] == 1
+    for group, alias in (("group-a", "阿明"), ("group-b", "明仔")):
+        data = (
+            await client.get(
+                "/profiles/user", params={"bot_name": "bot", "group_or_user_id": group}
+            )
+        ).json()["data"]
+        assert data["total"] == 1
+        assert data["items"][0]["call_name"] == "小明"
+        assert data["items"][0]["avatar_description"] == "银发头像"
+        assert data["items"][0]["aliases"] == alias
+    filters = (
+        await client.get(
+            "/profiles/user/filter_options",
+            params={"bot_name": "bot", "search": "银发"},
+        )
+    ).json()["data"]
+    assert {row["group_or_user_id"] for row in filters["sessions"]} == {
+        "group-a",
+        "group-b",
+    }
+    response = await client.post(
+        "/profiles/user/update",
+        json={"bot_name": "bot", "user_id": "user", "call_name": "明同学"},
+    )
+    assert response.status_code == 200
+    assert (await plugin.data_cache.get_user_profile_record("bot", "group-b", "user"))[
+        "call_name"
+    ] == "明同学"
+
+
+@pytest.mark.asyncio
+async def test_history_edits_from_another_group_keep_source_and_share_revision(
+    profile_api,
+):
+    client, plugin = profile_api
+    await plugin.db.apply_relation_change("bot", "group-a", "user", 2, "原评价", [7])
+    target = (await plugin.db.get_relation_changes("bot", "group-b", "user"))[0]
+    scope = {"bot_name": "bot", "group_or_user_id": "group-b", "user_id": "user"}
+    response = await client.post(
+        "/profiles/user/relation_history/save",
+        json={
+            **scope,
+            "action": "update",
+            "id": target["id"],
+            "delta": -2,
+            "reason": "修正评价",
+            "revision": 0,
+        },
+    )
+    assert response.status_code == 200
+    a = (
+        await client.get(
+            "/profiles/user/relation_history",
+            params={**scope, "group_or_user_id": "group-a"},
+        )
+    ).json()["data"]
+    b = (await client.get("/profiles/user/relation_history", params=scope)).json()[
+        "data"
+    ]
+    assert a["revision"] == b["revision"] == 1
+    assert a["score"] == b["score"]
+    assert (
+        a["items"][0]["group_or_user_id"]
+        == b["items"][0]["group_or_user_id"]
+        == "group-a"
+    )
+    assert a["items"][0]["source_label"] == ""
+    assert b["items"][0]["source_label"] == "来源群聊：group-a"
+    stale = await client.post(
+        "/profiles/user/relation_history/save",
+        json={
+            **scope,
+            "action": "delete",
+            "id": target["id"],
+            "revision": 0,
+        },
+    )
+    assert stale.status_code == 409

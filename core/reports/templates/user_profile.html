@@ -53,6 +53,7 @@ footer { margin-top: 28px; }
       <div class="change-meta">
         <strong class="change-delta{% if change.delta < 0 %} negative{% endif %}">互动评价 {{ '%+d' | format(change.delta) }}</strong>
         {% if change.time %}<time>{{ change.time }}</time>{% endif %}
+        {% if change.source_label %}<span>{{ change.source_label }}</span>{% endif %}
       </div>
       {% if change.reason %}<p>{{ change.reason }}</p>{% endif %}
     </div>

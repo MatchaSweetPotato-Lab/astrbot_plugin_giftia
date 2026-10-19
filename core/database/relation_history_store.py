@@ -23,7 +23,7 @@ class RelationHistoryStoreMixin:
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
+            group_or_user_id: Current conversation; affinity is shared across conversations.
             user_id: Member whose affinity is calculated.
             connection: Transaction connection when recording an interaction.
             through_id: Inclusive history boundary, or None for current scores.
@@ -32,10 +32,10 @@ class RelationHistoryStoreMixin:
             Unrounded final, base, recent, long-term and interaction scores with
             sample counts. An empty history has an interaction score of fifty.
         """
-        scope = (bot_name, group_or_user_id, user_id)
+        scope = (bot_name, user_id)
         async with (connection or self.conn).execute(
             "WITH recent AS (SELECT delta FROM relation_changes WHERE bot_name=? "
-            "AND group_or_user_id=? AND user_id=? AND (? IS NULL OR id<=?) "
+            "AND user_id=? AND (? IS NULL OR id<=?) "
             "ORDER BY id DESC LIMIT 10) "
             "SELECT COUNT(*) AS total_count, "
             "COALESCE(SUM(MAX(delta, 0)), 0) AS positive, "
@@ -44,8 +44,8 @@ class RelationHistoryStoreMixin:
             "(SELECT COALESCE(SUM(MAX(delta, 0)), 0) FROM recent) AS recent_positive, "
             "(SELECT COALESCE(SUM(MAX(-delta, 0)), 0) FROM recent) AS recent_negative, "
             "COALESCE((SELECT base_relation FROM user_profiles WHERE bot_name=? "
-            "AND group_or_user_id=? AND user_id=?), 0) AS base_relation "
-            "FROM relation_changes WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
+            "AND user_id=?), 0) AS base_relation "
+            "FROM relation_changes WHERE bot_name=? AND user_id=? "
             "AND (? IS NULL OR id<=?)",
             (*scope, through_id, through_id, *scope, *scope, through_id, through_id),
         ) as cursor:
@@ -119,20 +119,22 @@ class RelationHistoryStoreMixin:
                 await writer.execute("BEGIN IMMEDIATE")
                 now = datetime.now(timezone.utc).isoformat()
                 await writer.execute(
-                    "INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, "
-                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(user_id, group_or_user_id, bot_name) DO NOTHING",
-                    (*scope, now, now),
+                    "INSERT INTO user_profiles (bot_name, user_id, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(user_id, bot_name) DO NOTHING",
+                    (bot_name, user_id, now, now),
+                )
+                await writer.execute(
+                    "INSERT OR IGNORE INTO user_profile_sessions "
+                    "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
+                    scope,
                 )
                 async with writer.execute(
                     "SELECT COALESCE(title, '') FROM user_profiles "
-                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-                    scope,
+                    "WHERE bot_name=? AND user_id=?",
+                    (bot_name, user_id),
                 ) as cursor:
                     title = (await cursor.fetchone())[0]
-                current_relation = (
-                    await self.get_relation_score(*scope, connection=writer)
-                )["relation"]
                 if source_key:
                     async with writer.execute(
                         "SELECT 1 FROM relation_changes WHERE bot_name=? "
@@ -140,17 +142,18 @@ class RelationHistoryStoreMixin:
                         (*scope, source_key),
                     ) as cursor:
                         if await cursor.fetchone():
+                            current_relation = (
+                                await self.get_relation_score(*scope, connection=writer)
+                            )["relation"]
                             await writer.rollback()
                             return current_relation, title, False
-                inserted = await writer.execute(
+                await writer.execute(
                     "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, "
-                    "delta, relation_before, relation_after, reason, source_ids, "
-                    "occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "delta, reason, source_ids, "
+                    "occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         *scope,
                         delta,
-                        current_relation,
-                        current_relation,
                         reason,
                         source_key,
                         occurred_at or now,
@@ -161,13 +164,9 @@ class RelationHistoryStoreMixin:
                     await self.get_relation_score(*scope, connection=writer)
                 )["relation"]
                 await writer.execute(
-                    "UPDATE relation_changes SET relation_after=? WHERE id=?",
-                    (new_relation, inserted.lastrowid),
-                )
-                await writer.execute(
                     "UPDATE user_profiles SET updated_at=? "
-                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-                    (now, *scope),
+                    "WHERE bot_name=? AND user_id=?",
+                    (now, bot_name, user_id),
                 )
                 await writer.commit()
                 return new_relation, title, True
@@ -193,7 +192,7 @@ class RelationHistoryStoreMixin:
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
+            group_or_user_id: Current conversation used to label external sources.
             user_id: Member whose history is requested.
             limit: Maximum number of records, capped at fifty.
             after_id: Exclusive lower boundary.
@@ -206,12 +205,11 @@ class RelationHistoryStoreMixin:
         """
         order = "ASC" if oldest_first else "DESC"
         async with self.conn.execute(
-            "SELECT * FROM relation_changes WHERE bot_name=? AND group_or_user_id=? "
+            "SELECT * FROM relation_changes WHERE bot_name=? "
             "AND user_id=? AND id>? AND (? IS NULL OR id<=?) "
             f"ORDER BY id {order} LIMIT ? OFFSET ?",
             (
                 bot_name,
-                group_or_user_id,
                 user_id,
                 after_id,
                 through_id,
@@ -221,6 +219,13 @@ class RelationHistoryStoreMixin:
             ),
         ) as cursor:
             rows = [dict(row) for row in await cursor.fetchall()]
+        for row in rows:
+            source = row["group_or_user_id"]
+            row["source_label"] = (
+                ("来源私聊" if source == user_id else f"来源群聊：{source}")
+                if source != group_or_user_id
+                else ""
+            )
         return rows if oldest_first else rows[::-1]
 
     async def mutate_relation_history(
@@ -269,6 +274,8 @@ class RelationHistoryStoreMixin:
             if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 120:
                 raise ValueError("评价内容须为 1～120 字")
             reason = reason.strip()
+        if action == "add" and not group_or_user_id:
+            raise ValueError("新增互动评价需要指定来源会话")
         scope = (bot_name, group_or_user_id, user_id)
         if not hasattr(self, "_relation_change_lock"):
             self._relation_change_lock = asyncio.Lock()
@@ -283,8 +290,8 @@ class RelationHistoryStoreMixin:
                 await writer.execute("BEGIN IMMEDIATE")
                 async with writer.execute(
                     "SELECT relation_history_revision FROM user_profiles "
-                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-                    scope,
+                    "WHERE bot_name=? AND user_id=?",
+                    (bot_name, user_id),
                 ) as cursor:
                     profile = await cursor.fetchone()
                 if profile is None:
@@ -295,41 +302,39 @@ class RelationHistoryStoreMixin:
                     )
                 now = datetime.now(timezone.utc).isoformat()
                 if action == "add":
-                    before = (await self.get_relation_score(*scope, connection=writer))[
-                        "relation"
-                    ]
                     changed = await writer.execute(
                         "INSERT INTO relation_changes (bot_name, group_or_user_id, "
-                        "user_id, delta, relation_before, relation_after, reason, "
-                        "occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (*scope, delta, before, before, reason, now, now),
+                        "user_id, delta, reason, "
+                        "occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (*scope, delta, reason, now, now),
                     )
                     change_id = changed.lastrowid
                 elif action == "update":
                     changed = await writer.execute(
                         "UPDATE relation_changes SET delta=?, reason=? "
-                        "WHERE id=? AND bot_name=? AND group_or_user_id=? AND user_id=?",
-                        (delta, reason, change_id, *scope),
+                        "WHERE id=? AND bot_name=? AND user_id=?",
+                        (delta, reason, change_id, bot_name, user_id),
                     )
                 else:
                     changed = await writer.execute(
                         "DELETE FROM relation_changes "
-                        "WHERE id=? AND bot_name=? AND group_or_user_id=? AND user_id=?",
-                        (change_id, *scope),
+                        "WHERE id=? AND bot_name=? AND user_id=?",
+                        (change_id, bot_name, user_id),
                     )
                 if changed.rowcount != 1:
                     raise LookupError("评价记录不存在或不属于当前成员，请刷新后重试")
                 score = await self.get_relation_score(*scope, connection=writer)
                 if action == "add":
                     await writer.execute(
-                        "UPDATE relation_changes SET relation_after=? WHERE id=?",
-                        (score["relation"], change_id),
+                        "INSERT OR IGNORE INTO user_profile_sessions "
+                        "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
+                        scope,
                     )
                 await writer.execute(
                     "UPDATE user_profiles SET relation_history_revision="
                     "relation_history_revision+1, attitude_evaluated_change_id=0, "
-                    "updated_at=? WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-                    (now, *scope),
+                    "updated_at=? WHERE bot_name=? AND user_id=?",
+                    (now, bot_name, user_id),
                 )
                 await writer.commit()
                 return {
@@ -367,12 +372,12 @@ class RelationHistoryStoreMixin:
             "up.relation_history_revision AS history_revision, "
             "MAX(rc.id) AS through_id, COUNT(*) AS change_count FROM relation_changes rc "
             "JOIN user_profiles up ON up.bot_name=rc.bot_name "
-            "AND up.group_or_user_id=rc.group_or_user_id AND up.user_id=rc.user_id "
-            "WHERE rc.bot_name=? AND rc.group_or_user_id=? "
+            "AND up.user_id=rc.user_id "
+            "WHERE rc.bot_name=? "
             "AND rc.id>up.attitude_evaluated_change_id "
             "GROUP BY rc.user_id, up.attitude_evaluated_change_id, up.relation_history_revision "
             "HAVING COUNT(*)>=? OR MAX(ABS(rc.delta))>=? ORDER BY MIN(rc.id)",
-            (bot_name, group_or_user_id, min_changes, major_delta),
+            (bot_name, min_changes, major_delta),
         ) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
@@ -403,17 +408,16 @@ class RelationHistoryStoreMixin:
         cursor = await self.conn.execute(
             "UPDATE user_profiles SET attitude=COALESCE(?, attitude), "
             "attitude_evaluated_change_id=?, updated_at=? "
-            "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
+            "WHERE bot_name=? AND user_id=? "
             "AND attitude_evaluated_change_id=? AND attitude_evaluated_change_id<? "
             "AND (? IS NULL OR relation_history_revision=?) "
             "AND EXISTS (SELECT 1 FROM relation_changes WHERE id=? AND bot_name=? "
-            "AND group_or_user_id=? AND user_id=?)",
+            "AND user_id=?)",
             (
                 attitude,
                 through_id,
                 datetime.now(timezone.utc).isoformat(),
                 bot_name,
-                group_or_user_id,
                 user_id,
                 expected_cursor,
                 through_id,
@@ -421,7 +425,6 @@ class RelationHistoryStoreMixin:
                 expected_history_revision,
                 through_id,
                 bot_name,
-                group_or_user_id,
                 user_id,
             ),
         )

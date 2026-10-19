@@ -57,8 +57,8 @@ def build_user_profile_report(
         changes.append(
             {
                 "delta": int(change["delta"]),
-                "relation_before": round(float(change["relation_before"]), 1),
-                "relation_after": round(float(change["relation_after"]), 1),
+                "group_or_user_id": str(change.get("group_or_user_id") or ""),
+                "source_label": str(change.get("source_label") or ""),
                 "reason": "" if reason.casefold() in empty_values else reason,
                 "occurred_at": str(change.get("occurred_at") or ""),
                 "created_at": str(change.get("created_at") or ""),

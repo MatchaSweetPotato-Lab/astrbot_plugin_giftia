@@ -268,135 +268,143 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
             self_id: Observing bot account.
             context: Optional current source batch supplementing the history.
         """
-        pending = await self.plugin.db.get_pending_attitude_evaluations(
-            bot_name,
-            group_or_user_id,
-            min_changes=ATTITUDE_REVIEW_CHANGE_COUNT,
-            major_delta=ATTITUDE_REVIEW_MAJOR_DELTA,
-        )
-        if not pending:
-            return
-        messages = (context or {}).get("alias_observation_messages") or []
-        system_prompt = self._format_prompt_template(
-            DEFAULT_PASSIVE_ATTITUDE_SUMMARY_PROMPT, nickname, self_id
-        )
-        for candidate in pending:
-            user_id = candidate["user_id"]
-            evaluated_id = candidate["evaluated_id"]
-            remaining_count = candidate["change_count"]
-            # Freeze the boundary so changes arriving during inference stay pending.
-            while evaluated_id < candidate["through_id"]:
-                try:
-                    window_size = 50
-                    # Keep an eligible final batch so a failed tail can retry on its own.
-                    if 50 < remaining_count < 50 + ATTITUDE_REVIEW_CHANGE_COUNT:
-                        window_size = remaining_count - ATTITUDE_REVIEW_CHANGE_COUNT
-                    new_changes = await self.plugin.db.get_relation_changes(
-                        bot_name,
-                        group_or_user_id,
-                        user_id,
-                        limit=window_size,
-                        after_id=evaluated_id,
-                        through_id=candidate["through_id"],
-                        oldest_first=True,
-                    )
-                    if not new_changes:
-                        break
-                    through_id = new_changes[-1]["id"]
-                    history = await self.plugin.db.get_relation_changes(
-                        bot_name, group_or_user_id, user_id, through_id=through_id
-                    )
-                    profile = await self.plugin.db.get_user_profile_record(
-                        bot_name, group_or_user_id, user_id
-                    )
-                    related_messages = [
-                        msg
-                        for msg in messages
-                        if str(msg.user_id) in {str(user_id), str(self_id)}
-                        and not msg.is_recalled
-                        and msg.role != "operation_log"
-                    ][-50:]
-                    user_prompt = json.dumps(
-                        {
-                            "user_id": user_id,
-                            "current_attitude": (profile or {}).get("attitude") or "",
-                            "current_relation": (
-                                await self.plugin.db.get_relation_score(
-                                    bot_name,
-                                    group_or_user_id,
-                                    user_id,
-                                    through_id=through_id,
+        async with self.attitude_review_locks.setdefault(bot_name, asyncio.Lock()):
+            pending = await self.plugin.db.get_pending_attitude_evaluations(
+                bot_name,
+                group_or_user_id,
+                min_changes=ATTITUDE_REVIEW_CHANGE_COUNT,
+                major_delta=ATTITUDE_REVIEW_MAJOR_DELTA,
+            )
+            if not pending:
+                return
+            messages = (context or {}).get("alias_observation_messages") or []
+            system_prompt = self._format_prompt_template(
+                DEFAULT_PASSIVE_ATTITUDE_SUMMARY_PROMPT, nickname, self_id
+            )
+            for candidate in pending:
+                user_id = candidate["user_id"]
+                evaluated_id = candidate["evaluated_id"]
+                remaining_count = candidate["change_count"]
+                # Freeze the boundary so changes arriving during inference stay pending.
+                while evaluated_id < candidate["through_id"]:
+                    try:
+                        window_size = 50
+                        # Keep an eligible final batch so a failed tail can retry on its own.
+                        if 50 < remaining_count < 50 + ATTITUDE_REVIEW_CHANGE_COUNT:
+                            window_size = remaining_count - ATTITUDE_REVIEW_CHANGE_COUNT
+                        new_changes = await self.plugin.db.get_relation_changes(
+                            bot_name,
+                            group_or_user_id,
+                            user_id,
+                            limit=window_size,
+                            after_id=evaluated_id,
+                            through_id=candidate["through_id"],
+                            oldest_first=True,
+                        )
+                        if not new_changes:
+                            break
+                        through_id = new_changes[-1]["id"]
+                        history = await self.plugin.db.get_relation_changes(
+                            bot_name, group_or_user_id, user_id, through_id=through_id
+                        )
+                        profile = await self.plugin.db.get_user_profile_record(
+                            bot_name, group_or_user_id, user_id
+                        )
+                        related_messages = [
+                            msg
+                            for msg in messages
+                            if str(msg.user_id) in {str(user_id), str(self_id)}
+                            and not msg.is_recalled
+                            and msg.role != "operation_log"
+                        ][-50:]
+                        user_prompt = json.dumps(
+                            {
+                                "user_id": user_id,
+                                "current_attitude": (profile or {}).get("attitude")
+                                or "",
+                                "current_relation": (
+                                    await self.plugin.db.get_relation_score(
+                                        bot_name,
+                                        group_or_user_id,
+                                        user_id,
+                                        through_id=through_id,
+                                    )
+                                )["relation"],
+                                "evaluated_through_id": evaluated_id,
+                                "relation_changes": [
+                                    {
+                                        "id": change["id"],
+                                        "time": change["occurred_at"],
+                                        "delta": change["delta"],
+                                        "reason": change["reason"],
+                                        "is_new": change["id"] > evaluated_id,
+                                    }
+                                    for change in history
+                                ],
+                                "related_chat_history": [
+                                    {
+                                        "user_id": msg.user_id,
+                                        "time": msg.time,
+                                        "content": truncate_message_content(
+                                            msg.content, 500
+                                        ),
+                                    }
+                                    for msg in related_messages
+                                ],
+                            },
+                            ensure_ascii=False,
+                        )
+                        completion = await self._call_summary_llm(
+                            "互动态度维护",
+                            system_prompt,
+                            user_prompt,
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                        )
+                        response = parse_markdown_json(completion or "")
+                        if not isinstance(response, dict) or set(response) != {
+                            "attitude"
+                        }:
+                            raise ValueError("Expected exactly one attitude field")
+                        attitude = response["attitude"]
+                        if attitude is not None:
+                            if not isinstance(attitude, str):
+                                raise ValueError(
+                                    "Interaction tone must be text or null"
                                 )
-                            )["relation"],
-                            "evaluated_through_id": evaluated_id,
-                            "relation_changes": [
-                                {
-                                    "id": change["id"],
-                                    "time": change["occurred_at"],
-                                    "delta": change["delta"],
-                                    "reason": change["reason"],
-                                    "is_new": change["id"] > evaluated_id,
-                                }
-                                for change in history
-                            ],
-                            "related_chat_history": [
-                                {
-                                    "user_id": msg.user_id,
-                                    "time": msg.time,
-                                    "content": truncate_message_content(
-                                        msg.content, 500
-                                    ),
-                                }
-                                for msg in related_messages
-                            ],
-                        },
-                        ensure_ascii=False,
-                    )
-                    completion = await self._call_summary_llm(
-                        "互动态度维护",
-                        system_prompt,
-                        user_prompt,
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                    )
-                    response = parse_markdown_json(completion or "")
-                    if not isinstance(response, dict) or set(response) != {"attitude"}:
-                        raise ValueError("Expected exactly one attitude field")
-                    attitude = response["attitude"]
-                    if attitude is not None:
-                        if not isinstance(attitude, str):
-                            raise ValueError("Interaction tone must be text or null")
-                        attitude = " ".join(normalize_profile_value(attitude).split())
-                        if not attitude or len(attitude) > 20:
-                            raise ValueError(
-                                "Interaction tone must contain 1 to 20 characters"
+                            attitude = " ".join(
+                                normalize_profile_value(attitude).split()
                             )
-                    if not await self.plugin.db.save_attitude_evaluation(
-                        bot_name,
-                        group_or_user_id,
-                        user_id,
-                        expected_cursor=evaluated_id,
-                        through_id=through_id,
-                        attitude=attitude,
-                        expected_history_revision=candidate["history_revision"],
-                    ):
+                            if not attitude or len(attitude) > 20:
+                                raise ValueError(
+                                    "Interaction tone must contain 1 to 20 characters"
+                                )
+                        if not await self.plugin.db.save_attitude_evaluation(
+                            bot_name,
+                            group_or_user_id,
+                            user_id,
+                            expected_cursor=evaluated_id,
+                            through_id=through_id,
+                            attitude=attitude,
+                            expected_history_revision=candidate["history_revision"],
+                        ):
+                            break
+                        self.plugin.data_cache.invalidate_user_profile(
+                            bot_name, user_id
+                        )
+                        evaluated_id = through_id
+                        remaining_count -= len(new_changes)
+                        logger.info(
+                            "[Giftia Memory] Reviewed interaction tone for %s through change %s",
+                            user_id,
+                            through_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[Giftia Memory] Interaction tone review failed for %s; history retained",
+                            user_id,
+                        )
                         break
-                    fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-                    self.plugin.data_cache.user_profile_records.pop(fmt_key, None)
-                    self.plugin.data_cache.user_profiles.pop(fmt_key, None)
-                    evaluated_id = through_id
-                    remaining_count -= len(new_changes)
-                    logger.info(
-                        "[Giftia Memory] Reviewed interaction tone for %s through change %s",
-                        user_id,
-                        through_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "[Giftia Memory] Interaction tone review failed for %s; history retained",
-                        user_id,
-                    )
-                    break
 
     async def _run_background_summarize(
         self,

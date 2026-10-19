@@ -614,7 +614,7 @@ caption: {media_caption.caption}"""
         )
         if record is None:
             yield await event.send(
-                MessageChain([Plain(f"当前会话中暂无用户 {user_id} 的画像记录。")])
+                MessageChain([Plain(f"暂无用户 {user_id} 的画像记录。")])
             )
             return
 
@@ -666,7 +666,12 @@ caption: {media_caption.caption}"""
             for change in report["recent_relation_changes"]:
                 lines.append(
                     f"• {change['time']} 互动评价 {change['delta']:+d}"
-                    f"\n  {change['reason']}"
+                    + (
+                        f" [{change['source_label']}]"
+                        if change.get("source_label")
+                        else ""
+                    )
+                    + f"\n  {change['reason']}"
                 )
         msg = "\n".join(lines)
         yield await event.send(MessageChain([Plain(msg)]))

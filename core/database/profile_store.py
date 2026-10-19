@@ -52,7 +52,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             SELECT ua.alias, ua.alias_count, ua.first_seen_at, ua.last_seen_at
             FROM user_aliases ua
             LEFT JOIN user_profiles up ON ua.bot_name = up.bot_name
-                AND ua.group_or_user_id = up.group_or_user_id
                 AND ua.user_id = up.user_id
             WHERE ua.bot_name = ? AND ua.group_or_user_id = ? AND ua.user_id = ?
                 {count_clause}
@@ -106,8 +105,8 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
         call_name = None
         async with self.conn.execute(
-            "SELECT call_name FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ? LIMIT 1",
-            (user_id, group_or_user_id, bot_name),
+            "SELECT call_name FROM user_profiles WHERE user_id = ? AND bot_name = ? LIMIT 1",
+            (user_id, bot_name),
         ) as cursor:
             row = await cursor.fetchone()
             if row and row["call_name"]:
@@ -169,6 +168,11 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             )
             if cursor.rowcount == 0:
                 rejected_aliases.append(alias)
+        await self.conn.execute(
+            "INSERT OR IGNORE INTO user_profile_sessions "
+            "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
+            (bot_name, group_or_user_id, user_id),
+        )
         await self.conn.commit()
         return rejected_aliases
 
@@ -251,10 +255,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.avatar_description,
                 up.title
             FROM user_profiles up
-            WHERE up.user_id = ? AND up.group_or_user_id = ? AND up.bot_name = ?
+            WHERE up.user_id = ? AND up.bot_name = ?
             LIMIT 1
             """,
-            (user_id, group_or_user_id, bot_name),
+            (user_id, bot_name),
         ) as cursor:
             row = await cursor.fetchone()
         if not row:
@@ -300,7 +304,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             """
             SELECT
                 up.user_id,
-                up.group_or_user_id,
+                ? AS group_or_user_id,
                 up.bot_name,
                 up.call_name,
                 up.attitude,
@@ -309,7 +313,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                     SELECT ch.nickname
                     FROM chat_history ch
                     WHERE ch.bot_name = up.bot_name
-                      AND ch.group_or_user_id = up.group_or_user_id
+                      AND ch.group_or_user_id = ?
                       AND ch.user_id = up.user_id
                       AND ch.nickname IS NOT NULL
                       AND ch.nickname != ''
@@ -318,7 +322,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 ) AS nickname
             FROM user_profiles up
             WHERE up.bot_name = ?
-              AND up.group_or_user_id = ?
               AND (
                 up.user_id LIKE ?
                 OR up.call_name LIKE ?
@@ -326,7 +329,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                     SELECT 1
                     FROM user_aliases ua
                     WHERE ua.bot_name = up.bot_name
-                      AND ua.group_or_user_id = up.group_or_user_id
+                      AND ua.group_or_user_id = ?
                       AND ua.user_id = up.user_id
                       AND ua.alias LIKE ?
                 )
@@ -335,7 +338,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                     SELECT 1
                     FROM chat_history ch
                     WHERE ch.bot_name = up.bot_name
-                      AND ch.group_or_user_id = up.group_or_user_id
+                      AND ch.group_or_user_id = ?
                       AND ch.user_id = up.user_id
                       AND ch.nickname LIKE ?
                 )
@@ -348,7 +351,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                         SELECT 1
                         FROM user_aliases ua
                         WHERE ua.bot_name = up.bot_name
-                          AND ua.group_or_user_id = up.group_or_user_id
+                          AND ua.group_or_user_id = ?
                           AND ua.user_id = up.user_id
                           AND ua.alias = ?
                     ) THEN 2
@@ -358,15 +361,19 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             LIMIT ?
             """,
             (
-                bot_name,
                 group_or_user_id,
+                group_or_user_id,
+                bot_name,
                 like,  # up.user_id
                 like,  # up.call_name
+                group_or_user_id,
                 like,  # ua.alias
                 like,  # up.avatar_description
+                group_or_user_id,
                 like,  # ch.nickname
                 query,  # ORDER BY exact user_id
                 query,  # ORDER BY exact call_name
+                group_or_user_id,
                 query,  # ORDER BY exact alias
                 limit,
             ),
@@ -423,7 +430,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             f"""
             INSERT INTO user_profiles (
                 user_id,
-                group_or_user_id,
                 bot_name,
                 call_name,
                 aliases,
@@ -438,13 +444,12 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, bot_name) DO UPDATE SET
                 {update_clause}
             """,
             (
                 user_id,
-                group_or_user_id,
                 bot_name,
                 profile_fields.get("call_name"),
                 None,
@@ -460,6 +465,12 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 update_time,
             ),
         )
+        if group_or_user_id:
+            await self.conn.execute(
+                "INSERT OR IGNORE INTO user_profile_sessions "
+                "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
+                (bot_name, group_or_user_id, user_id),
+            )
         new_call_name = profile_fields.get("call_name")
         if new_call_name:
             stripped = new_call_name.strip()
@@ -467,45 +478,56 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 await self.conn.execute(
                     """
                     DELETE FROM user_aliases
-                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+                    WHERE user_id = ? AND bot_name = ?
                         AND LOWER(TRIM(alias)) = LOWER(?)
                     """,
-                    (user_id, group_or_user_id, bot_name, stripped),
+                    (user_id, bot_name, stripped),
                 )
         await self.conn.commit()
 
     async def delete_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ):
-        """删除用户画像"""
+        """Delete a user's shared profile, history and aliases in every conversation.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Current conversation, retained for the caller's context.
+            user_id: User whose complete shared data is deleted.
+        """
         await self.conn.execute(
-            "DELETE FROM relation_changes WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-            (bot_name, group_or_user_id, user_id),
+            "DELETE FROM relation_changes WHERE bot_name=? AND user_id=?",
+            (bot_name, user_id),
         )
         await self.conn.execute(
             """
-            DELETE FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            DELETE FROM user_profiles WHERE user_id = ? AND bot_name = ?
             """,
-            (user_id, group_or_user_id, bot_name),
+            (user_id, bot_name),
         )
         await self.conn.execute(
             """
-            DELETE FROM user_aliases WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            DELETE FROM user_aliases WHERE user_id = ? AND bot_name = ?
             """,
-            (user_id, group_or_user_id, bot_name),
+            (user_id, bot_name),
+        )
+        await self.conn.execute(
+            "DELETE FROM user_profile_sessions WHERE bot_name=? AND user_id=?",
+            (bot_name, user_id),
         )
         await self.conn.commit()
 
-    # 删除整个群的用户画像
     async def delete_group_user_profiles(self, bot_name: str, group_or_user_id: str):
-        """删除整个群的用户画像"""
-        await self.conn.execute(
-            "DELETE FROM relation_changes WHERE bot_name=? AND group_or_user_id=?",
-            (bot_name, group_or_user_id),
-        )
+        """Clear session aliases and history while preserving shared profiles.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Conversation whose local data is cleared.
+        """
+        await self.delete_all_relations(bot_name, group_or_user_id)
         await self.conn.execute(
             """
-            DELETE FROM user_profiles WHERE group_or_user_id = ? AND bot_name = ?
+            DELETE FROM user_profile_sessions WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (group_or_user_id, bot_name),
         )
@@ -598,24 +620,33 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         """
         score = await self.get_relation_score(bot_name, group_or_user_id, user_id)
         async with self.conn.execute(
-            "SELECT title FROM user_profiles WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
-            (bot_name, group_or_user_id, user_id),
+            "SELECT title FROM user_profiles WHERE bot_name=? AND user_id=?",
+            (bot_name, user_id),
         ) as cursor:
             row = await cursor.fetchone()
         return score["relation"], (row["title"] or "") if row else ""
 
     async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
-        """删除指定群或私聊的所有好感度和头衔数据"""
+        """Remove a conversation's ratings and invalidate affected shared tone reviews.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Source conversation whose ratings are deleted.
+        """
         await self.conn.execute(
             """
             UPDATE user_profiles
-            SET base_relation = 0, title = NULL, attitude_evaluated_change_id = 0, updated_at = ?
-            WHERE group_or_user_id = ? AND bot_name = ?
+            SET attitude = NULL, attitude_evaluated_change_id = 0,
+                relation_history_revision = relation_history_revision + 1, updated_at = ?
+            WHERE bot_name = ? AND user_id IN (
+                SELECT user_id FROM relation_changes WHERE bot_name = ? AND group_or_user_id = ?
+            )
             """,
             (
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                group_or_user_id,
                 bot_name,
+                bot_name,
+                group_or_user_id,
             ),
         )
         await self.conn.execute(

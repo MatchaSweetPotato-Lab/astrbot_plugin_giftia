@@ -14,8 +14,7 @@ class ProfileApi:
     def _invalidate_user_profile_record_cache(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> None:
-        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
+        self.giftia.data_cache.invalidate_user_profile(bot_name, user_id)
 
     # ── User Profile APIs ───────────────────────────────────────────────
 
@@ -37,7 +36,11 @@ class ProfileApi:
                 conditions.append("up.bot_name = ?")
                 params.append(bot_name)
             if group_or_user_id:
-                conditions.append("up.group_or_user_id = ?")
+                conditions.append(
+                    "EXISTS (SELECT 1 FROM user_profile_sessions ups "
+                    "WHERE ups.bot_name=up.bot_name AND ups.user_id=up.user_id "
+                    "AND ups.group_or_user_id=?)"
+                )
                 params.append(group_or_user_id)
             if user_id:
                 conditions.append("up.user_id = ?")
@@ -49,7 +52,7 @@ class ProfileApi:
                         SELECT 1
                         FROM user_aliases ua
                         WHERE ua.bot_name = up.bot_name
-                          AND ua.group_or_user_id = up.group_or_user_id
+                          AND (? = '' OR ua.group_or_user_id = ?)
                           AND ua.user_id = up.user_id
                           AND ua.alias LIKE ?
                     )
@@ -61,7 +64,10 @@ class ProfileApi:
                     )
                     + ")"
                 )
-                params.extend([f"%{search}%"] * (len(like_fields) + 1))
+                params.extend([f"%{search}%"] * len(like_fields))
+                params.extend(
+                    [group_or_user_id or "", group_or_user_id or "", f"%{search}%"]
+                )
 
             where_clause = ""
             if conditions:
@@ -75,7 +81,12 @@ class ProfileApi:
 
             # Query data
             data_sql = f"""
-                SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id,
+                SELECT up.id, up.bot_name, up.user_id,
+                       COALESCE(NULLIF(?, ''), (
+                           SELECT ups.group_or_user_id FROM user_profile_sessions ups
+                           WHERE ups.bot_name=up.bot_name AND ups.user_id=up.user_id
+                           ORDER BY ups.group_or_user_id LIMIT 1
+                       ), '') AS group_or_user_id,
                        up.call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
                        up.avatar_description,
@@ -86,7 +97,7 @@ class ProfileApi:
                 ORDER BY up.updated_at DESC
                 LIMIT ? OFFSET ?
             """
-            data_params = params + [limit, offset]
+            data_params = [group_or_user_id or "", *params, limit, offset]
             items = []
             async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
@@ -151,10 +162,10 @@ class ProfileApi:
             A JSON response with scoped records, total count and pagination.
         """
         bot_name = request.query.get("bot_name")
-        group_or_user_id = request.query.get("group_or_user_id")
+        group_or_user_id = request.query.get("group_or_user_id") or ""
         user_id = request.query.get("user_id")
-        if not bot_name or not group_or_user_id or not user_id:
-            return error_response("缺少必要参数 (bot_name, group_or_user_id, user_id)")
+        if not bot_name or not user_id:
+            return error_response("缺少必要参数 (bot_name, user_id)")
         try:
             page = int(request.query.get("page", 1))
             if page < 1:
@@ -162,34 +173,38 @@ class ProfileApi:
         except (TypeError, ValueError):
             return error_response("页码必须是正整数")
         try:
-            scope = (bot_name, group_or_user_id, user_id)
+            scope = (bot_name, user_id)
             async with self.giftia.db.conn.execute(
                 "SELECT relation_history_revision FROM user_profiles "
-                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                "WHERE bot_name=? AND user_id=?",
                 scope,
             ) as cursor:
                 profile = await cursor.fetchone()
             revision = profile[0] if profile else 0
             async with self.giftia.db.conn.execute(
-                "SELECT COUNT(*) FROM relation_changes "
-                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                "SELECT COUNT(*) FROM relation_changes WHERE bot_name=? AND user_id=?",
                 scope,
             ) as cursor:
                 total = (await cursor.fetchone())[0]
             limit = 10
             page = min(page, max(1, (total + limit - 1) // limit))
-            async with self.giftia.db.conn.execute(
-                "SELECT id, delta, relation_before, relation_after, reason, "
-                "occurred_at, created_at FROM relation_changes "
-                "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
-                "ORDER BY id DESC LIMIT ? OFFSET ?",
-                (*scope, limit, (page - 1) * limit),
-            ) as cursor:
-                items = [dict(row) for row in await cursor.fetchall()]
-            score = await self.giftia.db.get_relation_score(*scope)
+            items = list(
+                reversed(
+                    await self.giftia.db.get_relation_changes(
+                        bot_name,
+                        group_or_user_id,
+                        user_id,
+                        limit=limit,
+                        offset=(page - 1) * limit,
+                    )
+                )
+            )
+            score = await self.giftia.db.get_relation_score(
+                bot_name, group_or_user_id, user_id
+            )
             async with self.giftia.db.conn.execute(
                 "SELECT relation_history_revision FROM user_profiles "
-                "WHERE bot_name=? AND group_or_user_id=? AND user_id=?",
+                "WHERE bot_name=? AND user_id=?",
                 scope,
             ) as cursor:
                 profile = await cursor.fetchone()
@@ -223,13 +238,17 @@ class ProfileApi:
             if not isinstance(body, dict):
                 return error_response("请求内容必须是对象")
             scope = [
-                body.get(key) for key in ("bot_name", "group_or_user_id", "user_id")
+                body.get(key, "") for key in ("bot_name", "group_or_user_id", "user_id")
             ]
-            if any(not isinstance(value, str) or not value.strip() for value in scope):
-                return error_response(
-                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
-                )
+            if (
+                any(not isinstance(value, str) for value in scope)
+                or not scope[0].strip()
+                or not scope[2].strip()
+            ):
+                return error_response("缺少必要参数 (bot_name, user_id)")
             scope = [value.strip() for value in scope]
+            if body.get("action") == "add" and not scope[1]:
+                return error_response("新增互动评价需要指定来源会话 (group_or_user_id)")
             result = await self.giftia.db.mutate_relation_history(
                 *scope,
                 action=body.get("action"),
@@ -238,10 +257,7 @@ class ProfileApi:
                 delta=body.get("delta"),
                 reason=body.get("reason", ""),
             )
-            fmt_key = ":".join(scope)
-            self.giftia.data_cache.user_profiles.pop(fmt_key, None)
-            self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
-            self.giftia.data_cache.relations.pop(fmt_key, None)
+            self.giftia.data_cache.invalidate_user_profile(scope[0], scope[2])
             return json_response({"status": "success", "data": result})
         except RelationHistoryConflictError as error:
             return error_response(str(error), status_code=409)
@@ -278,20 +294,20 @@ class ProfileApi:
 
             sessions = []
             if selected_bot_name:
-                conditions = ["bot_name = ?"]
+                conditions = ["up.bot_name = ?"]
                 params = [selected_bot_name]
                 if user_id:
-                    conditions.append("user_id = ?")
+                    conditions.append("up.user_id = ?")
                     params.append(user_id)
                 if search:
-                    like_fields = ["profile"] + list(USER_PROFILE_FIELD_KEYS)
+                    like_fields = [f"up.{field}" for field in USER_PROFILE_FIELD_KEYS]
                     alias_exists = """
                         EXISTS (
                             SELECT 1
                             FROM user_aliases ua
-                            WHERE ua.bot_name = user_profiles.bot_name
-                              AND ua.group_or_user_id = user_profiles.group_or_user_id
-                              AND ua.user_id = user_profiles.user_id
+                            WHERE ua.bot_name = up.bot_name
+                              AND ua.group_or_user_id = ups.group_or_user_id
+                              AND ua.user_id = up.user_id
                               AND ua.alias LIKE ?
                         )
                     """
@@ -308,11 +324,12 @@ class ProfileApi:
                 where_clause = "WHERE " + " AND ".join(conditions)
                 async with self.giftia.db.conn.execute(
                     f"""
-                    SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
-                    FROM user_profiles
+                    SELECT ups.group_or_user_id, COUNT(*) as total, MAX(up.updated_at) as latest_at
+                    FROM user_profiles up JOIN user_profile_sessions ups
+                      ON ups.bot_name=up.bot_name AND ups.user_id=up.user_id
                     {where_clause}
-                    GROUP BY group_or_user_id
-                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    GROUP BY ups.group_or_user_id
+                    ORDER BY latest_at DESC, ups.group_or_user_id ASC
                     """,
                     params,
                 ) as cursor:
@@ -345,7 +362,7 @@ class ProfileApi:
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
-            group_or_user_id = body.get("group_or_user_id")
+            group_or_user_id = body.get("group_or_user_id") or ""
             user_id = body.get("user_id")
             base_relation = body.get("base_relation")
             title = body.get("title")
@@ -355,10 +372,8 @@ class ProfileApi:
                 if field in body
             }
 
-            if not bot_name or not group_or_user_id or not user_id:
-                return error_response(
-                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
-                )
+            if not bot_name or not user_id:
+                return error_response("缺少必要参数 (bot_name, user_id)")
 
             if base_relation is not None and (
                 isinstance(base_relation, bool)
@@ -389,23 +404,18 @@ class ProfileApi:
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
-            group_or_user_id = body.get("group_or_user_id")
+            group_or_user_id = body.get("group_or_user_id") or ""
             user_id = body.get("user_id")
 
-            if not bot_name or not group_or_user_id or not user_id:
-                return error_response(
-                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
-                )
+            if not bot_name or not user_id:
+                return error_response("缺少必要参数 (bot_name, user_id)")
 
             await self.giftia.db.delete_user_profile(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
             )
-            fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-            self.giftia.data_cache.user_profiles.pop(fmt_key, None)
-            self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
-            self.giftia.data_cache.relations.pop(fmt_key, None)
+            self.giftia.data_cache.invalidate_user_profile(bot_name, user_id)
             return json_response({"status": "success", "message": "删除用户画像成功"})
         except Exception as e:
             logger.error(f"[Giftia API] delete_user_profile error: {e}")

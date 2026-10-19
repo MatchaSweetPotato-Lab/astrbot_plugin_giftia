@@ -184,7 +184,7 @@ async def avatar_runtime():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("group_id,session_id", [("group1", "group1"), ("", "sender1")])
-async def test_avatar_action_saves_current_session_and_sends_reply(
+async def test_avatar_action_updates_shared_profile_and_sends_reply(
     avatar_runtime, group_id, session_id
 ):
     rt = avatar_runtime
@@ -216,7 +216,7 @@ async def test_avatar_action_saves_current_session_and_sends_reply(
     assert record["call_name"] == "小明"
     assert (await rt.db.get_user_profile_record("bot1", "other-session", "target"))[
         "avatar_description"
-    ] == "其他会话"
+    ] == record["avatar_description"]
     assert (
         await rt.db.get_user_profile_record("other-bot", session_id, "target") is None
     )

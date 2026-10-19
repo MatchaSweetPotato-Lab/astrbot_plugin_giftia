@@ -95,20 +95,27 @@ async def seed_memory(plugin, memory_id, **fields):
 
 
 @pytest.mark.asyncio
-async def test_memory_names_are_scoped_to_selected_session(memory_api):
+async def test_memory_names_use_shared_user_call_names(memory_api):
     client, plugin = memory_api
     await seed_memory(plugin, "event")
-    await plugin.db.conn.executemany(
-        "INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, call_name) VALUES (?, ?, ?, ?)",
-        [("bot", "group", "1", "local name"), ("bot", "other", "1", "private name")],
+    await plugin.db.upsert_user_profile(
+        "bot",
+        "group",
+        "1",
+        profile_fields={"call_name": "local name"},
     )
-    await plugin.db.conn.commit()
+    await plugin.db.upsert_user_profile(
+        "bot",
+        "other",
+        "1",
+        profile_fields={"call_name": "shared name"},
+    )
     data = (
         await client.get(
             "/memories", params={"bot_name": "bot", "group_or_user_id": "group"}
         )
     ).json()["data"]
-    assert data["user_id_to_name"] == {"1": "local name"}
+    assert data["user_id_to_name"] == {"1": "shared name"}
     data = (await client.get("/memories", params={"bot_name": "bot"})).json()["data"]
     assert data["user_id_to_name"] == {}
 
