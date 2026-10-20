@@ -956,6 +956,13 @@ class ChatManager:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 pending_recall_memories=pending_recall_memories,
+                user_ids=[
+                    str(item.message.user_id)
+                    for item in state.current
+                    if item.message.user_id
+                    and item.message.role == "message"
+                    and not item.message.is_recalled
+                ],
             )
             return True
         finally:
@@ -1247,6 +1254,7 @@ class ChatManager:
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     pending_recall_memories=pending_recall_memories,
+                    user_ids=[str(user_id)] if user_id else [],
                 )
             finally:
                 self.plugin.replying_status[reply_key] = max(

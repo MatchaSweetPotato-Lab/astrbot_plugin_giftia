@@ -13,6 +13,7 @@ from astrbot.api import logger
 
 from ..memory.atomic import memory_metadata
 from ..memory.memory import LTM
+from ..memory.recall_scope import select_automatic_recall_memories
 from ..utils.http_manager import HttpManager
 from ..utils.schemas import (
     MediaCaption,
@@ -788,6 +789,7 @@ class DataCache:
         fmt_key: str,
         max_items: int,
         ttl_seconds: int = 0,
+        user_ids: list[str] | None = None,
     ) -> None:
         pool = self.session_recalled_memories.get(fmt_key)
         if not pool:
@@ -815,7 +817,12 @@ class DataCache:
             key=lambda memory: self._session_recall_rank(memory, now),
             reverse=True,
         )
-        keep_ids = {memory.memory_id for memory in ranked[:max_items]}
+        keep_ids = {
+            memory.memory_id
+            for memory in select_automatic_recall_memories(
+                ranked, user_ids or [], max_items
+            )
+        }
         for memory_id in list(pool.keys()):
             if memory_id not in keep_ids:
                 pool.pop(memory_id, None)
@@ -827,14 +834,29 @@ class DataCache:
         memories: list[dict] | None,
         max_items: int = 20,
         ttl_seconds: int = 0,
+        *,
+        user_ids: list[str] | None = None,
     ) -> list[SessionRecallMemory]:
-        """合并当前会话的语义召回结果，并在超限时淘汰低价值旧召回。"""
+        """Merge automatic recalls and prune within the current participant budget.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Current conversation.
+            memories: Recalled records to merge after a successful reply.
+            max_items: Maximum pool size.
+            ttl_seconds: Idle expiry, or zero to disable time-based expiry.
+            user_ids: Participants receiving a reserved slot in full-scope recall.
+
+        Returns:
+            Retained records without changing their stored relevance scores.
+        """
         if not memories:
             return self.get_session_recalled_memories(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 max_items=max_items,
                 ttl_seconds=ttl_seconds,
+                user_ids=user_ids,
             )
 
         fmt_key = f"{bot_name}:{group_or_user_id}"
@@ -878,12 +900,12 @@ class DataCache:
                     created_at=created_at,
                 )
 
-        self._prune_session_recalled_memories(fmt_key, max_items, ttl_seconds)
         return self.get_session_recalled_memories(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             max_items=max_items,
             ttl_seconds=ttl_seconds,
+            user_ids=user_ids,
         )
 
     def get_session_recalled_memories(
@@ -892,10 +914,23 @@ class DataCache:
         group_or_user_id: str,
         max_items: int = 20,
         ttl_seconds: int = 0,
+        *,
+        user_ids: list[str] | None = None,
     ) -> list[SessionRecallMemory]:
-        """获取当前会话可注入的临时召回记忆。"""
+        """Select cached automatic recalls for the current participants.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Current conversation.
+            max_items: Maximum pool and selection size.
+            ttl_seconds: Idle expiry, or zero to disable time-based expiry.
+            user_ids: Participants receiving a reserved slot in full-scope recall.
+
+        Returns:
+            Ranked, unexpired records with current participant slots reserved.
+        """
         fmt_key = f"{bot_name}:{group_or_user_id}"
-        self._prune_session_recalled_memories(fmt_key, max_items, ttl_seconds)
+        self._prune_session_recalled_memories(fmt_key, max_items, ttl_seconds, user_ids)
         pool = self.session_recalled_memories.get(fmt_key)
         if not pool or max_items <= 0:
             return []
@@ -908,9 +943,9 @@ class DataCache:
         )
 
         selected = []
-        for memory in ranked:
-            if len(selected) >= max_items:
-                break
+        for memory in select_automatic_recall_memories(
+            ranked, user_ids or [], max_items
+        ):
             metadata = memory_metadata({"metadata": memory.metadata})
             memory.metadata = json.dumps(metadata, ensure_ascii=False)
             selected.append(memory)

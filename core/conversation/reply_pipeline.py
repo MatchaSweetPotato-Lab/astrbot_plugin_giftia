@@ -10,11 +10,14 @@ from astrbot.api.event import AstrMessageEvent
 from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt, prepare_reply_message_context
 from ..memory.atomic import memory_metadata
-from ..memory.recall_scope import resolve_memory_recall_scope
+from ..memory.recall_scope import (
+    resolve_memory_recall_scope,
+    select_automatic_recall_memories,
+)
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
-from .memory_recall import conf_float, conf_int, search_memories_with_rerank
+from .memory_recall import conf_float, conf_int, search_automatic_user_memories
 from .tool_executor import ToolExecutor
 
 
@@ -67,7 +70,17 @@ class ReplyPipeline:
         bot_name: str,
         group_or_user_id: str,
         pending_recall_memories: list[dict] | None,
+        *,
+        user_ids: list[str] | None = None,
     ) -> None:
+        """Commit deduplicated recalls after a successful logical reply.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Current conversation.
+            pending_recall_memories: Mutable pending records, cleared after merging.
+            user_ids: Frozen batch participants receiving pool slots in full scope.
+        """
         if not pending_recall_memories:
             return
         deduped_memories = {}
@@ -85,6 +98,9 @@ class ReplyPipeline:
             memories=list(deduped_memories.values()),
             max_items=max_items,
             ttl_seconds=ttl_seconds,
+            user_ids=(
+                user_ids if resolve_memory_recall_scope(self.plugin) == "all" else None
+            ),
         )
         pending_recall_memories.clear()
 
@@ -143,16 +159,13 @@ class ReplyPipeline:
         recall_scope = resolve_memory_recall_scope(self.plugin)
         for user_id, parts in user_queries.items():
             candidates.extend(
-                await search_memories_with_rerank(
+                await search_automatic_user_memories(
                     self.plugin,
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     query="\n".join(parts),
                     recent_messages=[*recent_messages, *reply_messages],
-                    limit_key="session_recall_search_limit",
-                    log_context="会话记忆自动召回",
-                    record_hits=False,
-                    user_ids=[user_id] if user_id and recall_scope == "user" else None,
+                    user_id=user_id,
                 )
             )
         candidates.sort(
@@ -166,7 +179,13 @@ class ReplyPipeline:
             memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
             if memory_id:
                 deduped.setdefault(memory_id, memory)
-        memories = list(deduped.values())[:max_items]
+        memories = list(deduped.values())
+        if recall_scope == "all":
+            memories = select_automatic_recall_memories(
+                memories, list(user_queries), max_items
+            )
+        else:
+            memories = memories[:max_items]
         if memories:
             try:
                 await self.plugin.data_cache.record_memory_hits(memories)
@@ -260,24 +279,28 @@ class ReplyPipeline:
         if self.plugin.embedding_conf.get("enabled", False):
             recall_scope = resolve_memory_recall_scope(self.plugin)
             max_items, ttl_seconds = self._session_recall_limits()
-            cached_memories = self.plugin.data_cache.get_session_recalled_memories(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                max_items=max_items,
-                ttl_seconds=ttl_seconds,
-            )
-            seen_ids = {
-                str(memory.get("memory_id") or memory.get("id") or "")
-                for memory in relevant_memories
-            }
             recall_users = {
                 str(msg.user_id)
                 for msg in reply_messages
                 if msg.user_id and msg.role == "message" and not msg.is_recalled
             } or {str(event.get_sender_id())}
+            cached_memories = self.plugin.data_cache.get_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                max_items=max_items,
+                ttl_seconds=ttl_seconds,
+                user_ids=list(recall_users) if recall_scope == "all" else None,
+            )
+            seen_ids = {
+                str(memory.get("memory_id") or memory.get("id") or "")
+                for memory in relevant_memories
+            }
             # Pending recalls survive tool turns without mutating the pool before success.
             for memory in [*pending_recall_memories, *cached_memories]:
-                if len(session_recalled_memories) >= max_items:
+                if (
+                    recall_scope != "all"
+                    and len(session_recalled_memories) >= max_items
+                ):
                     break
                 memory_id = (
                     str(memory.get("memory_id") or memory.get("id") or "")
@@ -315,6 +338,10 @@ class ReplyPipeline:
                 if memory_id and memory_id not in seen_ids:
                     seen_ids.add(memory_id)
                     session_recalled_memories.append(memory)
+            if recall_scope == "all":
+                session_recalled_memories = select_automatic_recall_memories(
+                    session_recalled_memories, list(recall_users), max_items
+                )
 
         # Load full profiles for every participant in the rendered reply timeline.
         bot_status = await self.plugin.data_cache.get_bot_status(

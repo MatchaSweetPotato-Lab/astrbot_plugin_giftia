@@ -6,20 +6,20 @@ from unittest.mock import AsyncMock
 from xml.etree.ElementTree import fromstring
 
 import pytest
-
 from core.conversation.media_captioner import MediaCaptioner
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
 from core.utils.schemas import MediaCaption, MessageData, XmlLlmResult
 
 
-def memory(memory_id, score=0.9, text=None):
+def memory(memory_id, score=0.9, text=None, users=None):
     """Create a structured retrieval result.
 
     Args:
         memory_id: Internal record identifier.
         score: Relevance assigned to this query.
         text: Optional narrative overriding the identifier.
+        users: Accounts associated with this fact.
 
     Returns:
         A memory record with scoring and lifecycle metadata.
@@ -28,7 +28,11 @@ def memory(memory_id, score=0.9, text=None):
         "id": memory_id,
         "text": text or memory_id,
         "score": score,
-        "metadata": {"kind": "event", "status": "active"},
+        "metadata": {
+            "kind": "event",
+            "status": "active",
+            "associated_user_ids": users or [],
+        },
     }
 
 
@@ -560,6 +564,272 @@ async def test_cross_user_hits_are_deduplicated_ranked_limited_and_counted_once(
     pooled = runtime.cache.get_session_recalled_memories("bot", "group")
     assert {record.memory_id for record in pooled} == {"shared", "bob"}
     assert all(record.hit_count == 1 for record in pooled)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rerank", [True, False])
+async def test_full_automatic_recall_reserves_a_relevant_user_memory_before_top_k(
+    runtime, rerank
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.rerank_conf.update(enabled=rerank, top_k=1)
+    runtime.plugin.embedding_conf["inject_limit"] = 2
+    own = memory("own", 0.6, users=["alice"])
+    unrelated = [memory(f"global-{index}", 0.99 - index * 0.01) for index in range(3)]
+    runtime.search.side_effect = [[own], unrelated]
+    runtime.plugin.ltm.rerank_memories.side_effect = lambda **kwargs: sorted(
+        kwargs["memories"], key=lambda record: record["score"], reverse=True
+    )[: kwargs["top_k"]]
+
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [MessageData(user_id="alice", content="good morning")], None, []
+    )
+
+    assert [record["id"] for record in result] == (
+        ["own"] if rerank else ["global-0", "own"]
+    )
+    assert [call.kwargs["user_ids"] for call in runtime.search.await_args_list] == [
+        ["alice"],
+        None,
+    ]
+    assert all(call.kwargs["limit"] == 3 for call in runtime.search.await_args_list)
+    if rerank:
+        runtime.plugin.ltm.rerank_memories.assert_awaited_once()
+        assert runtime.plugin.ltm.rerank_memories.call_args.kwargs["top_k"] == 4
+    else:
+        runtime.plugin.ltm.rerank_memories.assert_not_awaited()
+    runtime.cache.record_memory_hits.assert_awaited_once_with(result)
+    assert own["score"] == 0.6
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_recall_deduplicates_routes_before_one_rerank(runtime):
+    runtime.plugin.memory_recall_scope = "all"
+    own = memory("shared-hit", users=["alice"])
+    global_memory = memory("global", 0.99)
+    runtime.search.side_effect = [[own], [global_memory, deepcopy(own)]]
+
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [MessageData(user_id="alice", content="topic")], None, []
+    )
+
+    assert [record["id"] for record in result] == ["global", "shared-hit"]
+    rerank_call = runtime.plugin.ltm.rerank_memories.call_args.kwargs
+    assert {record["id"] for record in rerank_call["memories"]} == {
+        "shared-hit",
+        "global",
+    }
+    assert rerank_call["top_k"] == 2
+    runtime.cache.record_memory_hits.assert_awaited_once_with(result)
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_recall_does_not_reserve_below_threshold_user_memories(
+    runtime,
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf["inject_limit"] = 2
+    own = memory("irrelevant-own", 0.1, users=["alice"])
+    global_memories = [memory("first", 0.99), memory("second", 0.98)]
+    runtime.search.side_effect = [[own], global_memories]
+    runtime.plugin.ltm.rerank_memories.side_effect = lambda **kwargs: [
+        record
+        for record in kwargs["memories"]
+        if record["score"] >= kwargs["threshold"]
+    ][: kwargs["top_k"]]
+
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [MessageData(user_id="alice", content="travel")], None, []
+    )
+
+    assert result == global_memories
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_route", ["user", "global"])
+async def test_full_automatic_recall_keeps_results_when_one_route_fails(
+    runtime, failed_route
+):
+    runtime.plugin.memory_recall_scope = "all"
+    own = memory("own", users=["alice"])
+    global_memory = memory("global")
+    runtime.search.side_effect = (
+        [RuntimeError("user route failed"), [global_memory]]
+        if failed_route == "user"
+        else [[own], RuntimeError("global route failed")]
+    )
+
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [MessageData(user_id="alice", content="topic")], None, []
+    )
+
+    assert result == ([global_memory] if failed_route == "user" else [own])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("budget", [1, 2])
+async def test_full_automatic_recall_reserves_batch_slots_for_multiple_speakers(
+    runtime, shared, budget
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf["inject_limit"] = budget
+    own_alice = memory("alice", 0.6, users=["alice", "bob"] if shared else ["alice"])
+    own_bob = own_alice if shared else memory("bob", 0.7, users=["bob"])
+    global_memory = memory("global", 0.99, users=["carol"])
+    runtime.search.side_effect = [
+        [own_alice],
+        [global_memory],
+        [own_bob],
+        [deepcopy(global_memory)],
+    ]
+
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot",
+        "group",
+        [
+            MessageData(user_id="alice", content="one"),
+            MessageData(user_id="bob", content="two"),
+        ],
+        None,
+        [],
+    )
+
+    expected = {"alice", "global"} if shared else {"alice", "bob"}
+    if budget == 1:
+        expected = {"alice"} if shared else {"bob"}
+    assert {record["id"] for record in result} == expected
+    runtime.cache.record_memory_hits.assert_awaited_once_with(result)
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_reminder_without_a_speaker_only_searches_globally(
+    runtime,
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.search.return_value = [memory("global")]
+    await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [], "scheduled reminder", []
+    )
+    runtime.search.assert_awaited_once()
+    assert runtime.search.call_args.kwargs["user_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_injection_reserves_cached_user_memory_with_full_pending_budget(
+    runtime,
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf["inject_limit"] = 2
+    own = memory("cached-own", 0.6, users=["alice"])
+    runtime.cache.merge_session_recalled_memories("bot", "group", [own])
+    pending = [memory("current-first", 0.99), memory("current-second", 0.98)]
+
+    await runtime.run(
+        reply_messages=[MessageData(user_id="alice", content="topic")],
+        pending_recall_memories=pending,
+    )
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    root = fromstring("<context>" + prompt + "</context>")
+    assert {item.text for item in root.findall("session_recalled_memories/memory")} == {
+        "cached-own",
+        "current-first",
+    }
+    assert [record["id"] for record in pending] == ["current-first", "current-second"]
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_user_priority_survives_tool_turns(runtime):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf["inject_limit"] = 1
+    runtime.search.side_effect = [
+        [memory("own", 0.6, users=["alice"])],
+        [memory("global", 0.99)],
+    ]
+    runtime.plugin.call_llm.call_llm_reply.side_effect = [
+        XmlLlmResult(tools_to_call=[("other_tool", {})]),
+        XmlLlmResult(),
+    ]
+    runtime.pipeline.tool_executor.execute_queries = AsyncMock()
+    pending = []
+    await runtime.run(
+        reply_messages=[MessageData(user_id="alice", content="topic")],
+        pending_recall_memories=pending,
+    )
+
+    assert runtime.search.await_count == 2
+    assert runtime.plugin.ltm.rerank_memories.await_count == 1
+    assert [record["id"] for record in pending] == ["own"]
+    prompts = runtime.plugin.call_llm.call_llm_reply.await_args_list
+    assert len(prompts) == 2
+    for call in prompts:
+        root = fromstring("<context>" + call.kwargs["user_prompt"] + "</context>")
+        assert [
+            item.text for item in root.findall("session_recalled_memories/memory")
+        ] == ["own"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("inject_limit", 0),
+        ("inject_limit", -1),
+        ("session_recall_search_limit", 0),
+        ("session_recall_search_limit", -1),
+    ],
+)
+async def test_full_automatic_recall_respects_disabled_budgets(runtime, setting, value):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf[setting] = value
+    result = await runtime.pipeline._search_current_recall_memories(
+        "bot", "group", [MessageData(user_id="alice", content="topic")], None, []
+    )
+    assert result == []
+    runtime.search.assert_not_awaited()
+
+
+def test_full_automatic_pool_reserves_current_users_without_permanent_score_boost(
+    runtime,
+):
+    runtime.plugin.memory_recall_scope = "all"
+    runtime.plugin.embedding_conf["inject_limit"] = 2
+    runtime.cache.merge_session_recalled_memories(
+        "bot", "group", [memory("global", 0.99), memory("old-bob", 0.95, users=["bob"])]
+    )
+    pending = [memory("alice", 0.6, users=["alice"])]
+    runtime.pipeline.commit_pending_session_recalled_memories(
+        "bot", "group", pending, user_ids=["alice"]
+    )
+    retained = runtime.cache.get_session_recalled_memories("bot", "group", max_items=2)
+    assert {record.memory_id for record in retained} == {"global", "alice"}
+    assert (
+        next(record for record in retained if record.memory_id == "alice").score == 0.6
+    )
+
+    pending = [memory("new-bob", 0.5, users=["bob"])]
+    runtime.pipeline.commit_pending_session_recalled_memories(
+        "bot", "group", pending, user_ids=["bob"]
+    )
+    retained = runtime.cache.get_session_recalled_memories("bot", "group", max_items=2)
+    assert {record.memory_id for record in retained} == {"global", "new-bob"}
+    assert (
+        next(record for record in retained if record.memory_id == "new-bob").score
+        == 0.5
+    )
+
+
+def test_full_automatic_pool_does_not_rescue_expired_user_memories(runtime):
+    runtime.cache.merge_session_recalled_memories(
+        "bot", "group", [memory("expired", users=["alice"]), memory("global")]
+    )
+    runtime.cache.session_recalled_memories["bot:group"][
+        "expired"
+    ].last_recalled_at -= 100
+    retained = runtime.cache.get_session_recalled_memories(
+        "bot", "group", max_items=1, ttl_seconds=60, user_ids=["alice"]
+    )
+    assert [record.memory_id for record in retained] == ["global"]
 
 
 @pytest.mark.asyncio
