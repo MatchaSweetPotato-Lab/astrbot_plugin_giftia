@@ -1,4 +1,4 @@
-## [Unreleased]
+## [v0.4.5] - 2026-10-21
 
 ### Improvements
 
