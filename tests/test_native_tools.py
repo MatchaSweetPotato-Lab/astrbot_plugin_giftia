@@ -577,11 +577,14 @@ async def test_retired_xml_tags_are_inert_but_all_tools_can_export_standard_xml(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("platform", ["aiocqhttp", "qq_official_webhook", "generic"])
+@pytest.mark.parametrize("recall_scope", ["session", "user", "all"])
 async def test_xml_tools_preserve_scope_creators_and_idempotency_across_outputs(
     runtime,
     platform,
+    recall_scope,
 ):
     rt = runtime
+    rt.plugin.memory_recall_scope = recall_scope
     rt.event.get_platform_name.return_value = platform
     rt.plugin.get_bot_config = rt.plugin.bot_map.get
     rt.plugin.min_reply_interval = rt.plugin.max_reply_interval = 0
@@ -619,9 +622,12 @@ async def test_xml_tools_preserve_scope_creators_and_idempotency_across_outputs(
         "success",
     ]
     assert rt.state["creator_names"]["carol"] == "Carol"
-    assert rt.plugin.passive_memory_manager.search_and_filter_memories.call_args.kwargs[
-        "user_ids"
-    ] == ["alice", "bob"]
+    search_users = (
+        rt.plugin.passive_memory_manager.search_and_filter_memories.call_args.kwargs[
+            "user_ids"
+        ]
+    )
+    assert search_users == (["alice", "bob"] if recall_scope == "user" else None)
     continuation = await parser.decode_llm_xml(
         '<tool_call name="create_scheduled_task">{"user_id":"carol","time_expr":"0 10 * * *","content":"new"}</tool_call>'
         f'<tool_call name="delete_scheduled_task">{json.dumps({"task_id": outputs[1]["task_id"]})}</tool_call>',

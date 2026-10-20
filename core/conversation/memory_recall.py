@@ -56,7 +56,8 @@ async def search_memories_with_rerank(
         default_limit: Candidate limit when no configured value is available.
         log_context: Context included in retrieval failure logs.
         record_hits: Record hits immediately; batch callers may defer until deduplication.
-        user_ids: Explicit target accounts, or None to infer the current participants.
+        user_ids: Target accounts in user scope, or an explicit narrowing filter
+            in other scopes. None follows the configured recall scope.
 
     Returns:
         Recalled memory records, optionally filtered by the reranker.

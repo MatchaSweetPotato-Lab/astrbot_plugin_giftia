@@ -224,13 +224,13 @@
                 "description": "启用记忆查询工具",
                 "type": "bool",
                 "default": true,
-                "hint": "控制 search_memory 工具，原生和 XML 调用均生效。关闭不影响自动记忆召回。"
+                "hint": "控制 search_memory 工具。关闭不影响自动记忆召回。"
             },
             "scheduled_tasks_enabled": {
                 "description": "启用定时任务工具",
                 "type": "bool",
                 "default": true,
-                "hint": "统一控制定时任务的创建、查看和删除工具，原生和 XML 调用均生效。关闭不取消已有提醒。"
+                "hint": "统一控制定时任务的创建、查看和删除工具。关闭不取消已有提醒。"
             },
             "get_message_context_enabled": {
                 "description": "启用上下文搜索工具",
@@ -299,6 +299,22 @@
         "type": "object",
         "hint": "启用本地模型需预留至少2GB硬盘空间以及3GB空闲内存。可以使用 /读取记忆 <群号> <问题> 来测试记忆检索功能以及查看相关性得分。",
         "items": {
+            "recall_scope": {
+                "description": "记忆召回范围",
+                "type": "string",
+                "options": [
+                    "session",
+                    "user",
+                    "all"
+                ],
+                "labels": [
+                    "会话隔离",
+                    "用户隔离",
+                    "完全检索"
+                ],
+                "default": "user",
+                "hint": "统一控制记忆查询工具、决策检索、自动召回和会话召回池。会话隔离仅检索当前群聊或私聊；用户隔离按目标用户跨会话检索，无明确关联用户的旧记忆仅限来源会话；完全检索可搜索当前 Bot 的全部记忆。不同 Bot 始终隔离，指定用户只能缩小范围；相关性阈值和数量限制继续生效。"
+            },
             "embedding_conf": {
                 "type": "object",
                 "description": "嵌入模型配置",

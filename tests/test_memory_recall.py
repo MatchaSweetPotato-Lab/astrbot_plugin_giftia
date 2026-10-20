@@ -297,6 +297,51 @@ async def test_foreign_pool_memories_follow_current_participants_without_losing_
 
 
 @pytest.mark.asyncio
+async def test_scope_switches_refilter_pending_and_cached_memories_before_injection(
+    runtime,
+):
+    runtime.plugin.embedding_conf["inject_limit"] = 10
+    cached = []
+    for memory_id, users, source in [
+        ("local-alice", ["alice"], "group"),
+        ("local-bob", ["bob"], "group"),
+        ("local-legacy", [], "group"),
+        ("foreign-alice", ["alice"], "other"),
+        ("foreign-bob", ["bob"], "other"),
+        ("foreign-legacy", [], "other"),
+    ]:
+        record = memory(memory_id)
+        record["metadata"] = {"associated_user_ids": users, "source_session_id": source}
+        cached.append(record)
+    runtime.cache.merge_session_recalled_memories("bot", "group", cached)
+    pending = memory("pending-foreign-alice")
+    pending["metadata"] = {"associated_user_ids": ["alice"]}
+    pending["group_or_user_id"] = "other"
+    all_ids = {record["id"] for record in cached} | {pending["id"]}
+
+    for scope, expected in [
+        ("all", all_ids),
+        ("session", {"local-alice", "local-bob", "local-legacy"}),
+        ("user", {"local-alice", "foreign-alice", "local-legacy", pending["id"]}),
+        ("all", all_ids),
+    ]:
+        runtime.plugin.memory_recall_scope = scope
+        await runtime.run(
+            reply_messages=[MessageData(user_id="alice", content="hello")],
+            pending_recall_memories=[pending],
+        )
+        prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+        root = fromstring("<context>" + prompt + "</context>")
+        assert {
+            item.text for item in root.findall("session_recalled_memories/memory")
+        } == expected
+    assert {
+        item.memory_id
+        for item in runtime.cache.get_session_recalled_memories("bot", "group")
+    } == {record["id"] for record in cached}
+
+
+@pytest.mark.asyncio
 async def test_reply_keeps_all_profiles_across_tool_turns_without_new_arrivals(runtime):
     runtime.cache.get_user_relation.return_value = (50.0, "")
     runtime.plugin.call_llm.call_llm_reply.side_effect = [

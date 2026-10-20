@@ -11,6 +11,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from ..conversation.memory_recall import search_memories_with_rerank
+from ..memory.recall_scope import resolve_memory_recall_scope
 from ..utils.event_utils import get_adapter_id, resolve_bot_name
 from .prompt import build_memory_items
 
@@ -111,7 +112,7 @@ def _session_reminders(plugin, state: dict) -> list:
 class SearchMemoryTool(FunctionTool):
     plugin: Any = None
     name: str = "search_memory"
-    description: str = "检索当前 Bot 的长期记忆，可根据结果继续换关键词或指定用户查询，再组织最终回复。关联用户的记忆跨群共享，非本会话记录标注来源。"
+    description: str = "按配置的召回范围检索当前 Bot 的长期记忆，可继续换关键词或指定用户缩小范围，再组织最终回复。非本会话记录标注来源。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -119,7 +120,7 @@ class SearchMemoryTool(FunctionTool):
                 "query": {"type": "string", "description": "需要回忆的问题或关键词。"},
                 "user_id": {
                     "type": "string",
-                    "description": "可选目标用户 ID；省略时检索本批参与者的关联记忆。",
+                    "description": "可选目标用户 ID，只能缩小配置允许的召回范围；省略时按配置检索，用户隔离模式使用本批参与者。",
                 },
             },
             "required": ["query"],
@@ -146,13 +147,16 @@ class SearchMemoryTool(FunctionTool):
             if not self.plugin.embedding_conf.get("enabled", False):
                 raise ValueError("长期记忆检索未启用嵌入模型")
             target = str(user_id or "").strip()
+            user_ids = [target] if target else None
+            if not target and resolve_memory_recall_scope(self.plugin) == "user":
+                user_ids = state["user_ids"]
             memories = await search_memories_with_rerank(
                 self.plugin,
                 bot_name=state["bot_name"],
                 group_or_user_id=state["session_id"],
                 query=query.strip(),
                 recent_messages=[],
-                user_ids=[target] if target else state["user_ids"],
+                user_ids=user_ids,
                 log_context="工具记忆检索",
             )
             return json.dumps(

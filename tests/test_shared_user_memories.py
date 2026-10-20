@@ -133,6 +133,100 @@ async def test_user_and_revision_filters_apply_before_vector_limit(runtime):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,expected",
+    [
+        ("session", {"local-alice", "local-bob", "local-legacy"}),
+        ("user", {"local-alice", "foreign-alice", "local-legacy"}),
+        (
+            "all",
+            {
+                "local-alice",
+                "local-bob",
+                "local-legacy",
+                "foreign-alice",
+                "foreign-bob",
+                "foreign-legacy",
+            },
+        ),
+        ("invalid", {"local-alice", "foreign-alice", "local-legacy"}),
+        (None, {"local-alice", "foreign-alice", "local-legacy"}),
+    ],
+)
+async def test_shared_search_applies_scope_and_keeps_bot_and_index_isolation(
+    runtime, scope, expected
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = scope
+    for memory_id, users, session in [
+        ("local-alice", ["alice"], "current"),
+        ("local-bob", ["bob"], "current"),
+        ("local-legacy", [], "current"),
+        ("foreign-alice", ["alice"], "other"),
+        ("foreign-bob", ["bob"], "other"),
+        ("foreign-legacy", [], "other"),
+    ]:
+        await rt.seed(memory_id, users, session=session)
+    await rt.seed("wrong-bot", ["alice"], bot="other", distance=0.0)
+    await rt.seed("unindexed", ["alice"], indexed=False, distance=0.0)
+    await rt.seed("deleted", ["alice"], distance=0.0)
+    await rt.db.conn.execute("DELETE FROM memories WHERE memory_id='deleted'")
+    await rt.db.conn.commit()
+
+    result = await search_memories_with_rerank(
+        rt.plugin,
+        bot_name="bot",
+        group_or_user_id="current",
+        query="topic",
+        recent_messages=[MessageData(user_id="alice")],
+    )
+
+    assert {item["memory_id"] for item in result} == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["session", "all"])
+@pytest.mark.parametrize("users", [["alice"], ["unknown"], []])
+async def test_explicit_users_only_narrow_session_and_full_retrieval(
+    runtime, scope, users
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = scope
+    await rt.seed("local-alice", ["alice"], session="current", distance=0.4)
+    await rt.seed("foreign-alice", ["alice"], distance=0.2)
+    await rt.seed("local-bob", ["bob"], session="current", distance=0.0)
+    await rt.seed("local-legacy", session="current", distance=0.0)
+    await rt.seed("other-bot", ["alice"], bot="other", distance=0.0)
+
+    result = await rt.manager.search_and_filter_memories(
+        "bot", "current", "topic", [], user_ids=users, limit=1
+    )
+
+    expected = []
+    if users == ["alice"]:
+        expected = ["local-alice" if scope == "session" else "foreign-alice"]
+    assert [item["memory_id"] for item in result] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["session", "user", "all"])
+async def test_administrative_session_search_remains_local_in_every_mode(
+    runtime, scope
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = scope
+    await rt.seed("local", ["alice"], session="current")
+    await rt.seed("foreign", ["alice"])
+
+    result = await rt.manager.search_and_filter_memories(
+        "bot", "current", "topic", filter_active_users=False
+    )
+
+    assert [item["memory_id"] for item in result] == ["local"]
+    rt.cache.get_recent_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_association_matches_any_exact_user_and_keeps_bot_isolation(runtime):
     rt = runtime
     await rt.seed("shared", ["alice", "bob"])
@@ -173,6 +267,22 @@ async def test_unassociated_or_malformed_legacy_memories_remain_local(
     )
     assert [item["memory_id"] for item in result] == ["local"]
     assert json.loads(result[0]["metadata"])["source_label"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata",
+    [{"associated_user_ids": None}, {"associated_user_ids": 123}, "broken json"],
+)
+async def test_full_retrieval_accepts_foreign_legacy_metadata(runtime, metadata):
+    rt = runtime
+    rt.plugin.memory_recall_scope = "all"
+    await rt.seed("foreign", metadata=metadata)
+
+    result = await rt.manager.search_and_filter_memories("bot", "current", "topic", [])
+
+    assert [item["memory_id"] for item in result] == ["foreign"]
+    assert json.loads(result[0]["metadata"])["source_label"] == "来源群聊：other-group"
 
 
 @pytest.mark.asyncio
@@ -296,6 +406,49 @@ async def test_native_search_targets_user_without_reinterpreting_it_as_a_group(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,target,expected",
+    [
+        ("session", "", {"local-alice", "local-bob"}),
+        ("session", "alice", {"local-alice"}),
+        ("user", "", {"local-bob", "foreign-bob"}),
+        ("user", "alice", {"local-alice", "foreign-alice"}),
+        ("all", "", {"local-alice", "local-bob", "foreign-alice", "foreign-bob"}),
+        ("all", "alice", {"local-alice", "foreign-alice"}),
+    ],
+)
+async def test_memory_tool_follows_scope_with_optional_explicit_user(
+    runtime, scope, target, expected
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = scope
+    for session, prefix in [("current", "local"), ("other", "foreign")]:
+        for user in ["alice", "bob"]:
+            await rt.seed(f"{prefix}-{user}", [user], session=session)
+    await rt.seed("other-bot", ["alice"], bot="other")
+    rt.plugin.adapter_id_map = {"adapter": "bot"}
+    rt.plugin.bot_map = {"bot": {}}
+    event = SimpleNamespace(
+        platform_meta=SimpleNamespace(id="adapter"),
+        get_group_id=lambda: "current",
+        get_sender_id=lambda: "bob",
+        get_sender_name=lambda: "Bob",
+    )
+    context = SimpleNamespace(context=SimpleNamespace(event=event, extra={}))
+
+    result = json.loads(
+        await SearchMemoryTool(plugin=rt.plugin).call(context, "topic", target)
+    )
+
+    assert result["status"] == "success"
+    assert result["count"] == len(expected)
+    assert {
+        item.text
+        for item in fromstring("<context>" + result["memory_context"] + "</context>")
+    } == {f"fact {memory_id} <&>" for memory_id in expected}
+
+
+@pytest.mark.asyncio
 async def test_automatic_batches_search_each_speaker_across_groups(runtime):
     rt = runtime
     await rt.seed("alice", ["alice"])
@@ -312,6 +465,33 @@ async def test_automatic_batches_search_each_speaker_across_groups(runtime):
         [MessageData(user_id="carol", content="earlier")],
     )
     assert {item["memory_id"] for item in result} == {"alice", "bob"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,expected",
+    [
+        ("session", {"local-bob"}),
+        ("user", {"foreign-alice"}),
+        ("all", {"local-bob", "foreign-alice", "absent", "foreign-legacy"}),
+    ],
+)
+async def test_automatic_recall_uses_configured_scope_for_each_query(
+    runtime, scope, expected
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = scope
+    await rt.seed("local-bob", ["bob"], session="current")
+    await rt.seed("foreign-alice", ["alice"])
+    await rt.seed("absent", ["carol"])
+    await rt.seed("foreign-legacy")
+    await rt.seed("other-bot", ["alice"], bot="other", distance=0.0)
+
+    result = await ReplyPipeline(rt.plugin)._search_current_recall_memories(
+        "bot", "current", [MessageData(user_id="alice", content="topic")], None, []
+    )
+
+    assert {item["memory_id"] for item in result} == expected
 
 
 @pytest.mark.asyncio

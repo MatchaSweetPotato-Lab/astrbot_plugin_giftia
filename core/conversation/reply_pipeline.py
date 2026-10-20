@@ -10,6 +10,7 @@ from astrbot.api.event import AstrMessageEvent
 from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt, prepare_reply_message_context
 from ..memory.atomic import memory_metadata
+from ..memory.recall_scope import resolve_memory_recall_scope
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
@@ -139,6 +140,7 @@ class ReplyPipeline:
             user_queries.setdefault(str(message.user_id), []).append(content)
 
         candidates = []
+        recall_scope = resolve_memory_recall_scope(self.plugin)
         for user_id, parts in user_queries.items():
             candidates.extend(
                 await search_memories_with_rerank(
@@ -150,7 +152,7 @@ class ReplyPipeline:
                     limit_key="session_recall_search_limit",
                     log_context="会话记忆自动召回",
                     record_hits=False,
-                    user_ids=[user_id] if user_id else None,
+                    user_ids=[user_id] if user_id and recall_scope == "user" else None,
                 )
             )
         candidates.sort(
@@ -256,6 +258,7 @@ class ReplyPipeline:
 
         session_recalled_memories = []
         if self.plugin.embedding_conf.get("enabled", False):
+            recall_scope = resolve_memory_recall_scope(self.plugin)
             max_items, ttl_seconds = self._session_recall_limits()
             cached_memories = self.plugin.data_cache.get_session_recalled_memories(
                 bot_name=bot_name,
@@ -286,12 +289,28 @@ class ReplyPipeline:
                     if isinstance(memory, dict)
                     else {"metadata": memory.metadata}
                 )
-                source = metadata.get("source_session_id")
-                if source and source != group_or_user_id:
-                    associated = {
-                        str(uid) for uid in metadata.get("associated_user_ids", [])
-                    }
-                    if not associated & recall_users:
+                source = str(
+                    metadata.get("source_session_id")
+                    or (
+                        memory.get("group_or_user_id")
+                        if isinstance(memory, dict)
+                        else ""
+                    )
+                    or group_or_user_id
+                )
+                if recall_scope == "session" and source != str(group_or_user_id):
+                    continue
+                if recall_scope == "user":
+                    associated = metadata.get("associated_user_ids", [])
+                    if not isinstance(associated, list):
+                        associated = []
+                    if associated:
+                        if not any(
+                            type(uid) in (str, int) and str(uid) in recall_users
+                            for uid in associated
+                        ):
+                            continue
+                    elif source != str(group_or_user_id):
                         continue
                 if memory_id and memory_id not in seen_ids:
                     seen_ids.add(memory_id)

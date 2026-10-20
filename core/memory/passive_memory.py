@@ -3,6 +3,7 @@ import json
 
 from .atomic import memory_metadata
 from .passive_tasks import PassiveSummaryTaskMixin
+from .recall_scope import resolve_memory_recall_scope
 
 
 class PassiveMemoryManager(PassiveSummaryTaskMixin):
@@ -128,7 +129,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         *,
         user_ids: list[str] | None = None,
     ) -> list[dict]:
-        """Recall indexed facts associated with users across conversations.
+        """Recall indexed facts within the configured recall scope.
 
         Args:
             bot_name: Owning bot configuration.
@@ -137,16 +138,22 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             recent_messages: Messages defining the active participants.
             limit: Maximum vector candidates.
             threshold: Maximum accepted vector distance.
-            filter_active_users: Infer target users from the supplied messages.
-                When false without explicit users, recall only the current session.
-            user_ids: Explicit target accounts; None infers current participants.
+            filter_active_users: Infer participants in user scope. When false
+                without explicit users, keep administrative searches session-local.
+            user_ids: Target accounts in user scope, or an explicit narrowing
+                filter in session and all scopes. None uses the configured scope.
 
         Returns:
             Factual memories with matching index revisions.
         """
-        scope = "group_or_user_id=?"
-        params = [bot_name, group_or_user_id]
-        if filter_active_users or user_ids is not None:
+        recall_scope = resolve_memory_recall_scope(self.plugin)
+        if not filter_active_users and user_ids is None:
+            recall_scope = "session"
+        scope = "group_or_user_id=?" if recall_scope == "session" else "1"
+        params = [bot_name]
+        if recall_scope in ("session", "user"):
+            params.append(group_or_user_id)
+        if recall_scope == "user" or user_ids is not None:
             if user_ids is None:
                 if recent_messages is None:
                     recent_messages = await self.plugin.data_cache.get_recent_message(
@@ -166,14 +173,21 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
                 f"CASE WHEN json_type({metadata}, '$.associated_user_ids')='array' "
                 f"THEN json_extract({metadata}, '$.associated_user_ids') ELSE '[]' END"
             )
-            scope = f"(group_or_user_id=? AND json_array_length({associated})=0)"
+            user_scope = "0"
             if targets:
                 placeholders = ",".join("?" for _ in targets)
-                scope += (
-                    f" OR EXISTS (SELECT 1 FROM json_each({associated}) "
+                user_scope = (
+                    f"EXISTS (SELECT 1 FROM json_each({associated}) "
                     f"WHERE type IN ('text', 'integer') AND CAST(value AS TEXT) IN ({placeholders}))"
                 )
                 params.extend(targets)
+            if recall_scope == "user":
+                scope = (
+                    f"(group_or_user_id=? AND json_array_length({associated})=0)"
+                    f" OR {user_scope}"
+                )
+            else:
+                scope = f"({scope}) AND ({user_scope})"
         predicate = f"bot_name=? AND ({scope}) AND revision=indexed_revision"
         async with self.plugin.db.conn.execute(
             f"SELECT memory_id FROM memories WHERE {predicate}",
@@ -212,8 +226,9 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             metadata["source_label"] = ""
             if source != str(group_or_user_id):
                 metadata["source_label"] = f"来源群聊：{source}"
-                if source in {
-                    str(uid) for uid in metadata.get("associated_user_ids", [])
+                associated_users = metadata.get("associated_user_ids", [])
+                if isinstance(associated_users, list) and source in {
+                    str(uid) for uid in associated_users
                 }:
                     metadata["source_label"] = "来源私聊"
             recalled.append(

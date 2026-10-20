@@ -108,6 +108,7 @@ class Giftia(Star):
         self.enable_anti_drool = self.normal_config.get("enable_anti_drool", False)
         # 记忆配置
         memory_config = self.conf.get("memory_config", {})
+        self.memory_recall_scope = memory_config.get("recall_scope", "user")
         self.embedding_conf = memory_config.get("embedding_conf", {})
         self.rerank_conf = memory_config.get("rerank_conf", {})
         self.passive_memory_enabled = memory_config.get("passive_memory_enabled", False)
