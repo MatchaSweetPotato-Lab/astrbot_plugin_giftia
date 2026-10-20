@@ -173,7 +173,15 @@ def build_decision_prompt(
     # 3. 动态触发区：当前发言人画像、机器人状态（常驻状态与即时心境）、当前消息与当前时间戳
     user_profile_block = build_user_profile_block(
         user_id=user_id,
-        user_profile=user_profile,
+        user_profile=(
+            {
+                key: value
+                for key, value in user_profile.items()
+                if key != "avatar_description"
+            }
+            if isinstance(user_profile, dict)
+            else user_profile
+        ),
         user_relation=user_relation,
         nickname=curr_nickname,
     )
@@ -448,6 +456,16 @@ def build_reply_prompt(
         user_prompt.append(active_user_briefs_block)
 
     # Recalled context includes this batch and memories retained by the session pool.
+    if (relevant_block or session_block) and any(
+        memory_metadata(
+            item if isinstance(item, dict) else {"metadata": item.metadata}
+        ).get("source_label")
+        for item in [*(relevant_memories or []), *(session_recalled_memories or [])]
+    ):
+        user_prompt.append(
+            "<memory_usage_rules>标注来源的记忆来自其他会话，不要误认为本会话发生的经历。"
+            "若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。</memory_usage_rules>"
+        )
     if session_block:
         user_prompt.append(
             "<session_recalled_memories>\n"
@@ -781,6 +799,9 @@ def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
             continue
         metadata = memory_metadata(item)
         attrs = []
+        source_label = str(metadata.get("source_label") or "").strip()
+        if source_label:
+            attrs.append(f"source={quoteattr(source_label)}")
         times = {
             field: item.get(field) or metadata.get(field)
             for field in (
@@ -888,7 +909,13 @@ def build_user_profile_block(
                 change.get("occurred_at") or change.get("created_at") or ""
             )
             changes.append(
-                f"{escape(timestamp)} 互动评价 {int(change['delta']):+d}："
+                f"{escape(timestamp)} "
+                + (
+                    f"[{escape(str(change['source_label']))}] "
+                    if change.get("source_label")
+                    else ""
+                )
+                + f"互动评价 {int(change['delta']):+d}："
                 f"{escape(truncate_message_content(reason, 120))}"
             )
     if changes:
@@ -896,6 +923,10 @@ def build_user_profile_block(
             "最近互动评价（已参与计分，评价值不等于最终好感度增减）：\n"
             + "\n".join(changes)
         )
+        if any(change.get("source_label") for change in (relation_changes or [])[-3:]):
+            parts.append(
+                "非本会话互动记录若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
+            )
 
     if not parts:
         return ""

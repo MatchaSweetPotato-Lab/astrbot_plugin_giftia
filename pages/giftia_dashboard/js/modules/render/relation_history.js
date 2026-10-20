@@ -11,6 +11,7 @@ export function renderRelationChanges(items, { editable = false } = {}) {
                 <div class="relation-change-heading">
                     <span class="relation-change-delta ${direction}">互动评价 ${delta > 0 ? '+' : ''}${delta}</span>
                     <time class="relation-change-time" datetime="${window.escapeHtml(timestamp)}">${window.escapeHtml(String(window.formatDate(timestamp)))}</time>
+                    ${item.source_label ? `<span class="muted-text">${window.escapeHtml(String(item.source_label))}</span>` : ''}
                 </div>
                 <p class="relation-change-reason">${window.escapeHtml(String(item.reason || '未记录变化理由'))}</p>
                 ${editable ? `<div class="relation-change-actions">

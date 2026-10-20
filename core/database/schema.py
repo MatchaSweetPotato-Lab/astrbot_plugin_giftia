@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 
 import aiosqlite
@@ -6,6 +5,169 @@ import aiosqlite
 from astrbot.api import logger
 
 from .utils import parse_aliases
+
+
+async def _migrate_shared_user_profiles(conn: aiosqlite.Connection) -> None:
+    """Merge legacy session profiles and remove unused affinity snapshots atomically.
+
+    Args:
+        conn: Database connection being initialized.
+    """
+    await conn.execute("SAVEPOINT shared_user_profiles")
+    try:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_profile_sessions (
+                bot_name TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                group_or_user_id TEXT NOT NULL,
+                PRIMARY KEY (bot_name, user_id, group_or_user_id)
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_profile_sessions_group "
+            "ON user_profile_sessions (bot_name, group_or_user_id, user_id)"
+        )
+        async with conn.execute("PRAGMA table_info(user_profiles)") as cursor:
+            profile_columns = {row[1] for row in await cursor.fetchall()}
+        if "group_or_user_id" in profile_columns:
+            await conn.execute(
+                "INSERT OR IGNORE INTO user_profile_sessions "
+                "SELECT bot_name, user_id, group_or_user_id FROM user_profiles"
+            )
+            async with conn.execute(
+                "SELECT * FROM user_profiles ORDER BY "
+                "COALESCE(julianday(updated_at), julianday(created_at), 0) DESC, id DESC"
+            ) as cursor:
+                names = [column[0] for column in cursor.description]
+                rows = [dict(zip(names, row)) for row in await cursor.fetchall()]
+            await conn.execute("""
+                CREATE TABLE user_profiles_shared (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    call_name TEXT,
+                    aliases TEXT,
+                    personality TEXT,
+                    interests TEXT,
+                    attitude TEXT,
+                    agreements TEXT,
+                    extra TEXT,
+                    avatar_description TEXT,
+                    base_relation INTEGER NOT NULL DEFAULT 0,
+                    title TEXT,
+                    attitude_evaluated_change_id INTEGER NOT NULL DEFAULT 0,
+                    relation_history_revision INTEGER NOT NULL DEFAULT 0,
+                    bot_name TEXT NOT NULL,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
+            fields = (
+                "call_name",
+                "personality",
+                "interests",
+                "agreements",
+                "extra",
+                "avatar_description",
+                "title",
+            )
+            merged = {}
+            for row in rows:
+                key = (row["bot_name"], row["user_id"])
+                if key not in merged:
+                    merged[key] = {
+                        **row,
+                        "attitude": None,
+                        "aliases": None,
+                        "attitude_evaluated_change_id": 0,
+                    }
+                target = merged[key]
+                target["base_relation"] = max(
+                    target["base_relation"], row["base_relation"]
+                )
+                target["relation_history_revision"] = max(
+                    target["relation_history_revision"],
+                    row["relation_history_revision"],
+                )
+                for field in fields:
+                    if (
+                        not str(target.get(field) or "").strip()
+                        and str(row.get(field) or "").strip()
+                    ):
+                        target[field] = row[field]
+            columns = (
+                "id",
+                "user_id",
+                "call_name",
+                "aliases",
+                "personality",
+                "interests",
+                "attitude",
+                "agreements",
+                "extra",
+                "avatar_description",
+                "base_relation",
+                "title",
+                "attitude_evaluated_change_id",
+                "relation_history_revision",
+                "bot_name",
+                "created_at",
+                "updated_at",
+            )
+            await conn.executemany(
+                f"INSERT INTO user_profiles_shared ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                [tuple(row[column] for column in columns) for row in merged.values()],
+            )
+            await conn.execute("DROP TABLE user_profiles")
+            await conn.execute(
+                "ALTER TABLE user_profiles_shared RENAME TO user_profiles"
+            )
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique "
+            "ON user_profiles (user_id, bot_name)"
+        )
+        async with conn.execute("PRAGMA table_info(relation_changes)") as cursor:
+            history_columns = {row[1] for row in await cursor.fetchall()}
+        if {"relation_before", "relation_after"} & history_columns:
+            async with conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name='relation_changes'"
+            ) as cursor:
+                sequence = await cursor.fetchone()
+            await conn.execute("""
+                CREATE TABLE relation_changes_shared (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_name TEXT NOT NULL,
+                    group_or_user_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    delta INTEGER NOT NULL CHECK(delta BETWEEN -5 AND 5 AND delta != 0),
+                    reason TEXT NOT NULL,
+                    source_ids TEXT,
+                    occurred_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(bot_name, group_or_user_id, user_id, source_ids)
+                )
+            """)
+            await conn.execute(
+                "INSERT INTO relation_changes_shared SELECT id, bot_name, group_or_user_id, "
+                "user_id, delta, reason, source_ids, occurred_at, created_at FROM relation_changes"
+            )
+            await conn.execute("DROP TABLE relation_changes")
+            await conn.execute(
+                "ALTER TABLE relation_changes_shared RENAME TO relation_changes"
+            )
+            if sequence:
+                await conn.execute(
+                    "UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='relation_changes'",
+                    (sequence[0],),
+                )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relation_changes_user ON relation_changes (bot_name, user_id, id)"
+        )
+        await conn.execute("RELEASE SAVEPOINT shared_user_profiles")
+    except BaseException:
+        await conn.execute("ROLLBACK TO SAVEPOINT shared_user_profiles")
+        await conn.execute("RELEASE SAVEPOINT shared_user_profiles")
+        raise
 
 
 async def initialize_database(conn: aiosqlite.Connection) -> None:
@@ -183,7 +345,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
-                group_or_user_id TEXT NOT NULL,
                 call_name TEXT,
                 aliases TEXT,
                 personality TEXT,
@@ -223,10 +384,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                     and "already exists" not in str(e).lower()
                 ):
                     logger.warning(f"Failed to migrate user_profiles column: {e}")
-        # 创建索引
-        await cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique ON user_profiles (user_id, group_or_user_id, bot_name)"
-        )
         await cursor.execute("""
             CREATE TABLE IF NOT EXISTS relation_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,8 +391,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 group_or_user_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 delta INTEGER NOT NULL CHECK(delta BETWEEN -5 AND 5 AND delta != 0),
-                relation_before REAL NOT NULL,
-                relation_after REAL NOT NULL,
                 reason TEXT NOT NULL,
                 source_ids TEXT,
                 occurred_at TEXT NOT NULL,
@@ -245,7 +400,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         """)
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_relation_changes_user "
-            "ON relation_changes (bot_name, group_or_user_id, user_id, id)"
+            "ON relation_changes (bot_name, user_id, id)"
         )
         # 用户外号统计表。aliases 旧列保留兼容，但读写权威来源迁移到这里。
         await cursor.execute("""
@@ -354,36 +509,6 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 "OR key LIKE 'passive_memory:silent_count:%'"
             )
         await cursor.execute(
-            "SELECT 1 FROM kv_store WHERE key='bot_output_observation_migration_done'"
-        )
-        if not await cursor.fetchone():
-            # Repair only known observer accounts; never infer that other senders were seen.
-            async with conn.execute(
-                "SELECT value FROM kv_store WHERE key LIKE 'atomic_memory:session:%'"
-            ) as routes_cursor:
-                routes = await routes_cursor.fetchall()
-            for (value,) in routes:
-                try:
-                    route = json.loads(value)
-                    bot_name = route["bot_name"]
-                    session_id = route["session_id"]
-                    self_id = str(route["self_id"] or "").strip()
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if not bot_name or not session_id or not self_id:
-                    continue
-                await cursor.execute(
-                    "UPDATE chat_history SET memory_status='pending' "
-                    "WHERE bot_name=? AND group_or_user_id=? AND user_id=? "
-                    "AND memory_status='unseen' AND COALESCE(is_recalled, 0)=0 "
-                    "AND COALESCE(role, 'message')='message'",
-                    (bot_name, session_id, self_id),
-                )
-            await cursor.execute(
-                "INSERT INTO kv_store (key, value) "
-                "VALUES ('bot_output_observation_migration_done', 1)"
-            )
-        await cursor.execute(
             "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
             ("user_aliases_migration_done",),
         )
@@ -391,13 +516,25 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         if not row:
             logger.info("[Database] Running user aliases migration...")
             async with conn.execute(
-                """
-                SELECT bot_name, group_or_user_id, user_id, aliases, created_at, updated_at
-                FROM user_profiles
-                WHERE aliases IS NOT NULL AND aliases != ''
-                """
-            ) as alias_cursor:
-                alias_rows = await alias_cursor.fetchall()
+                "PRAGMA table_info(user_profiles)"
+            ) as columns_cursor:
+                legacy_profile = any(
+                    column[1] == "group_or_user_id"
+                    for column in await columns_cursor.fetchall()
+                )
+            alias_rows = []
+            if legacy_profile:
+                async with conn.execute(
+                    """
+                    SELECT bot_name, group_or_user_id, user_id, aliases, created_at, updated_at
+                    FROM user_profiles
+                    WHERE aliases IS NOT NULL AND aliases != ''
+                    """
+                ) as alias_cursor:
+                    names = [column[0] for column in alias_cursor.description]
+                    alias_rows = [
+                        dict(zip(names, row)) for row in await alias_cursor.fetchall()
+                    ]
             for alias_row in alias_rows:
                 aliases = parse_aliases(alias_row["aliases"])
                 first_seen_at = alias_row["created_at"] or datetime.now().strftime(
@@ -444,6 +581,7 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 ("user_aliases_migration_done", "1", update_time, update_time),
             )
             logger.info("[Database] User aliases migration completed.")
+        await _migrate_shared_user_profiles(conn)
         # 创建短期任务看板表
         await cursor.execute("""
             CREATE TABLE IF NOT EXISTS short_tasks (

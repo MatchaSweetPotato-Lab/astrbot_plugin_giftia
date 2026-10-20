@@ -23,11 +23,9 @@ class FeatureKey:
     LIKE = "like"
     DELETE = "delete"
     GROUP_ADMIN = "group_admin"
-    SCHEDULE_TASK = "schedule_task"
     TASK_BOARD = "task_board"
     SLANG = "slang"
     STICKER = "sticker"
-    MEMORY_QUERY = "memory_query"
     SET_CALL_NAME = "set_call_name"
     SET_AVATAR = "set_avatar"
     PERSISTENT_STATUS = "persistent_status"
@@ -210,16 +208,12 @@ FLAT_CLOSABLE_TAGS = [
     "leave",
     "summary_user_profile",
     "save_memory",
-    "search_memory",
     "search_chat_history",
     "get_message_context",
     "update_memory",
     "update_relation",
     "set_relation_title",
     "tool_call",
-    "schedule_task",
-    "delete_task",
-    "all_task",
     "task_board",
     "short_task",
     "add_sticker",
@@ -277,8 +271,6 @@ class XmlLlmResult:
     kick: list[tuple[str, str]] = field(default_factory=list)
     # 退群，同上。群号
     leave: list[str] = field(default_factory=list)
-    # 长期记忆。群号/用户ID，内容
-    search_memories: list[tuple[str, str]] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
@@ -287,14 +279,10 @@ class XmlLlmResult:
     xml_tool_results: list[dict] = field(default_factory=list)
     # 原生 function calling / tool loop 已调用的工具名
     native_tools_called: list[str] = field(default_factory=list)
-    # Scheduled requests contain time_expr, content, and the creator's user_id.
-    schedule_tasks: list[dict[str, str]] = field(default_factory=list)
     # Trusted identities supplied by the reply pipeline, never parsed from XML.
     task_creator_names: dict[str, str] = field(default_factory=dict)
-    # 删除定时任务，任务ID
-    delete_schedule_tasks: list[str] = field(default_factory=list)
-    # 获取全部定时任务，群号
-    all_tasks: list[str] = field(default_factory=list)
+    # Trusted tool state, shared by native and XML execution; never model-supplied.
+    tool_context: dict = field(default_factory=dict)
     # 添加表情包，媒体ID
     add_stickers: list[str] = field(default_factory=list)
     # 发送表情包，表情ID

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from xml.etree.ElementTree import fromstring
 
 import pytest
+
 from core.conversation.media_captioner import MediaCaptioner
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
@@ -273,6 +274,74 @@ async def test_reminder_without_reply_messages_keeps_recipient_profile(runtime):
 
 
 @pytest.mark.asyncio
+async def test_foreign_pool_memories_follow_current_participants_without_losing_cache(
+    runtime,
+):
+    foreign = memory("foreign-alice", text="Alice's foreign fact")
+    foreign["metadata"] = {
+        "associated_user_ids": ["alice"],
+        "source_session_id": "other-group",
+        "source_label": "来源群聊：other-group",
+    }
+    runtime.cache.merge_session_recalled_memories(
+        "bot", "group", [foreign, memory("local", text="local fact")]
+    )
+    await runtime.run(reply_messages=[MessageData(user_id="bob", content="hello")])
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    assert "Alice's foreign fact" not in prompt
+    assert "local fact" in prompt
+    await runtime.run(reply_messages=[MessageData(user_id="alice", content="hello")])
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    assert "Alice's foreign fact" in prompt
+    assert "来源群聊：other-group" in prompt
+
+
+@pytest.mark.asyncio
+async def test_scope_switches_refilter_pending_and_cached_memories_before_injection(
+    runtime,
+):
+    runtime.plugin.embedding_conf["inject_limit"] = 10
+    cached = []
+    for memory_id, users, source in [
+        ("local-alice", ["alice"], "group"),
+        ("local-bob", ["bob"], "group"),
+        ("local-legacy", [], "group"),
+        ("foreign-alice", ["alice"], "other"),
+        ("foreign-bob", ["bob"], "other"),
+        ("foreign-legacy", [], "other"),
+    ]:
+        record = memory(memory_id)
+        record["metadata"] = {"associated_user_ids": users, "source_session_id": source}
+        cached.append(record)
+    runtime.cache.merge_session_recalled_memories("bot", "group", cached)
+    pending = memory("pending-foreign-alice")
+    pending["metadata"] = {"associated_user_ids": ["alice"]}
+    pending["group_or_user_id"] = "other"
+    all_ids = {record["id"] for record in cached} | {pending["id"]}
+
+    for scope, expected in [
+        ("all", all_ids),
+        ("session", {"local-alice", "local-bob", "local-legacy"}),
+        ("user", {"local-alice", "foreign-alice", "local-legacy", pending["id"]}),
+        ("all", all_ids),
+    ]:
+        runtime.plugin.memory_recall_scope = scope
+        await runtime.run(
+            reply_messages=[MessageData(user_id="alice", content="hello")],
+            pending_recall_memories=[pending],
+        )
+        prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+        root = fromstring("<context>" + prompt + "</context>")
+        assert {
+            item.text for item in root.findall("session_recalled_memories/memory")
+        } == expected
+    assert {
+        item.memory_id
+        for item in runtime.cache.get_session_recalled_memories("bot", "group")
+    } == {record["id"] for record in cached}
+
+
+@pytest.mark.asyncio
 async def test_reply_keeps_all_profiles_across_tool_turns_without_new_arrivals(runtime):
     runtime.cache.get_user_relation.return_value = (50.0, "")
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
@@ -382,6 +451,7 @@ async def test_interleaved_users_search_separately_with_caption_only_and_origina
         second,
     ]
     assert all(call.kwargs["recent_messages"] == messages for call in calls)
+    assert [call.kwargs["user_ids"] for call in calls] == [["alice"], ["bob"]]
     assert all(call.kwargs["threshold"] == 0.7 for call in calls)
     assert messages == original
 
@@ -559,29 +629,27 @@ async def test_current_and_cached_automatic_memories_share_one_prompt_budget(
 
 
 @pytest.mark.asyncio
-async def test_zero_injection_limit_disables_automatic_work_but_preserves_explicit_search(
+async def test_zero_injection_limit_disables_automatic_work_but_recognizes_native_tools(
     runtime,
 ):
     runtime.cache.merge_session_recalled_memories("bot", "group", [memory("cached")])
     runtime.plugin.embedding_conf["inject_limit"] = 0
-    runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("group", "explicit query")]),
-        XmlLlmResult(),
-    ]
-    runtime.search.return_value = [memory("tool-result")]
+    runtime.plugin.call_llm.call_llm_reply.return_value = XmlLlmResult(
+        native_tools_called=["search_memory"]
+    )
     await runtime.run(
         reply_messages=[MessageData(user_id="alice", content="automatic query")],
         relevant_memories=[memory("decision-result")],
     )
-    runtime.search.assert_awaited_once()
-    assert runtime.search.call_args.kwargs["query"] == "explicit query"
+    runtime.search.assert_not_awaited()
+    runtime.plugin.db.update_message_reply_decision.assert_not_awaited()
     prompts = [
         call.kwargs["user_prompt"]
         for call in runtime.plugin.call_llm.call_llm_reply.await_args_list
     ]
     assert all("<session_recalled_memories>" not in prompt for prompt in prompts)
     assert all("decision-result" in prompt for prompt in prompts)
-    assert "tool-result" in prompts[1]
+    assert len(prompts) == 1
     runtime.cache.get_memories.assert_not_awaited()
 
 
@@ -592,10 +660,10 @@ async def test_recall_survives_tool_turns_and_retired_mode_switch_is_ignored(run
         MediaCaption(hash_val="cat", caption="smirking cat")
     ]
     runtime.plugin.call_llm.call_llm_reply.side_effect = [
-        XmlLlmResult(search_memories=[("group", "explicit query")]),
+        XmlLlmResult(tools_to_call=[("other_tool", {})]),
         XmlLlmResult(),
     ]
-    runtime.search.side_effect = [[memory("automatic")], [memory("explicit")]]
+    runtime.search.return_value = [memory("automatic")]
     messages = [
         MessageData(message_id="a1", user_id="alice", content="[图片:cat]"),
         MessageData(message_id="b1", user_id="bob", content="[图片:missing]"),
@@ -604,14 +672,13 @@ async def test_recall_survives_tool_turns_and_retired_mode_switch_is_ignored(run
     pending = []
     await runtime.run(reply_messages=messages, pending_recall_memories=pending)
     calls = runtime.search.await_args_list
-    assert len(calls) == 2 and "smirking cat" in calls[0].kwargs["query"]
-    assert calls[1].kwargs["query"] == "explicit query"
+    assert len(calls) == 1 and "smirking cat" in calls[0].kwargs["query"]
     prompts = [
         call.kwargs["user_prompt"]
         for call in runtime.plugin.call_llm.call_llm_reply.await_args_list
     ]
     assert all("automatic" in prompt for prompt in prompts)
-    assert "explicit" in prompts[1]
+    assert len(prompts) == 2
     for prompt in prompts:
         assert (
             prompt.index('message_id="a1"')

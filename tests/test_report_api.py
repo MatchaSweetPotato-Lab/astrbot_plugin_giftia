@@ -65,8 +65,9 @@ async def test_editor_save_preview_and_validation(api_app):
         assert profile["sample_data"]["relation"] == 68
         assert "recent_relation_changes" in profile["fields"]
         assert len(profile["sample_data"]["recent_relation_changes"]) == 3
+        assert profile["sample_data"]["recent_relation_changes"][0]["delta"] == 2
         assert (
-            profile["sample_data"]["recent_relation_changes"][0]["relation_after"] == 68
+            "relation_after" not in profile["sample_data"]["recent_relation_changes"][0]
         )
         assert set(profile["sample_data"]["profile_fields"]) == {
             "称呼",

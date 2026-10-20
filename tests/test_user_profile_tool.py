@@ -48,8 +48,8 @@ async def seed_history(runtime, count, scope=("bot", "group", "123")):
     await runtime.db.upsert_user_profile(*scope, profile_fields={"call_name": "小明"})
     await runtime.db.conn.executemany(
         "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
-        "relation_before, relation_after, reason, occurred_at, created_at) "
-        "VALUES (?, ?, ?, 1, 50, 51, ?, ?, ?)",
+        "reason, occurred_at, created_at) "
+        "VALUES (?, ?, ?, 1, ?, ?, ?)",
         [
             (
                 *scope,
@@ -174,7 +174,7 @@ async def test_page_applies_to_each_matched_member_and_limit_counts_members(runt
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("group_id,session", [("group", "group"), ("", "sender")])
-async def test_tool_history_isolated_by_bot_conversation_and_member(
+async def test_tool_history_shared_across_groups_and_isolated_by_bot_and_member(
     runtime, group_id, session
 ):
     runtime.event.get_group_id.return_value = group_id
@@ -187,9 +187,13 @@ async def test_tool_history_isolated_by_bot_conversation_and_member(
     ]:
         await seed_history(runtime, 2, item)
     result = await runtime.tool.call(runtime.context, "123")
-    assert "共 2 条" in result
+    assert "共 4 条" in result
     assert f"bot/{session}/123#002" in result
-    for omitted in (f"other/{session}/123#", "bot/other/123#", f"bot/{session}/456#"):
+    assert "bot/other/123#002" in result
+    assert "来源群聊：other" in result
+    assert "若可能涉及隐私，则不能对外披露" in result
+    assert "除非取得同一用户明确许可" in result
+    for omitted in (f"other/{session}/123#", f"bot/{session}/456#"):
         assert omitted not in result
 
 

@@ -1,3 +1,4 @@
+import json
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -6,6 +7,8 @@ from xxhash import xxh3_64_hexdigest
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
+from astrbot.core.agent.tool import ToolSet
+from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.exceptions import EmptyModelOutputError
 from astrbot.core.utils import media_utils
 
@@ -19,6 +22,10 @@ from ..utils.schemas import (
 )
 from ..utils.token_utils import extract_tokens_robust
 from .json_parse import decode_media_audio_json, decode_media_caption_json
+from .native_tools import (
+    NATIVE_CONTEXT_KEY,
+    NATIVE_TOOL_CONFIG_KEYS,
+)
 from .preset_prompts import (
     build_xml_instructions,
     get_audio_caption_prompt,
@@ -188,9 +195,15 @@ class CallLLM:
         is_qq_official: bool = False,
         persona_tools: list[str] | None = None,
         use_meme_manager: bool = False,
+        tool_context: dict | None = None,
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
+        if enabled_features is None and self.plugin is not None:
+            bot_name = resolve_bot_name(self.plugin, event)
+            enabled_features = self.plugin.bot_map.get(bot_name, {}).get(
+                "enabled_interactive_features"
+            )
 
         for provider_id in provider_ids:
             for i in range(self.network_conf["reply_retry_times"]):
@@ -206,6 +219,8 @@ class CallLLM:
                     )
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
                     tools_set = None
+                    native_tools = ToolSet()
+                    xml_tools = []
                     if use_source_tools or force_xml_tools:
                         tool_manager = self.context.get_llm_tool_manager()
                         tools_set = tool_manager.get_full_tool_set()
@@ -251,6 +266,11 @@ class CallLLM:
                         for tool in tools_set.tools[:]:
                             if not tool.active:
                                 tools_set.remove_tool(tool.name)
+                            elif tool.name in NATIVE_TOOL_CONFIG_KEYS:
+                                if not getattr(self.plugin, "tools_config", {}).get(
+                                    NATIVE_TOOL_CONFIG_KEYS[tool.name], True
+                                ):
+                                    tools_set.remove_tool(tool.name)
 
                         if persona_tools is not None:
                             if isinstance(persona_tools, (list, tuple, set)):
@@ -296,16 +316,18 @@ class CallLLM:
                                 f"</native_tool_probe>"
                             )
 
-                        if force_xml_tools and tools_set and tools_set.tools:
-                            import json
-
+                        if force_xml_tools:
+                            xml_tools = tools_set.tools
+                        else:
+                            native_tools = tools_set
+                        if xml_tools:
                             xml_tools_str = "\n".join(
                                 f'  - <tool_call name="{t.name}" description="{t.description}">{json.dumps(t.parameters, ensure_ascii=False)}</tool_call>'
-                                for t in tools_set.tools
+                                for t in xml_tools
                             )
                             xml_tools_instruction = (
                                 "\n\n# 可用工具 (强制使用 XML 标签调用)\n"
-                                '如果你需要使用工具，必须通过输出并列的 <tool_call name="工具名">参数JSON</tool_call> 标签来调用。不要使用原生的 function calling 功能。若没有需要调用的工具，则不要输出任何 tool_call 标签。\n'
+                                '所有工具统一通过并列的 <tool_call name="工具名">参数JSON</tool_call> 标签调用，不使用原生 function calling。工具结果会在执行后提供，可据此继续调用或组织回复。若没有需要调用的工具，则不要输出 tool_call 标签。\n'
                                 "注意：参数部分必须是正确的 JSON 格式对象，例如：\n"
                                 "<status>...</status>\n"
                                 '<tool_call name="search_chat_history">{"keyword": "查询词"}</tool_call>\n\n'
@@ -315,22 +337,41 @@ class CallLLM:
                                 actual_system_prompt + xml_tools_instruction
                             )
 
+                    agent_context = None
+                    if native_tools.tools:
+                        agent_context = AstrAgentContext(
+                            context=self.context,
+                            event=event,
+                            extra={
+                                NATIVE_CONTEXT_KEY: json.dumps(
+                                    tool_context, ensure_ascii=False
+                                )
+                            }
+                            if tool_context is not None
+                            else {},
+                        )
                     logger.debug(
                         f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>"
                     )
                     logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
-
-                    if use_source_tools and not force_xml_tools:
+                    if native_tools.tools or (use_source_tools and not force_xml_tools):
                         native_attempt_started = True
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
                             system_prompt=actual_system_prompt,
                             prompt=user_prompt,
-                            tools=tools_set,
-                            max_steps=10,
+                            tools=native_tools,
+                            max_steps=getattr(self.plugin, "tools_config", {}).get(
+                                "max_loop", 10
+                            ),
                             tool_call_timeout=timeout,
                             stream=True,
+                            **(
+                                {"agent_context": agent_context}
+                                if agent_context is not None
+                                else {}
+                            ),
                         )
                     else:
                         llm_resp = await self.context.tool_loop_agent(
@@ -340,6 +381,12 @@ class CallLLM:
                             prompt=user_prompt,
                             tool_call_timeout=timeout,
                             stream=True,
+                        )
+                    if agent_context is not None and tool_context is not None:
+                        tool_context.update(
+                            json.loads(
+                                agent_context.extra.get(NATIVE_CONTEXT_KEY, "{}")
+                            )
                         )
                     parsed_result = None
                     status_val = "parse_failed"

@@ -1,9 +1,12 @@
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from core.database.data_cache import DataCache
+from core.database.database import Database
 from core.handlers.commands import CommandHandler
 from core.reports.service import ReportService
 from core.reports.user_profile import USER_PROFILE_FIELDS, build_user_profile_report
@@ -69,7 +72,7 @@ async def test_profile_id_lookup_is_scoped_and_defaults_to_text(
         "bot", group_id or "sender", user_id
     )
     plugin.db.get_relation_changes.assert_awaited_once_with(
-        "bot", group_id or "sender", user_id, limit=3
+        "bot", group_id or "sender", user_id, limit=3, current_session_only=True
     )
     text = event.send.call_args.args[0].chain[0].text
     assert f"用户 ID：{user_id}" in text
@@ -160,10 +163,7 @@ async def test_missing_bot_and_missing_profile(command):
     plugin.conf["report_config"] = {"render_mode": "图片响应"}
     plugin.data_cache.get_user_profile_record.return_value = None
     _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
-    assert (
-        "当前会话中暂无用户 123 的画像记录"
-        in event.send.call_args.args[0].chain[0].text
-    )
+    assert "暂无用户 123 的画像记录" in event.send.call_args.args[0].chain[0].text
     plugin.html_render.assert_not_awaited()
 
 
@@ -275,9 +275,8 @@ def test_report_history_is_bounded_escaped_and_available_to_custom_templates(com
     _, plugin, _ = command
     changes = [
         {
+            "group_or_user_id": "group",
             "delta": delta,
-            "relation_before": 10,
-            "relation_after": 10 + delta,
             "reason": reason,
             "occurred_at": "2026-10-18T14:00:00+08:00",
         }
@@ -312,6 +311,155 @@ def test_report_history_is_bounded_escaped_and_available_to_custom_templates(com
     assert "omitted fourth" not in plugin.reports.render_html("user_profile", data)
 
 
+def test_public_report_filters_foreign_and_unknown_sources_before_limiting(command):
+    _, plugin, _ = command
+    changes = [
+        {
+            "group_or_user_id": "private-session",
+            "delta": 1,
+            "reason": "private interaction",
+        },
+        {"delta": 1, "reason": "unknown source interaction"},
+        *[
+            {
+                "group_or_user_id": "group",
+                "delta": 1,
+                "reason": f"local {index}",
+                "source_label": "untrusted source label",
+            }
+            for index in range(4)
+        ],
+    ]
+    data = build_user_profile_report(
+        "bot", "小吉", "group", "user", {"relation": 12}, changes
+    )
+    assert [row["reason"] for row in data["recent_relation_changes"]] == [
+        "local 0",
+        "local 1",
+        "local 2",
+    ]
+    serialized = json.dumps(data)
+    assert "private-session" not in serialized
+    assert "private interaction" not in serialized
+    assert "unknown source interaction" not in serialized
+    assert "source_label" not in serialized
+    assert "group_or_user_id" not in serialized
+    plugin.reports.save_template(
+        "user_profile", "{{ recent_relation_changes | tojson }}"
+    )
+    rendered = plugin.reports.render_html("user_profile", data)
+    assert "local 2" in rendered
+    assert "private interaction" not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["文本响应", "图片响应"])
+@pytest.mark.parametrize("group_id", ["group", ""])
+async def test_profile_command_never_discloses_foreign_interactions(
+    command, mode, group_id
+):
+    handler, plugin, event = command
+    event.get_group_id.return_value = group_id
+    plugin.conf["report_config"] = {"render_mode": mode}
+    plugin.db.get_relation_changes.return_value = [
+        {
+            "group_or_user_id": group_id or "sender",
+            "delta": 1,
+            "reason": "local interaction",
+        },
+        {
+            "group_or_user_id": "foreign-private-session",
+            "delta": 2,
+            "reason": "private secret",
+            "source_label": "foreign group",
+        },
+    ]
+    path = Path(plugin.html_render.return_value)
+    if mode == "图片响应":
+        path.write_bytes(b"rendered image")
+    _ = [chunk async for chunk in handler.get_user_profile(event, "target")]
+    rendered = (
+        plugin.html_render.call_args.args[1]["report_html"]
+        if mode == "图片响应"
+        else event.send.call_args.args[0].chain[0].text
+    )
+    assert "local interaction" in rendered
+    assert "private secret" not in rendered
+    assert "foreign-private-session" not in rendered
+    assert "foreign group" not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["文本响应", "图片响应"])
+@pytest.mark.parametrize("session_id", ["group", "without-local-history"])
+async def test_profile_display_filter_preserves_shared_scores_and_counts(
+    command, tmp_path, monkeypatch, mode, session_id
+):
+    handler, plugin, event = command
+    monkeypatch.setattr(
+        "astrbot.api.star.StarTools.get_data_dir", lambda *args: tmp_path
+    )
+    plugin.db = await Database.connect()
+    plugin.data_cache = DataCache(plugin.db, None, None)
+    plugin.conf["report_config"] = {"render_mode": mode}
+    event.get_group_id.return_value = session_id
+    try:
+        await plugin.data_cache.set_user_profile(
+            "bot", "group", "user", base_relation=7
+        )
+        for source, delta, count in [
+            ("group", 2, 4),
+            ("foreign-group", -2, 7),
+            ("user", 3, 3),
+        ]:
+            for index in range(count):
+                await plugin.data_cache.update_relation(
+                    "bot", source, "user", delta, f"{source} interaction {index}"
+                )
+        before = await plugin.data_cache.get_user_profile_record(
+            "bot", session_id, "user"
+        )
+        expected_recent = 100 * (5 + 9) / (10 + 9 + 14)
+        expected_long_term = 100 * (5 + 17) / (10 + 17 + 14)
+        expected_interaction = 0.6 * expected_recent + 0.4 * expected_long_term
+        expected_relation = 7 + expected_interaction
+        assert before["total_count"] == 14 and before["recent_count"] == 10
+        assert before["relation"] == pytest.approx(expected_relation)
+        if mode == "图片响应":
+            Path(plugin.html_render.return_value).write_bytes(b"rendered image")
+        _ = [chunk async for chunk in handler.get_user_profile(event, "user")]
+        rendered = (
+            plugin.html_render.call_args.args[1]["report_html"]
+            if mode == "图片响应"
+            else event.send.call_args.args[0].chain[0].text
+        )
+        assert f"{expected_relation:.1f}" in rendered
+        assert f"{expected_interaction:.1f}" in rendered
+        assert f"{expected_recent:.1f}" in rendered
+        assert f"{expected_long_term:.1f}" in rendered
+        assert "共 14 次评价" in rendered
+        assert "foreign-group" not in rendered
+        assert "user interaction" not in rendered
+        if session_id == "group":
+            for index in (1, 2, 3):
+                assert f"group interaction {index}" in rendered
+            assert "group interaction 0" not in rendered
+        else:
+            assert "group interaction" not in rendered
+            assert "最近互动评价" not in rendered
+        assert (
+            await plugin.data_cache.get_user_profile_record("bot", session_id, "user")
+            == before
+        )
+        other = await plugin.data_cache.get_user_profile_record(
+            "bot", "foreign-group", "user"
+        )
+        assert other["relation"] == pytest.approx(expected_relation)
+        assert other["total_count"] == 14 and other["recent_count"] == 10
+    finally:
+        await plugin.db.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["文本响应", "图片响应"])
 @pytest.mark.parametrize("group_id", ["group", ""])
@@ -323,23 +471,20 @@ async def test_profile_command_supplies_scoped_recent_history_to_text_and_image(
     plugin.conf["report_config"] = {"render_mode": mode}
     plugin.db.get_relation_changes.return_value = [
         {
+            "group_or_user_id": group_id or "sender",
             "delta": 1,
-            "relation_before": 10,
-            "relation_after": 11,
             "reason": "earliest",
             "occurred_at": "2026-10-16T12:00:00+08:00",
         },
         {
+            "group_or_user_id": group_id or "sender",
             "delta": -2,
-            "relation_before": 11,
-            "relation_after": 9,
             "reason": "middle",
             "occurred_at": "2026-10-17T12:00:00+08:00",
         },
         {
+            "group_or_user_id": group_id or "sender",
             "delta": 3,
-            "relation_before": 9,
-            "relation_after": 12,
             "reason": "latest",
             "occurred_at": "2026-10-18T12:00:00+08:00",
         },
@@ -349,7 +494,7 @@ async def test_profile_command_supplies_scoped_recent_history_to_text_and_image(
         path.write_bytes(b"rendered image")
     _ = [chunk async for chunk in handler.get_user_profile(event, "target")]
     plugin.db.get_relation_changes.assert_awaited_once_with(
-        "bot", group_id or "sender", "target", limit=3
+        "bot", group_id or "sender", "target", limit=3, current_session_only=True
     )
     rendered = (
         plugin.html_render.call_args.args[1]["report_html"]

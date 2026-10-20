@@ -33,6 +33,7 @@ await import('../pages/giftia_dashboard/js/utils.js');
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
 const { loadMemories, renderMemories } = await import('../pages/giftia_dashboard/js/modules/render/memories.js');
 const { renderChatHistory } = await import('../pages/giftia_dashboard/js/modules/render/history.js');
+const { renderRelationChanges } = await import('../pages/giftia_dashboard/js/modules/render/relation_history.js');
 const { renderUserProfiles } = await import('../pages/giftia_dashboard/js/modules/render/profiles.js');
 await import('../pages/giftia_dashboard/js/modals/memory.js');
 await import('../pages/giftia_dashboard/js/modals/profile.js');
@@ -197,9 +198,9 @@ test('profile cards show three newest changes and open history with the exact sc
     const item = {
         bot_name: "bot'quoted", group_or_user_id: 'group', user_id: '<user>', relation: -1,
         recent_relation_changes: [
-            { delta: 2, relation_before: -3, relation_after: -1, reason: '<script>reason</script>', occurred_at: '2026-10-18T12:00:00+08:00' },
-            { delta: -2, relation_before: -1, relation_after: -3, reason: 'negative reason' },
-            { delta: 1, relation_before: -2, relation_after: -1, reason: 'third reason' },
+            { delta: 2, reason: '<script>reason</script>', occurred_at: '2026-10-18T12:00:00+08:00' },
+            { delta: -2, reason: 'negative reason' },
+            { delta: 1, reason: 'third reason' },
             { delta: 1, reason: 'fourth must be omitted' }
         ]
     };
@@ -274,7 +275,7 @@ test('affinity history opens on page one and paginates ten scoped records', asyn
     window.apiGet = async (path, params) => {
         calls.push({ path, params });
         return { status: 'success', data: {
-            items: [{ delta: 1, relation_before: 0, relation_after: 1, reason: `page ${params.page}` }],
+            items: [{ delta: 1, reason: `page ${params.page}` }],
             total: 23, page: params.page, limit: 10
         } };
     };
@@ -285,7 +286,7 @@ test('affinity history opens on page one and paginates ten scoped records', asyn
         paginate = onChange;
     };
     await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'group', user_id: 'A' });
-    assert.match(get('user-relation-history-scope').textContent, /A · bot \/ group/);
+    assert.match(get('user-relation-history-scope').textContent, /A · bot · 跨群共享（当前会话 group）/);
     assert.match(get('user-relation-history-list').innerHTML, /page 1/);
     await paginate(2);
     assert.deepEqual(calls[1], { path: '/profiles/user/relation_history', params: {
@@ -305,7 +306,7 @@ test('slower affinity history responses cannot replace the newly selected member
     await old;
     assert.match(get('user-relation-history-list').innerHTML, /new member/);
     assert.doesNotMatch(get('user-relation-history-list').innerHTML, /old member/);
-    assert.match(get('user-relation-history-scope').textContent, /B · bot \/ new/);
+    assert.match(get('user-relation-history-scope').textContent, /B · bot · 跨群共享（当前会话 new）/);
 });
 
 test('affinity history escapes failures and offers retry and empty states', async () => {
@@ -446,7 +447,17 @@ test('a late save cannot replace the history of a newly selected member', async 
     await window.openUserRelationHistoryModal({ bot_name: 'bot', group_or_user_id: 'other', user_id: 'B' });
     finish({ status: 'success' });
     await pending;
-    assert.match(get('user-relation-history-scope').textContent, /B · bot \/ other/);
+    assert.match(get('user-relation-history-scope').textContent, /B · bot · 跨群共享（当前会话 other）/);
     assert.match(get('user-relation-history-list').innerHTML, /member B/);
     assert.doesNotMatch(get('user-relation-history-list').innerHTML, /member A/);
+});
+
+test('cross-group rating sources are displayed and escaped', () => {
+    const html = renderRelationChanges([
+        { delta: 2, reason: '本群互动', source_label: '' },
+        { delta: -1, reason: '其他群互动', source_label: '来源群聊：<script>source</script>' }
+    ]);
+    assert.match(html, /来源群聊：&lt;script&gt;source&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<script>/);
+    assert.equal((html.match(/来源群聊/g) || []).length, 1);
 });

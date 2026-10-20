@@ -439,7 +439,7 @@ class DecisionEngine:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 query=result.rag_query,
-                recent_messages=recent_messages,
+                recent_messages=pending_messages,
                 log_context="决策 RAG 记忆召回",
             )
             relevant_memories = list(memory_results)

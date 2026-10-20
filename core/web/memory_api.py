@@ -193,9 +193,9 @@ class MemoryApi:
                     sql = f"""
                         SELECT user_id, call_name
                         FROM user_profiles
-                        WHERE bot_name = ? AND group_or_user_id = ? AND user_id IN ({placeholders})
+                        WHERE bot_name = ? AND user_id IN ({placeholders})
                     """
-                    sql_params = [bot_name, group_or_user_id, *user_ids]
+                    sql_params = [bot_name, *user_ids]
                     try:
                         async with self.giftia.db.conn.execute(
                             sql, sql_params

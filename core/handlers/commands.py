@@ -614,12 +614,13 @@ caption: {media_caption.caption}"""
         )
         if record is None:
             yield await event.send(
-                MessageChain([Plain(f"当前会话中暂无用户 {user_id} 的画像记录。")])
+                MessageChain([Plain(f"暂无用户 {user_id} 的画像记录。")])
             )
             return
 
+        # Shared scores and counts are already in record; only display history is local.
         changes = await self.plugin.db.get_relation_changes(
-            bot_name, session_id, user_id, limit=3
+            bot_name, session_id, user_id, limit=3, current_session_only=True
         )
         report = build_user_profile_report(
             bot_name,

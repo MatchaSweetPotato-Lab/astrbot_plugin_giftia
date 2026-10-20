@@ -31,6 +31,12 @@ from .core.llm.llm_tools import (
     SearchUserProfileTool,
     remove_tools,
 )
+from .core.llm.native_tools import (
+    CreateScheduledTaskTool,
+    DeleteScheduledTaskTool,
+    ListScheduledTasksTool,
+    SearchMemoryTool,
+)
 from .core.llm.xml_parse import XmlParse
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
@@ -102,6 +108,7 @@ class Giftia(Star):
         self.enable_anti_drool = self.normal_config.get("enable_anti_drool", False)
         # 记忆配置
         memory_config = self.conf.get("memory_config", {})
+        self.memory_recall_scope = memory_config.get("recall_scope", "user")
         self.embedding_conf = memory_config.get("embedding_conf", {})
         self.rerank_conf = memory_config.get("rerank_conf", {})
         self.passive_memory_enabled = memory_config.get("passive_memory_enabled", False)
@@ -241,6 +248,14 @@ class Giftia(Star):
         self.task_manager.register_func("remind", self.remind_task)
 
         # 注册函数调用工具
+        if self.tools_config.get("search_memory_enabled", True):
+            self.context.add_llm_tools(SearchMemoryTool(plugin=self))
+        if self.tools_config.get("scheduled_tasks_enabled", True):
+            self.context.add_llm_tools(
+                CreateScheduledTaskTool(plugin=self),
+                ListScheduledTasksTool(plugin=self),
+                DeleteScheduledTaskTool(plugin=self),
+            )
         if self.conf.get("tools_config", {}).get("search_chat_history_enabled", True):
             self.context.add_llm_tools(SearchChatHistoryTool(plugin=self))
             logger.info("已注册函数调用工具: search_chat_history")

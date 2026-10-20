@@ -189,14 +189,6 @@ def build_xml_instructions(
                 '  * **踢人**: `<kick user_id="用户ID"/>`。'
             )
 
-    if is_enabled(FeatureKey.SCHEDULE_TASK):
-        interactive_lines.append(
-            "- **定时任务**:\n"
-            '  * **添加任务**: `<schedule_task user_id="创建者ID" time="cron表达式或ISO8601时间">提醒内容</schedule_task>`。user_id 为任务创建者的用户 ID，必填。\n'
-            '  * **删除任务**: `<delete_task task_id="任务ID"/>`。如果要修改/合并定时提醒，必须先删除旧任务，再添加新任务。\n'
-            '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
-        )
-
     if is_enabled(FeatureKey.SLANG):
         interactive_lines.append(
             "- **黑话管理**:\n"
@@ -210,11 +202,6 @@ def build_xml_instructions(
             '  * **创建任务**: `<task_board action="create" user_id="创建者ID">一句自然语言任务</task_board>`。user_id 为任务创建者的用户 ID，必填。\n'
             '  * **完成任务**: `<task_board action="complete" task_id="任务ID">完成原因</task_board>`。只有在你已经实际完成任务要求，或用户明确确认该任务已完成时才使用。\n'
             '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
-        )
-
-    if is_enabled(FeatureKey.MEMORY_QUERY):
-        interactive_lines.append(
-            "- **记忆检索**: `<search_memory>检索问题</search_memory>`。用于检索自身的长期记忆，补充与过往回忆、约定等相关的内容。"
         )
 
     if is_enabled(FeatureKey.PERSISTENT_STATUS):
@@ -312,7 +299,7 @@ DEFAULT_PASSIVE_ATTITUDE_SUMMARY_PROMPT = """你是 {nickname}（ID：{self_id}�
 
 attitude 描述双方通常如何相处，例如“熟络，常互相接梗”“礼貌交流，保持距离”“有分歧但愿意解释”。它既包含对方与你的互动方式，也包含你的实际回应，不是单方面的喜恶评价，不写第三方关系、具体事件或约定，20 字以内。
 
-输入的 current_attitude 是已有互动基调，current_relation 是本次历史上界对应的最终好感度。最终好感度=基础分+互动分，基础分默认0，互动分初始50、范围0～100；delta 是互动评价，绝对值表示影响强度，不等于最终分增减。relation_changes 按记录先后提供最多 50 条好感变化，包含互动时间、分值和具体互动理由；is_new 标识尚未用于评估的记录，旧记录只提供背景。related_chat_history 是本批相关聊天，用于补充未引起分值变化的互动，后台重试时可能为空。机器人发言仅证明已发生的回应，不能独立证明对方的态度；注意互动对象，机器人对其他人的回应不作为双方互动证据。
+输入的 current_attitude 是已有互动基调，current_relation 是本次历史上界对应的最终好感度。最终好感度=基础分+互动分，基础分默认0，互动分初始50、范围0～100；delta 是互动评价，绝对值表示影响强度，不等于最终分增减。relation_changes 按记录先后提供最多 50 条互动评价，包含互动时间、分值和具体互动理由；is_new 标识尚未用于评估的记录，旧记录只提供背景。related_chat_history 是本批相关聊天，用于补充未引起分值变化的互动，后台重试时可能为空。机器人发言仅证明已发生的回应，不能独立证明对方的态度；注意互动对象，机器人对其他人的回应不作为双方互动证据。
 
 主要根据理由和聊天里可观察到的互动方式判断，分数仅作辅助，不根据分数区间套用态度。不补写未发生的回应、经历或感受。结合历史延续性与近期变化，避免将单次玩笑、情绪或争执直接概括为稳定基调；较早记录与近期表现不一致时保留时间先后关系。证据不足或没有持续变化时保持原值。
 

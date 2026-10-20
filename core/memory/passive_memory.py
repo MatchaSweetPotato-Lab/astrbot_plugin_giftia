@@ -3,6 +3,7 @@ import json
 
 from .atomic import memory_metadata
 from .passive_tasks import PassiveSummaryTaskMixin
+from .recall_scope import resolve_memory_recall_scope
 
 
 class PassiveMemoryManager(PassiveSummaryTaskMixin):
@@ -10,6 +11,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.plugin = plugin
         self.passive_memory_locks: dict[str, asyncio.Lock] = {}
         self.summary_tasks: dict[str, asyncio.Task] = {}
+        self.attitude_review_locks: dict[str, asyncio.Lock] = {}
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()
@@ -124,32 +126,79 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         limit: int = 5,
         threshold: float = 0.7,
         filter_active_users: bool = True,
+        *,
+        user_ids: list[str] | None = None,
     ) -> list[dict]:
-        """Recall indexed factual memories from the current conversation.
+        """Recall indexed facts within the configured recall scope.
 
         Args:
             bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
+            group_or_user_id: Current conversation and scope for unassociated facts.
             query: Semantic recall query.
             recent_messages: Messages defining the active participants.
             limit: Maximum vector candidates.
             threshold: Maximum accepted vector distance.
-            filter_active_users: Limit automatic recall to current participants.
+            filter_active_users: Infer participants in user scope. When false
+                without explicit users, keep administrative searches session-local.
+            user_ids: Target accounts in user scope, or an explicit narrowing
+                filter in session and all scopes. None uses the configured scope.
 
         Returns:
             Factual memories with matching index revisions.
         """
+        recall_scope = resolve_memory_recall_scope(self.plugin)
+        if not filter_active_users and user_ids is None:
+            recall_scope = "session"
+        scope = "group_or_user_id=?" if recall_scope == "session" else "1"
+        params = [bot_name]
+        if recall_scope in ("session", "user"):
+            params.append(group_or_user_id)
+        if recall_scope == "user" or user_ids is not None:
+            if user_ids is None:
+                if recent_messages is None:
+                    recent_messages = await self.plugin.data_cache.get_recent_message(
+                        bot_name=bot_name,
+                        group_id=group_or_user_id,
+                        limit=self.plugin.msg_number,
+                    )
+                user_ids = [
+                    msg.user_id
+                    for msg in recent_messages
+                    if msg.role == "message" and not msg.is_recalled and msg.user_id
+                ]
+            targets = sorted({str(uid).strip() for uid in user_ids if str(uid).strip()})
+            # Resolve participants before vector top-k; malformed legacy metadata stays local.
+            metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
+            associated = (
+                f"CASE WHEN json_type({metadata}, '$.associated_user_ids')='array' "
+                f"THEN json_extract({metadata}, '$.associated_user_ids') ELSE '[]' END"
+            )
+            user_scope = "0"
+            if targets:
+                placeholders = ",".join("?" for _ in targets)
+                user_scope = (
+                    f"EXISTS (SELECT 1 FROM json_each({associated}) "
+                    f"WHERE type IN ('text', 'integer') AND CAST(value AS TEXT) IN ({placeholders}))"
+                )
+                params.extend(targets)
+            if recall_scope == "user":
+                scope = (
+                    f"(group_or_user_id=? AND json_array_length({associated})=0)"
+                    f" OR {user_scope}"
+                )
+            else:
+                scope = f"({scope}) AND ({user_scope})"
+        predicate = f"bot_name=? AND ({scope}) AND revision=indexed_revision"
         async with self.plugin.db.conn.execute(
-            "SELECT memory_id FROM memories WHERE bot_name=? AND group_or_user_id=? "
-            "AND revision=indexed_revision",
-            (bot_name, group_or_user_id),
+            f"SELECT memory_id FROM memories WHERE {predicate}",
+            params,
         ) as cursor:
             eligible_ids = [row[0] for row in await cursor.fetchall()]
         if not eligible_ids:
             return []
         embedding_memories = await self.plugin.ltm.search_memory(
             bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
+            group_or_user_id=None,
             query=query,
             limit=limit,
             threshold=threshold,
@@ -161,10 +210,9 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         ids = [str(memory.get("id") or "") for memory in embedding_memories]
         placeholders = ",".join("?" for _ in ids)
         async with self.plugin.db.conn.execute(
-            "SELECT memory_id, text, metadata, created_at, updated_at "
-            "FROM memories WHERE bot_name=? AND group_or_user_id=? "
-            f"AND memory_id IN ({placeholders}) AND revision=indexed_revision",
-            (bot_name, group_or_user_id, *ids),
+            "SELECT memory_id, group_or_user_id, text, metadata, created_at, updated_at "
+            f"FROM memories WHERE {predicate} AND memory_id IN ({placeholders})",
+            (*params, *ids),
         ) as cursor:
             current = {row["memory_id"]: dict(row) for row in await cursor.fetchall()}
         recalled = []
@@ -173,6 +221,16 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             if row is None:
                 continue
             metadata = memory_metadata(row)
+            source = str(row["group_or_user_id"])
+            metadata["source_session_id"] = source
+            metadata["source_label"] = ""
+            if source != str(group_or_user_id):
+                metadata["source_label"] = f"来源群聊：{source}"
+                associated_users = metadata.get("associated_user_ids", [])
+                if isinstance(associated_users, list) and source in {
+                    str(uid) for uid in associated_users
+                }:
+                    metadata["source_label"] = "来源私聊"
             recalled.append(
                 {
                     **memory,
@@ -180,38 +238,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
                     "metadata": json.dumps(metadata, ensure_ascii=False),
                 }
             )
-        embedding_memories = recalled
-
-        if not filter_active_users:
-            return embedding_memories
-
-        if recent_messages is None:
-            recent_messages = await self.plugin.data_cache.get_recent_message(
-                bot_name=bot_name,
-                group_id=group_or_user_id,
-                limit=self.plugin.msg_number,
-            )
-
-        active_users = {str(msg.user_id) for msg in recent_messages if msg.user_id}
-
-        filtered_memories = []
-        for memory in embedding_memories:
-            metadata_str = memory.get("metadata", "{}")
-            try:
-                meta = json.loads(metadata_str) if metadata_str else {}
-            except Exception:
-                meta = {}
-
-            associated_ids = meta.get("associated_user_ids", [])
-            if not associated_ids:
-                filtered_memories.append(memory)
-                continue
-
-            associated_ids_str = {str(uid) for uid in associated_ids}
-            if associated_ids_str & active_users:
-                filtered_memories.append(memory)
-
-        return filtered_memories
+        return recalled
 
     async def check_and_trigger_passive_memory(
         self,

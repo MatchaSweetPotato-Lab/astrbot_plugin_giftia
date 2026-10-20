@@ -74,10 +74,8 @@ async def test_profile_stage_records_one_reason_per_source_batch_and_ignores_att
     changes = await runtime.db.get_relation_changes("bot", "group", "user")
     assert len(changes) == 1
     assert changes[0]["delta"] == 2
-    assert (
-        changes[0]["relation_before"],
-        changes[0]["relation_after"],
-    ) == pytest.approx((60, 10 + 700 / 12))
+    assert "relation_before" not in changes[0]
+    assert "relation_after" not in changes[0]
     assert changes[0]["reason"] == "他认真感谢了我的解释"
     assert json.loads(changes[0]["source_ids"]) == [7]
     assert changes[0]["occurred_at"] == source.time
@@ -129,9 +127,9 @@ async def test_existing_numeric_affinity_is_ignored_without_inventing_history():
         for _ in range(2):
             await initialize_database(conn)
         async with conn.execute(
-            "SELECT relation, attitude, attitude_evaluated_change_id FROM user_profiles"
+            "SELECT attitude, attitude_evaluated_change_id FROM user_profiles"
         ) as cursor:
-            assert tuple(await cursor.fetchone()) == (23, "熟络", 0)
+            assert tuple(await cursor.fetchone()) == (None, 0)
         db = Database(conn)
         score = await db.get_relation_score("bot", "group", "user")
         assert score["base_relation"] == 0
@@ -156,7 +154,7 @@ async def test_failed_affinity_write_rolls_back_history_and_does_not_change_cach
     assert await runtime.db.get_relation_changes("bot", "group", "user") == []
     assert (await runtime.db.get_relation("bot", "group", "user"))[0] == 60
     assert (await runtime.cache.get_user_relation("bot", "group", "user"))[0] == 60
-    assert runtime.cache.user_profile_records["bot:group:user"]["relation"] == 60
+    assert runtime.cache.user_profile_records["bot:user"]["relation"] == 60
 
 
 @pytest.mark.asyncio
@@ -173,7 +171,7 @@ async def test_concurrent_changes_are_atomic_and_replays_are_scoped(runtime):
         0
     ] == pytest.approx(800 / 13)
     history = await runtime.db.get_relation_changes("bot", "group", "user")
-    assert history[0]["relation_after"] == history[1]["relation_before"]
+    assert [item["delta"] for item in history] == [1, 2]
     score = await runtime.db.get_relation_score("bot", "group", "user")
     assert score["total_count"] == 2
     assert score["recent_count"] == 2
@@ -185,11 +183,14 @@ async def test_concurrent_changes_are_atomic_and_replays_are_scoped(runtime):
         ("bot", "group", "other"),
     ):
         assert await runtime.cache.update_relation(*scope, 1, "独立会话互动", [1])
-        assert len(await runtime.db.get_relation_changes(*scope)) == 1
-        assert (await runtime.db.get_relation_score(*scope))["total_count"] == 1
+        expected_count = 3 if scope == ("bot", "other", "user") else 1
+        assert len(await runtime.db.get_relation_changes(*scope)) == expected_count
+        assert (await runtime.db.get_relation_score(*scope))[
+            "total_count"
+        ] == expected_count
     assert (await runtime.db.get_relation_score("bot", "group", "user"))[
         "total_count"
-    ] == 2
+    ] == 3
 
 
 @pytest.mark.asyncio
@@ -279,11 +280,13 @@ async def test_positive_rating_can_lower_score_when_a_stronger_rating_leaves_win
 ):
     for delta in [5] + [1] * 9:
         await runtime.cache.update_relation("bot", "group", "user", delta, "先前互动")
+    before = (await runtime.db.get_relation_score("bot", "group", "user"))["relation"]
     await runtime.cache.update_relation("bot", "group", "user", 1, "本次友好互动")
     last = (await runtime.db.get_relation_changes("bot", "group", "user"))[-1]
     assert last["delta"] == 1
-    assert last["relation_after"] < last["relation_before"]
-    assert last["relation_after"] == pytest.approx(77)
+    after = (await runtime.db.get_relation_score("bot", "group", "user"))["relation"]
+    assert after < before
+    assert after == pytest.approx(77)
 
 
 @pytest.mark.asyncio
@@ -354,7 +357,10 @@ async def test_review_sees_fifty_reasons_new_markers_and_only_related_direct_mes
     assert [item["is_new"] for item in payload["relation_changes"]] == [False] * 45 + [
         True
     ] * 5
-    assert payload["current_relation"] == changes[-1]["relation_after"]
+    expected_relation = (await runtime.db.get_relation_score("bot", "group", "user"))[
+        "relation"
+    ]
+    assert payload["current_relation"] == expected_relation
     assert payload["current_attitude"] == "礼貌交流"
     assert [item["content"] for item in payload["related_chat_history"]] == [
         "共同笑话",
@@ -362,7 +368,7 @@ async def test_review_sees_fifty_reasons_new_markers_and_only_related_direct_mes
     ]
     profile = await runtime.cache.get_user_profile_record("bot", "group", "user")
     assert profile["attitude"] == "熟络，常互相接梗"
-    assert profile["relation"] == changes[-1]["relation_after"]
+    assert profile["relation"] == expected_relation
 
 
 @pytest.mark.asyncio
@@ -550,7 +556,7 @@ async def test_manual_history_edit_rejects_inflight_tone_and_recalculates_review
     await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
     payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
     assert payload["current_relation"] == pytest.approx(900 / 19)
-    assert payload["current_relation"] != changes[-1]["relation_after"]
+    assert payload["current_relation"] < 50
     assert all(
         "relation_before" not in row and "relation_after" not in row
         for row in payload["relation_changes"]
@@ -599,11 +605,18 @@ async def test_profile_and_relation_cleanup_removes_only_scoped_history(
         await runtime.cache.update_relation(*scope, 4, "互动依据")
     args = scopes[0] if operation == "delete_user_profile" else scopes[0][:2]
     await getattr(runtime.db, operation)(*args)
-    assert await runtime.db.get_relation_changes(*scopes[0]) == []
-    assert (await runtime.db.get_relation_score(*scopes[0]))["total_count"] == 0
-    for scope in scopes[1:]:
-        assert len(await runtime.db.get_relation_changes(*scope)) == 1
-        assert (await runtime.db.get_relation_score(*scope))["total_count"] == 1
+    expected_count = 0 if operation == "delete_user_profile" else 1
+    remaining = await runtime.db.get_relation_changes(*scopes[0])
+    assert len(remaining) == expected_count
+    if remaining:
+        assert remaining[0]["group_or_user_id"] == "other"
+    assert (await runtime.db.get_relation_score(*scopes[0]))[
+        "total_count"
+    ] == expected_count
+    assert len(await runtime.db.get_relation_changes(*scopes[1])) == 1
+    assert (await runtime.db.get_relation_score(*scopes[2]))[
+        "total_count"
+    ] == expected_count
 
 
 @pytest.mark.parametrize("score", [0, 3])

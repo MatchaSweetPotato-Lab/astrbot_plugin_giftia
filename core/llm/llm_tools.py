@@ -17,6 +17,7 @@ from ..utils.schemas import (
     MediaCaption,
     MessageData,
 )
+from .native_tools import NATIVE_TOOL_CONFIG_KEYS
 from .prompt import (
     USER_PROFILE_FIELDS,
     build_user_relation,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from ...main import Giftia
 
 TOOLS_NAMESPACE = [
+    *NATIVE_TOOL_CONFIG_KEYS,
     "search_chat_history",
     "get_message_context",
     "search_user_profile",
@@ -175,7 +177,7 @@ class GetMessageContextTool(FunctionTool):
 class SearchUserProfileTool(FunctionTool):
     plugin: Any = None
     name: str = "search_user_profile"
-    description: str = "在当前会话内按用户ID、昵称、你的称呼、其他外号或头像描述模糊搜索成员画像，并分页查看每位成员的互动评价历史。"
+    description: str = "按用户ID、共享称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；分页查看跨群共享的互动评价历史，非本群记录标注来源。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -232,10 +234,20 @@ class SearchUserProfileTool(FunctionTool):
                 )
                 reason = normalize_profile_value(change.get("reason"))
                 lines.append(
-                    f"- [{timestamp}] 互动评价 {int(change['delta']):+d}：{reason}"
+                    f"- [{timestamp}] "
+                    + (
+                        f"[{change['source_label']}] "
+                        if change.get("source_label")
+                        else ""
+                    )
+                    + f"互动评价 {int(change['delta']):+d}：{reason}"
                 )
             if not history["items"]:
                 lines.append("暂无互动评价记录")
+            elif any(change.get("source_label") for change in history["items"]):
+                lines.append(
+                    "非本会话互动记录若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
+                )
 
         return "\n".join(lines)
 
@@ -289,7 +301,7 @@ class SearchUserProfileTool(FunctionTool):
             if str(item.get("user_id") or "").strip() not in self_refs
         ]
         if not results:
-            return f"未在当前会话找到与「{query}」相关的成员画像"
+            return f"未找到与「{query}」相关的成员画像"
 
         for item in results:
             total = item["total_count"]

@@ -23,8 +23,10 @@ def build_user_profile_report(
         nickname: Bot display name.
         session_id: Current group or private conversation ID.
         user_id: Target user's platform ID.
-        record: Stored profile, including relationship data.
-        recent_relation_changes: Affinity changes in newest-first order.
+        record: Shared profile with scores and counts calculated across conversations.
+            Display filtering does not recalculate these values.
+        recent_relation_changes: Changes in newest-first order, with source sessions.
+            Only changes with a verified current-session source enter public reports.
 
     Returns:
         JSON-compatible template data with consistent labels and empty values.
@@ -41,7 +43,12 @@ def build_user_profile_report(
         relation = round(float(relation), 1)
 
     changes = []
-    for change in (recent_relation_changes or [])[:3]:
+    for change in recent_relation_changes or []:
+        if (
+            str(change.get("group_or_user_id") or "") != str(session_id)
+            or not session_id
+        ):
+            continue
         timestamp = str(change.get("occurred_at") or change.get("created_at") or "")
         reason = str(change.get("reason") or "").strip()
         display_time = timestamp
@@ -57,14 +64,14 @@ def build_user_profile_report(
         changes.append(
             {
                 "delta": int(change["delta"]),
-                "relation_before": round(float(change["relation_before"]), 1),
-                "relation_after": round(float(change["relation_after"]), 1),
                 "reason": "" if reason.casefold() in empty_values else reason,
                 "occurred_at": str(change.get("occurred_at") or ""),
                 "created_at": str(change.get("created_at") or ""),
                 "time": display_time,
             }
         )
+        if len(changes) == 3:
+            break
     return {
         "report_type": "user_profile",
         "title": "用户画像",
