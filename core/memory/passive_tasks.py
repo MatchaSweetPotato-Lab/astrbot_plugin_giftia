@@ -469,7 +469,16 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     source_end=selected[-1].db_id,
                     source_ids=[msg.db_id for msg in selected],
                 )
-            await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{key}", 0)
+            try:
+                await self.plugin.db.upsert_kv_data(
+                    f"passive_memory:silent_count:{key}", 0
+                )
+            except Exception:
+                logger.exception(
+                    "[Giftia Memory] Facts and source progress committed for %s; "
+                    "silent counter reset failed",
+                    key,
+                )
             if context:
                 try:
                     await self._run_profile_summary_task(
@@ -491,7 +500,5 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     )
             return True
         except Exception:
-            logger.exception(
-                "[Giftia Memory] Summary failed for %s; source cursor retained", key
-            )
+            logger.exception("[Giftia Memory] Summary failed for %s", key)
             return False

@@ -75,7 +75,7 @@ class ProfileApi:
 
             # Query count
             count_sql = f"SELECT COUNT(*) as total FROM user_profiles up {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -99,7 +99,7 @@ class ProfileApi:
             """
             data_params = [group_or_user_id or "", *params, limit, offset]
             items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     items.append(
@@ -174,14 +174,14 @@ class ProfileApi:
             return error_response("页码必须是正整数")
         try:
             scope = (bot_name, user_id)
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT relation_history_revision FROM user_profiles "
                 "WHERE bot_name=? AND user_id=?",
                 scope,
             ) as cursor:
                 profile = await cursor.fetchone()
             revision = profile[0] if profile else 0
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT COUNT(*) FROM relation_changes WHERE bot_name=? AND user_id=?",
                 scope,
             ) as cursor:
@@ -202,7 +202,7 @@ class ProfileApi:
             score = await self.giftia.db.get_relation_score(
                 bot_name, group_or_user_id, user_id
             )
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT relation_history_revision FROM user_profiles "
                 "WHERE bot_name=? AND user_id=?",
                 scope,
@@ -277,7 +277,7 @@ class ProfileApi:
             search = request.query.get("search")
 
             bots = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT DISTINCT bot_name
                 FROM user_profiles
@@ -322,7 +322,7 @@ class ProfileApi:
                     params.extend([f"%{search}%"] * (len(like_fields) + 1))
 
                 where_clause = "WHERE " + " AND ".join(conditions)
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     f"""
                     SELECT ups.group_or_user_id, COUNT(*) as total, MAX(up.updated_at) as latest_at
                     FROM user_profiles up JOIN user_profile_sessions ups
@@ -637,7 +637,7 @@ class ProfileApi:
 
             # Query count
             count_sql = f"SELECT COUNT(*) as total FROM group_profiles {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -651,7 +651,7 @@ class ProfileApi:
             """
             data_params = params + [limit, offset]
             items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     items.append(
@@ -687,7 +687,7 @@ class ProfileApi:
             search = request.query.get("search")
 
             bots = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT DISTINCT bot_name
                 FROM group_profiles
@@ -711,7 +711,7 @@ class ProfileApi:
                     params.append(f"%{search}%")
 
                 where_clause = "WHERE " + " AND ".join(conditions)
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     f"""
                     SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
                     FROM group_profiles

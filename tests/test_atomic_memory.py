@@ -1531,6 +1531,39 @@ async def test_fact_writes_and_source_checkpoint_rollback_together(runtime):
     ) == (0, 0, 0)
 
 
+@pytest.mark.asyncio
+async def test_counter_reset_failure_keeps_committed_summary_and_relationship_updates(
+    runtime, monkeypatch
+):
+    msg = await message(runtime, "以后叫我小明")
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": [atom(msg)]})
+    )
+    runtime.manager._run_profile_summary_task = AsyncMock(return_value=True)
+    runtime.manager._run_attitude_summary_task = AsyncMock(return_value=None)
+    original_upsert = runtime.db.upsert_kv_data
+
+    async def fail_counter_reset(key, value):
+        if key.startswith("passive_memory:silent_count:"):
+            raise aiosqlite.OperationalError("database is locked")
+        await original_upsert(key, value)
+
+    monkeypatch.setattr(runtime.db, "upsert_kv_data", fail_counter_reset)
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", msg.db_id, msg.db_id
+    )
+    assert len(await rows(runtime)) == 1
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+        == msg.db_id
+    )
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    runtime.manager._run_profile_summary_task.assert_awaited_once()
+    runtime.manager._run_attitude_summary_task.assert_awaited_once()
+
+
 def test_extraction_schema_only_requests_facts_and_evidence():
     from core.memory.atomic import MemoryRecords
 

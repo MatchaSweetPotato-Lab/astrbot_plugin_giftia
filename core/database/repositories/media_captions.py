@@ -1,10 +1,12 @@
 from datetime import datetime
 
 from ...utils.schemas import MediaCaption
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
 class MediaCaptionsRepository(BaseRepository):
+    @serialized_operation
     async def insert_media_caption(
         self,
         media_caption: MediaCaption,
@@ -48,6 +50,7 @@ class MediaCaptionsRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def get_media_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
         async with self.conn.execute(
             """
@@ -86,6 +89,7 @@ class MediaCaptionsRepository(BaseRepository):
             return caption
         return None
 
+    @serialized_operation
     async def get_media_caption_by_filename(
         self, file_name: str
     ) -> MediaCaption | None:
@@ -126,6 +130,7 @@ class MediaCaptionsRepository(BaseRepository):
             return caption
         return None
 
+    @serialized_operation
     async def update_media_caption(
         self,
         media_caption: MediaCaption,
@@ -152,6 +157,7 @@ class MediaCaptionsRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def increment_media_query_times(self, hash_val: str):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
@@ -164,6 +170,7 @@ class MediaCaptionsRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_media_url(self, hash_val: str, url: str):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
@@ -176,6 +183,7 @@ class MediaCaptionsRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def clear_media_caption(self):
         await self.conn.execute(
             """

@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+from functools import wraps
+
 import aiosqlite
 
 from astrbot.api import logger
@@ -11,6 +17,7 @@ from ..utils.schemas import (
     Status,
     Sticker,
 )
+from .operations import GuardedQuery, database_operation
 from .profile_store import ProfileStoreMixin
 from .repositories.bot_status import BotStatusRepository
 from .repositories.chat_history import ChatHistoryRepository
@@ -28,6 +35,13 @@ from .schema import initialize_database
 class Database(ProfileStoreMixin):
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
+        execute = conn.execute
+
+        @wraps(execute)
+        def guarded_execute(sql, parameters=None):
+            return GuardedQuery(conn, execute(sql, parameters))
+
+        conn.execute = guarded_execute
         self.db_path = (
             StarTools.get_data_dir("astrbot_plugin_giftia") / "chat_history.db"
         )
@@ -54,6 +68,34 @@ class Database(ProfileStoreMixin):
         conn.row_factory = aiosqlite.Row
         await initialize_database(conn)
         return cls(conn)
+
+    @asynccontextmanager
+    async def query(
+        self, sql: str, parameters: Iterable = ()
+    ) -> AsyncIterator[aiosqlite.Cursor]:
+        """Keep a direct SQL reader isolated until its cursor is closed.
+
+        Args:
+            sql: Read query to execute.
+            parameters: Bound query parameters.
+
+        Yields:
+            The cursor owned by the current task.
+        """
+        async with database_operation(self.conn):
+            async with self.conn.execute(sql, parameters) as cursor:
+                yield cursor
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Serialize direct writes and roll them back on failure or cancellation.
+
+        Yields:
+            The shared connection until its writes have been committed.
+        """
+        async with database_operation(self.conn):
+            yield self.conn
+            await self.conn.commit()
 
     # =========================================================================
     # Chat History Delegations

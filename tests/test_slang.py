@@ -10,6 +10,7 @@ import pytest_asyncio
 from core.bot.bot_config_manager import BotConfigManager
 from core.conversation.action_dispatcher import ActionDispatcher
 from core.conversation.reply_pipeline import ReplyPipeline
+from core.database.database import Database
 from core.database.repositories.slang import SlangRepository
 from core.database.schema import initialize_database
 from core.handlers.commands import CommandHandler
@@ -24,13 +25,15 @@ from astrbot.api.web import PluginRequest, bind_request_context
 
 
 @pytest_asyncio.fixture
-async def runtime(tmp_path):
+async def runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "astrbot.api.star.StarTools.get_data_dir", lambda *args: tmp_path
+    )
     async with aiosqlite.connect(tmp_path / "slang.db") as conn:
         conn.row_factory = aiosqlite.Row
         await initialize_database(conn)
-        repo = SlangRepository(conn)
         plugin = SimpleNamespace(
-            db=SimpleNamespace(conn=conn, slang_repo=repo),
+            db=Database(conn),
             bot_map={"bot": {}},
             bot_config_manager=SimpleNamespace(
                 load_bots=lambda: [

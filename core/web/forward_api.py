@@ -197,7 +197,7 @@ class ForwardApi:
             count_sql = (
                 f"SELECT COUNT(*) as total FROM forwarded_message {where_clause}"
             )
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -211,7 +211,7 @@ class ForwardApi:
                 LIMIT ? OFFSET ?
             """
             items = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 data_sql, params + [limit, offset]
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -246,7 +246,7 @@ class ForwardApi:
                     "缺少 bot_name、group_or_user_id 或 forward_id 参数"
                 )
 
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT id, forward_id, bot_name, group_or_user_id, owner_message_id,
                        source, source_id, node_count, media_count, nested_count,
@@ -279,7 +279,7 @@ class ForwardApi:
             status = request.query.get("status")
             search = request.query.get("search")
 
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT DISTINCT bot_name
                 FROM forwarded_message
@@ -301,7 +301,7 @@ class ForwardApi:
                     status=status,
                     search=search,
                 )
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     f"""
                     SELECT group_or_user_id, COUNT(*) as total,
                            MAX(COALESCE(updated_at, created_at)) as latest_at
@@ -340,7 +340,7 @@ class ForwardApi:
         """Delete merged forward records older than 24 hours."""
         try:
             cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT COUNT(*) as total
                 FROM forwarded_message
@@ -351,14 +351,14 @@ class ForwardApi:
                 row = await cursor.fetchone()
                 deleted_count = int(row["total"] or 0) if row else 0
 
-            await self.giftia.db.conn.execute(
-                """
-                DELETE FROM forwarded_message
-                WHERE COALESCE(created_at, updated_at) < ?
-                """,
-                (cutoff,),
-            )
-            await self.giftia.db.conn.commit()
+            async with self.giftia.db.transaction() as conn:
+                await conn.execute(
+                    """
+                    DELETE FROM forwarded_message
+                    WHERE COALESCE(created_at, updated_at) < ?
+                    """,
+                    (cutoff,),
+                )
 
             return json_response(
                 {

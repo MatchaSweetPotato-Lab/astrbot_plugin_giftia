@@ -192,7 +192,7 @@ class MemoryMaintenanceMixin:
             return
         lock = self.vector_locks.setdefault(f"{bot_name}:{session_id}", asyncio.Lock())
         async with lock:
-            async with self.plugin.db.conn.execute(
+            async with self.plugin.db.query(
                 "SELECT * FROM memories WHERE bot_name=? AND group_or_user_id=? "
                 "AND indexed_revision<revision ORDER BY id LIMIT 20",
                 (bot_name, session_id),
@@ -214,18 +214,18 @@ class MemoryMaintenanceMixin:
                     if not result:
                         break
                     _, vector = result
-                    await self.plugin.db.conn.execute(
-                        "UPDATE memories SET vector=?, indexed_revision=revision "
-                        "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
-                        (
-                            vector,
-                            row["memory_id"],
-                            bot_name,
-                            session_id,
-                            row["revision"],
-                        ),
-                    )
-                    await self.plugin.db.conn.commit()
+                    async with self.plugin.db.transaction() as conn:
+                        await conn.execute(
+                            "UPDATE memories SET vector=?, indexed_revision=revision "
+                            "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
+                            (
+                                vector,
+                                row["memory_id"],
+                                bot_name,
+                                session_id,
+                                row["revision"],
+                            ),
+                        )
                 except Exception as error:
                     logger.warning(
                         "[Giftia Memory] Deferred vector indexing for %s: %s",
@@ -252,7 +252,7 @@ class MemoryMaintenanceMixin:
         self.maintenance_tasks.add(task)
         try:
             async with self.maintenance_lock:
-                async with self.plugin.db.conn.execute(
+                async with self.plugin.db.query(
                     "SELECT value FROM kv_store WHERE key LIKE 'atomic_memory:session:%'"
                 ) as cursor:
                     routes = [json.loads(row[0]) for row in await cursor.fetchall()]
@@ -260,7 +260,7 @@ class MemoryMaintenanceMixin:
                     (route["bot_name"], route["session_id"]): route.get("self_id", "")
                     for route in routes
                 }
-                async with self.plugin.db.conn.execute(
+                async with self.plugin.db.query(
                     "SELECT DISTINCT bot_name, group_or_user_id FROM memories "
                     "WHERE revision>indexed_revision"
                 ) as cursor:

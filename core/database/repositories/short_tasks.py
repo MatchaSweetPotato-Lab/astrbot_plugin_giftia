@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from ...utils.schemas import ShortTask
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
@@ -22,6 +23,7 @@ class ShortTasksRepository(BaseRepository):
             updated_at=row["updated_at"] or "",
         )
 
+    @serialized_operation
     async def insert_short_task(self, task: ShortTask) -> None:
         await self.conn.execute(
             """
@@ -49,6 +51,7 @@ class ShortTasksRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def insert_short_task_if_capacity(
         self, task: ShortTask, max_active_tasks: int
     ) -> bool:
@@ -95,6 +98,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    @serialized_operation
     async def expire_short_tasks(
         self, bot_name: str | None = None, group_or_user_id: str | None = None
     ) -> int:
@@ -127,6 +131,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return cursor.rowcount or 0
 
+    @serialized_operation
     async def get_short_tasks(
         self,
         bot_name: str,
@@ -169,6 +174,7 @@ class ShortTasksRepository(BaseRepository):
             rows = await cursor.fetchall()
         return [self._short_task_from_row(row) for row in rows]
 
+    @serialized_operation
     async def get_short_task(
         self, task_id: str, bot_name: str, group_or_user_id: str
     ) -> ShortTask | None:
@@ -186,6 +192,7 @@ class ShortTasksRepository(BaseRepository):
             row = await cursor.fetchone()
         return self._short_task_from_row(row) if row else None
 
+    @serialized_operation
     async def count_active_short_tasks(
         self, bot_name: str, group_or_user_id: str
     ) -> int:
@@ -200,6 +207,7 @@ class ShortTasksRepository(BaseRepository):
             row = await cursor.fetchone()
         return row["total"] if row else 0
 
+    @serialized_operation
     async def update_short_task_status(
         self,
         task_id: str,
@@ -233,6 +241,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    @serialized_operation
     async def update_short_task(
         self,
         task_id: str,
@@ -271,6 +280,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    @serialized_operation
     async def delete_short_task(
         self, task_id: str, bot_name: str, group_or_user_id: str
     ) -> bool:
@@ -284,6 +294,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return (cursor.rowcount or 0) > 0
 
+    @serialized_operation
     async def clear_short_tasks(
         self,
         bot_name: str,
@@ -307,6 +318,7 @@ class ShortTasksRepository(BaseRepository):
         await self.conn.commit()
         return cursor.rowcount or 0
 
+    @serialized_operation
     async def get_short_task_stats(self, bot_name: str, group_or_user_id: str) -> dict:
         await self.expire_short_tasks(bot_name, group_or_user_id)
         stats = {

@@ -2,10 +2,12 @@ import json
 from datetime import datetime
 
 from ...utils.schemas import Sticker
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
 class StickersRepository(BaseRepository):
+    @serialized_operation
     async def insert_sticker(
         self,
         sticker_id: str,
@@ -42,6 +44,7 @@ class StickersRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_sticker(
         self,
         sticker_id: str,
@@ -88,6 +91,7 @@ class StickersRepository(BaseRepository):
             filename=row["filename"] or "",
         )
 
+    @serialized_operation
     async def get_sticker(self) -> list[Sticker]:
         """获取全部表情包数据"""
         async with self.conn.execute(
@@ -96,6 +100,7 @@ class StickersRepository(BaseRepository):
             rows = await cursor.fetchall()
         return [self._row_to_sticker(row) for row in rows]
 
+    @serialized_operation
     async def get_sticker_by_id(self, sticker_id: str) -> Sticker | None:
         """按 sticker_id 获取单个表情包"""
         async with self.conn.execute(
@@ -108,6 +113,7 @@ class StickersRepository(BaseRepository):
             row = await cursor.fetchone()
         return self._row_to_sticker(row) if row else None
 
+    @serialized_operation
     async def query_stickers(
         self,
         page: int = 1,
@@ -195,6 +201,7 @@ class StickersRepository(BaseRepository):
             )
         return items, total
 
+    @serialized_operation
     async def delete_sticker(self, sticker_id: str):
         """删除表情包数据"""
         await self.conn.execute(
@@ -205,6 +212,7 @@ class StickersRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def insert_sticker_bot(self, sticker_id: str, bot_name: str):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         async with self.conn.execute(
@@ -237,6 +245,7 @@ class StickersRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def get_sticker_categories(self) -> list[str]:
         """获取所有已知的表情包分类"""
         cursor = await self.conn.execute(
@@ -245,6 +254,7 @@ class StickersRepository(BaseRepository):
         rows = await cursor.fetchall()
         return [row[0] for row in rows if row[0]]
 
+    @serialized_operation
     async def get_sticker_bot(self, bot_name: str) -> list[str]:
         """获取机器人表情包列表"""
         async with self.conn.execute(
@@ -260,6 +270,7 @@ class StickersRepository(BaseRepository):
 
     # ── 归属管理 ────────────────────────────────────────────────────────
 
+    @serialized_operation
     async def delete_sticker_bot(self, sticker_id: str, bot_name: str) -> bool:
         """把单个表情包从指定机器人的收藏列表里移除"""
         async with self.conn.execute(
@@ -289,6 +300,7 @@ class StickersRepository(BaseRepository):
         await self.conn.commit()
         return True
 
+    @serialized_operation
     async def remove_sticker_from_all_bots(self, sticker_id: str) -> list[str]:
         """把表情包从所有机器人的收藏列表里移除，返回受影响的 bot_name 列表。
 
@@ -326,6 +338,7 @@ class StickersRepository(BaseRepository):
             await self.conn.commit()
         return affected
 
+    @serialized_operation
     async def get_all_bot_sticker_map(self) -> dict[str, list[str]]:
         """一次读全部 stickers_bot 反向索引出 {sticker_id: [bot_name, ...]}。
 
@@ -355,6 +368,7 @@ class StickersRepository(BaseRepository):
 
     # ── 分类与标签聚合 ──────────────────────────────────────────────────
 
+    @serialized_operation
     async def get_all_sticker_tags(self) -> list[str]:
         """获取所有去重后的标签，按名称排序"""
         async with self.conn.execute(
@@ -375,6 +389,7 @@ class StickersRepository(BaseRepository):
                         tags.add(text)
         return sorted(tags)
 
+    @serialized_operation
     async def get_category_stats(self) -> list[dict]:
         """获取分类及其表情包数量，数量降序"""
         async with self.conn.execute(
@@ -390,6 +405,7 @@ class StickersRepository(BaseRepository):
             {"category": row["category"] or "", "count": row["count"]} for row in rows
         ]
 
+    @serialized_operation
     async def get_tag_stats(self) -> list[dict]:
         """获取标签及其表情包数量，数量降序。tags 是 JSON 数组，只能在 Python 侧聚合。"""
         async with self.conn.execute(
@@ -416,6 +432,7 @@ class StickersRepository(BaseRepository):
 
     # ── 批量与重命名 ────────────────────────────────────────────────────
 
+    @serialized_operation
     async def rename_category(self, old_name: str, new_name: str) -> int:
         """重命名分类；若 new_name 已存在则等价于合并。返回受影响行数。"""
         if old_name:
@@ -435,6 +452,7 @@ class StickersRepository(BaseRepository):
         await self.conn.commit()
         return cursor.rowcount
 
+    @serialized_operation
     async def _rewrite_tags(
         self, transform, where_sql: str = "", where_params: tuple = ()
     ) -> int:
@@ -478,6 +496,7 @@ class StickersRepository(BaseRepository):
             await self.conn.commit()
         return len(updates)
 
+    @serialized_operation
     async def rename_tag(self, old_tag: str, new_tag: str) -> int:
         """重命名标签；若 new_tag 已存在于同一张表情包则自动去重（即合并）。"""
 
@@ -493,6 +512,7 @@ class StickersRepository(BaseRepository):
 
         return await self._rewrite_tags(transform, "tags LIKE ?", (f'%"{old_tag}"%',))
 
+    @serialized_operation
     async def delete_tag(self, tag: str) -> int:
         """从所有表情包上移除某个标签"""
 
@@ -501,6 +521,7 @@ class StickersRepository(BaseRepository):
 
         return await self._rewrite_tags(transform, "tags LIKE ?", (f'%"{tag}"%',))
 
+    @serialized_operation
     async def batch_update_category(self, sticker_ids: list[str], category: str) -> int:
         """批量设置分类"""
         if not sticker_ids:
@@ -516,6 +537,7 @@ class StickersRepository(BaseRepository):
         await self.conn.commit()
         return cursor.rowcount
 
+    @serialized_operation
     async def batch_add_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
         """批量追加标签（已有的不重复添加）"""
         if not sticker_ids or not tags:
@@ -533,6 +555,7 @@ class StickersRepository(BaseRepository):
             transform, f"sticker_id IN ({placeholders})", tuple(sticker_ids)
         )
 
+    @serialized_operation
     async def batch_remove_tags(self, sticker_ids: list[str], tags: list[str]) -> int:
         """批量移除标签"""
         if not sticker_ids or not tags:

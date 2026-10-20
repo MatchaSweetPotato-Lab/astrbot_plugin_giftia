@@ -4,12 +4,15 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from .operations import serialized_operation
+
 
 class RelationHistoryConflictError(Exception):
     """The member's history changed after a manual editor loaded it."""
 
 
 class RelationHistoryStoreMixin:
+    @serialized_operation
     async def get_relation_score(
         self,
         bot_name: str,
@@ -70,6 +73,7 @@ class RelationHistoryStoreMixin:
             "recent_count": row["recent_count"],
         }
 
+    @serialized_operation
     async def apply_relation_change(
         self,
         bot_name: str,
@@ -177,6 +181,7 @@ class RelationHistoryStoreMixin:
                 if database_file:
                     await writer.close()
 
+    @serialized_operation
     async def get_relation_changes(
         self,
         bot_name: str,
@@ -235,6 +240,7 @@ class RelationHistoryStoreMixin:
             )
         return rows if oldest_first else rows[::-1]
 
+    @serialized_operation
     async def mutate_relation_history(
         self,
         bot_name: str,
@@ -356,6 +362,7 @@ class RelationHistoryStoreMixin:
                 if database_file:
                     await writer.close()
 
+    @serialized_operation
     async def get_pending_attitude_evaluations(
         self,
         bot_name: str,
@@ -388,6 +395,7 @@ class RelationHistoryStoreMixin:
         ) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
+    @serialized_operation
     async def save_attitude_evaluation(
         self,
         bot_name: str,

@@ -8,6 +8,7 @@ from ...utils.schemas import (
     FORWARD_NESTED_PATTERN,
     MessageData,
 )
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
@@ -70,6 +71,7 @@ def _row_to_message(row: aiosqlite.Row) -> MessageData:
 
 
 class ChatHistoryRepository(BaseRepository):
+    @serialized_operation
     async def _upsert_forward_messages(self, bot_name: str, message: MessageData):
         if not message.forward_messages:
             return
@@ -116,6 +118,7 @@ class ChatHistoryRepository(BaseRepository):
                 ),
             )
 
+    @serialized_operation
     async def _attach_forward_messages(
         self, bot_name: str, group_or_user_id: str, messages: list[MessageData]
     ) -> list[MessageData]:
@@ -145,6 +148,7 @@ class ChatHistoryRepository(BaseRepository):
             msg.forward_messages = forward_map.get(msg.message_id, [])
         return messages
 
+    @serialized_operation
     async def insert_message(
         self,
         bot_name: str,
@@ -178,6 +182,7 @@ class ChatHistoryRepository(BaseRepository):
         await self._upsert_forward_messages(bot_name, message)
         await self.conn.commit()
 
+    @serialized_operation
     async def get_messages(
         self, group_or_user_id: str, bot_name: str, limit: int = 100
     ) -> list[MessageData]:
@@ -198,6 +203,7 @@ class ChatHistoryRepository(BaseRepository):
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    @serialized_operation
     async def get_max_message_id(self, bot_name: str, group_or_user_id: str) -> int:
         """获取指定会话在 chat_history 表中的最大 id"""
         async with self.conn.execute(
@@ -210,6 +216,7 @@ class ChatHistoryRepository(BaseRepository):
             row = await cursor.fetchone()
         return row["max_id"] if row and row["max_id"] is not None else 0
 
+    @serialized_operation
     async def get_messages_by_id_range(
         self,
         bot_name: str,
@@ -239,6 +246,7 @@ class ChatHistoryRepository(BaseRepository):
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    @serialized_operation
     async def mark_messages_observed(
         self, bot_name: str, session_id: str, message_ids: list[str]
     ) -> int:
@@ -266,6 +274,7 @@ class ChatHistoryRepository(BaseRepository):
         await self.conn.commit()
         return changed
 
+    @serialized_operation
     async def get_pending_memory_stats(
         self, bot_name: str, session_id: str, end_id: int | None = None
     ) -> tuple[int, int, int]:
@@ -288,6 +297,7 @@ class ChatHistoryRepository(BaseRepository):
             row = await cursor.fetchone()
         return int(row[0] or 0), int(row[1] or 0), int(row[2])
 
+    @serialized_operation
     async def get_pending_memory_messages(
         self,
         bot_name: str,
@@ -318,6 +328,7 @@ class ChatHistoryRepository(BaseRepository):
             messages = [_row_to_message(row) for row in await cursor.fetchall()]
         return await self._attach_forward_messages(bot_name, session_id, messages)
 
+    @serialized_operation
     async def get_user_messages_after_id(
         self,
         bot_name: str,
@@ -351,6 +362,7 @@ class ChatHistoryRepository(BaseRepository):
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    @serialized_operation
     async def get_message_count_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
     ) -> int:
@@ -365,6 +377,7 @@ class ChatHistoryRepository(BaseRepository):
             row = await cursor.fetchone()
         return row["count"] if row else 0
 
+    @serialized_operation
     async def get_boundary_message_id(
         self, bot_name: str, group_or_user_id: str, offset: int
     ) -> int:
@@ -383,6 +396,7 @@ class ChatHistoryRepository(BaseRepository):
             row = await cursor.fetchone()
         return row["id"] if row else 0
 
+    @serialized_operation
     async def get_message_by_id(
         self, message_id: str, group_or_user_id: str, bot_name: str
     ) -> MessageData | None:
@@ -404,6 +418,7 @@ class ChatHistoryRepository(BaseRepository):
             return messages[0]
         return None
 
+    @serialized_operation
     async def get_database_id_by_message_id(
         self, message_id: str, group_or_user_id: str, bot_name: str
     ) -> int | None:
@@ -419,6 +434,7 @@ class ChatHistoryRepository(BaseRepository):
             row = await cursor.fetchone()
         return row["id"] if row else None
 
+    @serialized_operation
     async def search_messages(
         self,
         group_or_user_id: str,
@@ -471,6 +487,7 @@ class ChatHistoryRepository(BaseRepository):
         messages = [_row_to_message(row) for row in rows]
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    @serialized_operation
     async def get_message_context(
         self, message_id: str, group_or_user_id: str, bot_name: str, limit: int = 30
     ) -> list[MessageData]:
@@ -515,6 +532,7 @@ class ChatHistoryRepository(BaseRepository):
 
         return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
+    @serialized_operation
     async def delete_chat_history(self, bot_name: str, group_or_user_id: str):
         await self.conn.execute(
             """
@@ -530,6 +548,7 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_processing_status(
         self,
         bot_name: str,
@@ -552,6 +571,7 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_message_decision(
         self,
         bot_name: str,
@@ -570,6 +590,7 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_message_reply_decision(
         self,
         bot_name: str,
@@ -587,6 +608,7 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def update_message_recall(
         self,
         bot_name: str,
@@ -604,6 +626,7 @@ class ChatHistoryRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_message(
         self,
         bot_name: str,
@@ -634,6 +657,7 @@ class ChatHistoryRepository(BaseRepository):
         await self.conn.commit()
         return deleted
 
+    @serialized_operation
     async def delete_message_by_db_id(self, message_db_id: int) -> dict | None:
         """根据数据库主键 id 删除单条聊天记录，并级联清理关联的 forwarded_message"""
         async with self.conn.execute(
@@ -676,6 +700,7 @@ class ChatHistoryRepository(BaseRepository):
             "message_id": message_id,
         }
 
+    @serialized_operation
     async def auto_clean_chat_history(
         self,
         max_count_per_session: int = 1000,

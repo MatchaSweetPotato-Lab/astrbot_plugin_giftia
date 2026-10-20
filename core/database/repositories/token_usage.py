@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 from astrbot.api import logger
 
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
 class TokenUsageRepository(BaseRepository):
+    @serialized_operation
     async def log_token_usage(
         self,
         bot_name: str,
@@ -46,6 +48,7 @@ class TokenUsageRepository(BaseRepository):
             )
             await self.conn.commit()
         except Exception as e:
+            await self.conn.rollback()
             logger.error(f"[Database] Failed to log token usage: {e}")
 
     def _parse_db_utc_to_local_dt(self, utc_str: str) -> datetime:
@@ -111,6 +114,7 @@ class TokenUsageRepository(BaseRepository):
             return year_dt.strftime("%Y-%m-%d %H:%M:%S"), year_dt.strftime("%Y-%m-%d")
         return None, None
 
+    @serialized_operation
     async def get_token_stats(
         self,
         bot_name: str = None,
@@ -556,6 +560,7 @@ class TokenUsageRepository(BaseRepository):
                 "time_series": {"unit": "day", "timeline": []},
             }
 
+    @serialized_operation
     async def get_token_logs(
         self,
         page: int = 1,
@@ -640,6 +645,7 @@ class TokenUsageRepository(BaseRepository):
             logger.error(f"[Database] get_token_logs error: {e}")
             return [], 0
 
+    @serialized_operation
     async def squash_token_logs(self) -> int:
         """将昨日及以前的详细 Token 日志合并压扁并归档，随后清理详细明细"""
         try:
@@ -775,9 +781,11 @@ class TokenUsageRepository(BaseRepository):
             )
             return deleted_count
         except Exception as e:
+            await self.conn.rollback()
             logger.error(f"[Database] squash_token_logs error: {e}", exc_info=True)
             return 0
 
+    @serialized_operation
     async def clear_token_logs(
         self,
         before_days: int = None,
@@ -843,5 +851,6 @@ class TokenUsageRepository(BaseRepository):
             await self.conn.commit()
             return usage_deleted + daily_deleted
         except Exception as e:
+            await self.conn.rollback()
             logger.error(f"[Database] clear_token_logs error: {e}", exc_info=True)
             return 0

@@ -154,7 +154,7 @@ class MemoryApi:
 
             # Query count
             count_sql = f"SELECT COUNT(*) as total FROM memories {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -169,7 +169,7 @@ class MemoryApi:
             """
             data_params = params + [limit, offset]
             items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     items.append(self._memory_row_to_dict(r))
@@ -197,9 +197,7 @@ class MemoryApi:
                     """
                     sql_params = [bot_name, *user_ids]
                     try:
-                        async with self.giftia.db.conn.execute(
-                            sql, sql_params
-                        ) as cursor:
+                        async with self.giftia.db.query(sql, sql_params) as cursor:
                             p_rows = await cursor.fetchall()
                             for p_r in p_rows:
                                 if p_r["call_name"]:
@@ -233,7 +231,7 @@ class MemoryApi:
             bot_name = request.query.get("bot_name")
 
             bots = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT DISTINCT bot_name
                 FROM memories
@@ -256,7 +254,7 @@ class MemoryApi:
                 conditions, params = self._memory_filter_conditions(filters)
 
                 where_clause = "WHERE " + " AND ".join(conditions)
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     f"""
                     SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
                     FROM memories
@@ -358,7 +356,7 @@ class MemoryApi:
                 or not text.strip()
             ):
                 return error_response("缺少必要参数")
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT * FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
                 (memory_id, bot_name, session_id),
             ) as cursor:
@@ -394,21 +392,21 @@ class MemoryApi:
             )
             metadata["importance"] = importance
             metadata["manually_edited"] = True
-            cursor = await self.giftia.db.conn.execute(
-                "UPDATE memories SET text=?, metadata=?, importance=?, revision=revision+1, vector=NULL, updated_at=? "
-                "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
-                (
-                    text.strip(),
-                    json.dumps(metadata, ensure_ascii=False),
-                    importance,
-                    datetime.now().isoformat(),
-                    memory_id,
-                    bot_name,
-                    session_id,
-                    old["revision"],
-                ),
-            )
-            await self.giftia.db.conn.commit()
+            async with self.giftia.db.transaction() as conn:
+                cursor = await conn.execute(
+                    "UPDATE memories SET text=?, metadata=?, importance=?, revision=revision+1, vector=NULL, updated_at=? "
+                    "WHERE memory_id=? AND bot_name=? AND group_or_user_id=? AND revision=?",
+                    (
+                        text.strip(),
+                        json.dumps(metadata, ensure_ascii=False),
+                        importance,
+                        datetime.now().isoformat(),
+                        memory_id,
+                        bot_name,
+                        session_id,
+                        old["revision"],
+                    ),
+                )
             if cursor.rowcount != 1:
                 return error_response("记忆已被更新，请刷新列表后重新编辑")
             self.giftia.data_cache.memories.pop(f"{bot_name}:{session_id}", None)
@@ -436,7 +434,7 @@ class MemoryApi:
             if not memory_id:
                 return error_response("缺少 memory_id 参数")
             if body.get("bot_name") or body.get("group_or_user_id"):
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     "SELECT 1 FROM memories WHERE memory_id=? AND bot_name=? AND group_or_user_id=?",
                     (memory_id, body.get("bot_name"), body.get("group_or_user_id")),
                 ) as cursor:
@@ -466,7 +464,7 @@ class MemoryApi:
             where_clause = "WHERE " + " AND ".join(conditions)
 
             count_sql = f"SELECT COUNT(*) as total FROM memories {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -481,9 +479,7 @@ class MemoryApi:
                 LIMIT ?
             """
             items = []
-            async with self.giftia.db.conn.execute(
-                data_sql, [*params, limit]
-            ) as cursor:
+            async with self.giftia.db.query(data_sql, [*params, limit]) as cursor:
                 rows = await cursor.fetchall()
                 for row in rows:
                     item = self._memory_row_to_dict(row)

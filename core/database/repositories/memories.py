@@ -7,6 +7,7 @@ import aiosqlite
 
 from ...memory.atomic import memory_metadata
 from ...utils.schemas import MemoryItem, normalize_memory_importance
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
@@ -15,6 +16,7 @@ class MemoriesRepository(BaseRepository):
         super().__init__(conn)
         self.write_lock = asyncio.Lock()
 
+    @serialized_operation
     async def insert_memory(
         self, bot_name: str, group_or_user_id: str, memory: MemoryItem
     ):
@@ -44,6 +46,7 @@ class MemoriesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def get_memories(
         self, group_or_user_id: str, bot_name: str, limit: int = 10
     ) -> list[MemoryItem]:
@@ -87,6 +90,7 @@ class MemoriesRepository(BaseRepository):
             for row in rows
         ]
 
+    @serialized_operation
     async def record_memory_hits(
         self, memory_ids: list[str], hit_at: str | None = None
     ):
@@ -115,6 +119,7 @@ class MemoriesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_memory(self, memory_id: str):
         """删除记忆"""
         await self.conn.execute(
@@ -125,6 +130,7 @@ class MemoriesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
         """删除全部记忆"""
         await self.conn.execute(
@@ -135,6 +141,7 @@ class MemoriesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def insert_memories(
         self,
         bot_name: str,

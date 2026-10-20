@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from ...utils.schemas import Status
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
@@ -23,6 +24,7 @@ def parse_custom_status_json(raw: str | None) -> dict[str, str]:
 
 
 class BotStatusRepository(BaseRepository):
+    @serialized_operation
     async def get_bot_status(self, group_or_user_id: str, bot_name: str) -> Status:
         async with self.conn.execute(
             """
@@ -66,6 +68,7 @@ class BotStatusRepository(BaseRepository):
                 custom_status={},
             )
 
+    @serialized_operation
     async def upsert_bot_status(
         self, group_or_user_id: str, bot_name: str, status: Status
     ):
@@ -105,6 +108,7 @@ class BotStatusRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_bot_status(self, group_or_user_id: str, bot_name: str):
         await self.conn.execute(
             """
