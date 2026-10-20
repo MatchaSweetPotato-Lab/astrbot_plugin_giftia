@@ -1,5 +1,10 @@
 from astrbot.api import logger
 
+from ..memory.recall_scope import (
+    resolve_memory_recall_scope,
+    select_automatic_recall_memories,
+)
+
 
 def conf_int(conf: dict, key: str, default: int) -> int:
     try:
@@ -101,3 +106,99 @@ async def search_memories_with_rerank(
     except Exception as e:
         logger.warning(f"[Giftia] {log_context}失败: {e}")
         return []
+
+
+async def search_automatic_user_memories(
+    plugin,
+    *,
+    bot_name: str,
+    group_or_user_id: str,
+    query: str,
+    recent_messages: list,
+    user_id: str,
+) -> list[dict]:
+    """Recall a speaker's batch with an additional user route in full scope.
+
+    Args:
+        plugin: Plugin providing memory storage and model configuration.
+        bot_name: Owning bot configuration.
+        group_or_user_id: Current conversation.
+        query: This speaker's text and completed media captions.
+        recent_messages: Messages identifying the active participants.
+        user_id: Speaker account, or an empty value for an untargeted reminder.
+
+    Returns:
+        Deduplicated, relevant candidates with one user-associated slot when
+        available. Hit statistics are deferred until batch-wide selection.
+    """
+    recall_scope = resolve_memory_recall_scope(plugin)
+    if recall_scope != "all" or not user_id:
+        return await search_memories_with_rerank(
+            plugin,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            query=query,
+            recent_messages=recent_messages,
+            limit_key="session_recall_search_limit",
+            log_context="会话记忆自动召回",
+            record_hits=False,
+            user_ids=[user_id] if user_id and recall_scope == "user" else None,
+        )
+
+    search_limit = resolve_memory_search_limit(
+        plugin.embedding_conf, limit_key="session_recall_search_limit"
+    )
+    query = (query or "").strip()
+    if (
+        not plugin.embedding_conf.get("enabled", False)
+        or search_limit <= 0
+        or not query
+    ):
+        return []
+    final_limit = search_limit
+    if plugin.rerank_conf.get("enabled", False):
+        final_limit = min(
+            final_limit, conf_int(plugin.rerank_conf, "top_k", search_limit)
+        )
+    if final_limit <= 0:
+        return []
+
+    candidates = {}
+    for users in ([user_id], None):
+        try:
+            memories = await plugin.passive_memory_manager.search_and_filter_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                query=query,
+                recent_messages=recent_messages,
+                limit=search_limit,
+                threshold=conf_float(plugin.embedding_conf, "threshold", 0.7),
+                user_ids=users,
+            )
+            for memory in memories:
+                memory_id = str(memory.get("memory_id") or memory.get("id") or "")
+                if memory_id:
+                    candidates.setdefault(memory_id, memory)
+        except Exception as error:
+            logger.warning("[Giftia] Automatic memory recall route failed: %s", error)
+
+    memories = list(candidates.values())
+    if memories and plugin.rerank_conf.get("enabled", False):
+        try:
+            # Score the whole union before reserving slots or applying top-k.
+            memories = await plugin.ltm.rerank_memories(
+                query=query,
+                memories=memories,
+                top_k=len(memories),
+                threshold=conf_float(plugin.rerank_conf, "threshold", 0.45),
+            )
+        except Exception as error:
+            logger.warning("[Giftia] Automatic memory rerank failed: %s", error)
+            return []
+    memories.sort(
+        key=lambda memory: conf_float(
+            memory, "score", 1.0 - conf_float(memory, "_distance", 1.0)
+        ),
+        reverse=True,
+    )
+    return select_automatic_recall_memories(memories, [user_id], final_limit)

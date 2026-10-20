@@ -8,7 +8,6 @@ from xml.etree.ElementTree import fromstring
 import lancedb
 import pytest
 import pytest_asyncio
-
 from core.conversation.memory_recall import search_memories_with_rerank
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
@@ -492,6 +491,116 @@ async def test_automatic_recall_uses_configured_scope_for_each_query(
     )
 
     assert {item["memory_id"] for item in result} == expected
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_recall_protects_users_without_biasing_tools_or_decisions(
+    runtime,
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = "all"
+    rt.plugin.embedding_conf.update(
+        session_recall_search_limit=3, limit=3, inject_limit=2
+    )
+    for index in range(3):
+        await rt.seed(f"bob-{index}", ["bob"], distance=index * 0.1)
+    await rt.seed("foreign-alice", ["alice"], distance=0.6)
+    await rt.seed("wrong-bot", ["alice"], bot="other", distance=0.0)
+    await rt.seed("unindexed-alice", ["alice"], indexed=False, distance=0.0)
+    messages = [MessageData(user_id="alice", content="good morning")]
+
+    automatic = await ReplyPipeline(rt.plugin)._search_current_recall_memories(
+        "bot", "current", messages, None, []
+    )
+    assert {record["memory_id"] for record in automatic} == {"foreign-alice", "bob-0"}
+    own = next(record for record in automatic if record["memory_id"] == "foreign-alice")
+    assert json.loads(own["metadata"])["source_session_id"] == "other-group"
+
+    decision = await search_memories_with_rerank(
+        rt.plugin,
+        bot_name="bot",
+        group_or_user_id="current",
+        query="good morning",
+        recent_messages=messages,
+    )
+    assert {record["memory_id"] for record in decision} == {"bob-0", "bob-1", "bob-2"}
+
+    rt.plugin.adapter_id_map = {"adapter": "bot"}
+    rt.plugin.bot_map = {"bot": {}}
+    event = SimpleNamespace(
+        platform_meta=SimpleNamespace(id="adapter"),
+        get_group_id=lambda: "current",
+        get_sender_id=lambda: "alice",
+        get_sender_name=lambda: "Alice",
+    )
+    context = SimpleNamespace(context=SimpleNamespace(event=event, extra={}))
+    tool = SearchMemoryTool(plugin=rt.plugin)
+    broad = json.loads(await tool.call(context, "good morning"))
+    assert broad["count"] == 3
+    assert "foreign-alice" not in broad["memory_context"]
+    targeted = json.loads(await tool.call(context, "good morning", "alice"))
+    assert targeted["count"] == 1
+    assert "foreign-alice" in targeted["memory_context"]
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_recall_releases_user_slots_when_vector_threshold_rejects_them(
+    runtime,
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = "all"
+    rt.plugin.embedding_conf.update(
+        session_recall_search_limit=2, inject_limit=2, threshold=0.2
+    )
+    await rt.seed("irrelevant-alice", ["alice"], distance=0.9)
+    await rt.seed("first", ["bob"], distance=0.0)
+    await rt.seed("second", ["carol"], distance=0.1)
+
+    result = await ReplyPipeline(rt.plugin)._search_current_recall_memories(
+        "bot", "current", [MessageData(user_id="alice", content="travel")], None, []
+    )
+    assert {record["memory_id"] for record in result} == {"first", "second"}
+
+
+@pytest.mark.asyncio
+async def test_full_automatic_recall_scores_the_complete_union_with_local_and_external_rerank(
+    runtime,
+):
+    rt = runtime
+    rt.plugin.memory_recall_scope = "all"
+    rt.plugin.embedding_conf.update(session_recall_search_limit=3, inject_limit=1)
+    rt.plugin.rerank_conf.update(enabled=True, top_k=1, threshold=0.45)
+    rt.ltm.rerank_conf = {
+        "use_external_provider": rt.ltm.embedding_conf["use_external_provider"]
+    }
+    rt.ltm.reranker = SimpleNamespace(
+        rerank=lambda query, texts: [0.6 if "alice" in text else 0.99 for text in texts]
+    )
+    rt.ltm.rerank_provider = SimpleNamespace(
+        rerank=AsyncMock(
+            side_effect=lambda query, texts, top_n: sorted(
+                [
+                    SimpleNamespace(
+                        index=index, relevance_score=0.6 if "alice" in text else 0.99
+                    )
+                    for index, text in enumerate(texts)
+                ],
+                key=lambda result: result.relevance_score,
+                reverse=True,
+            )[:top_n]
+        )
+    )
+    await rt.seed("alice", ["alice"], distance=0.6)
+    for index in range(3):
+        await rt.seed(f"bob-{index}", ["bob"], distance=index * 0.1)
+
+    result = await ReplyPipeline(rt.plugin)._search_current_recall_memories(
+        "bot", "current", [MessageData(user_id="alice", content="morning")], None, []
+    )
+    assert [record["memory_id"] for record in result] == ["alice"]
+    assert result[0]["score"] == 0.6
+    if rt.ltm.rerank_conf["use_external_provider"]:
+        assert rt.ltm.rerank_provider.rerank.call_args.kwargs["top_n"] == 4
 
 
 @pytest.mark.asyncio
