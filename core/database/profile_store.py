@@ -1,10 +1,12 @@
 from datetime import datetime
 
+from .operations import serialized_operation
 from .relation_history_store import RelationHistoryStoreMixin
 from .utils import parse_aliases
 
 
 class ProfileStoreMixin(RelationHistoryStoreMixin):
+    @serialized_operation
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> str | None:
@@ -29,6 +31,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         ]
         return "\n".join(parts) if parts else None
 
+    @serialized_operation
     async def get_user_aliases(
         self,
         bot_name: str,
@@ -64,6 +67,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    @serialized_operation
     async def get_user_aliases_text(
         self,
         bot_name: str,
@@ -79,6 +83,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         return "，".join(item["alias"] for item in aliases)
 
+    @serialized_operation
     async def upsert_user_aliases(
         self,
         bot_name: str,
@@ -176,6 +181,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         await self.conn.commit()
         return rejected_aliases
 
+    @serialized_operation
     async def delete_user_aliases(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> None:
@@ -187,6 +193,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_user_alias(
         self, bot_name: str, group_or_user_id: str, user_id: str, alias: str
     ) -> bool:
@@ -203,6 +210,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         await self.conn.commit()
         return cursor.rowcount > 0
 
+    @serialized_operation
     async def set_user_alias_count(
         self,
         bot_name: str,
@@ -238,6 +246,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         await self.conn.commit()
         return cursor.rowcount > 0
 
+    @serialized_operation
     async def get_user_profile_record(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict | None:
@@ -276,6 +285,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         return record
 
+    @serialized_operation
     async def search_user_profiles(
         self,
         bot_name: str,
@@ -395,6 +405,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             )
         return results
 
+    @serialized_operation
     async def upsert_user_profile(
         self,
         bot_name: str,
@@ -485,6 +496,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ):
@@ -517,6 +529,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_group_user_profiles(self, bot_name: str, group_or_user_id: str):
         """Clear session aliases and history while preserving shared profiles.
 
@@ -539,6 +552,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def get_group_profile(
         self, group_or_user_id: str, bot_name: str
     ) -> str | None:
@@ -561,6 +575,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             row = await cursor.fetchone()
         return row["profile"] if row else None
 
+    @serialized_operation
     async def upsert_group_profile(
         self, group_or_user_id: str, bot_name: str, profile: str
     ):
@@ -577,6 +592,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_group_profile(self, bot_name: str, group_or_user_id: str):
         """Delete the rules for one bot and session.
 
@@ -592,6 +608,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def upsert_relation_title(
         self, bot_name: str, group_or_user_id: str, user_id: str, title: str
     ):
@@ -605,6 +622,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         """
         await self.upsert_user_profile(bot_name, group_or_user_id, user_id, title=title)
 
+    @serialized_operation
     async def get_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> tuple[float, str]:
@@ -626,6 +644,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             row = await cursor.fetchone()
         return score["relation"], (row["title"] or "") if row else ""
 
+    @serialized_operation
     async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
         """Remove a conversation's ratings and invalidate affected shared tone reviews.
 
@@ -655,6 +674,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_expired_user_aliases(
         self, min_age_days: int = 7, count_threshold: int = 3
     ) -> int:

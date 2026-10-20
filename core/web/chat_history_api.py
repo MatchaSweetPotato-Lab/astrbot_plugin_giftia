@@ -48,7 +48,7 @@ class ChatHistoryApi:
 
             # Query count
             count_sql = f"SELECT COUNT(*) as total FROM chat_history {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -64,7 +64,7 @@ class ChatHistoryApi:
             """
             data_params = params + [limit, offset]
             items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     items.append(
@@ -122,7 +122,7 @@ class ChatHistoryApi:
             search = request.query.get("search")
 
             bots = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT DISTINCT bot_name
                 FROM chat_history
@@ -155,7 +155,7 @@ class ChatHistoryApi:
                     params.append(f"%{search}%")
 
                 where_clause = "WHERE " + " AND ".join(conditions)
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     f"""
                     SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
                     FROM chat_history

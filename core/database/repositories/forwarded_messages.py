@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 from ...utils.schemas import MessageData
+from ..operations import serialized_operation
 from .base import BaseRepository
 from .chat_history import _decode_json_dict
 
@@ -12,6 +13,7 @@ class ForwardedMessagesRepository(BaseRepository):
         super().__init__(conn)
         self.chat_history_repo = chat_history_repo
 
+    @serialized_operation
     async def find_forward_message_by_id(
         self,
         group_or_user_id: str,
@@ -46,6 +48,7 @@ class ForwardedMessagesRepository(BaseRepository):
             )
         return owner_msg, forward or None
 
+    @serialized_operation
     async def get_forward_summary(
         self, bot_name: str, group_or_user_id: str, forward_id: str
     ) -> str | None:
@@ -63,6 +66,7 @@ class ForwardedMessagesRepository(BaseRepository):
             return row["summary"]
         return None
 
+    @serialized_operation
     async def update_forward_summary(
         self, bot_name: str, group_or_user_id: str, forward_id: str, summary: str
     ):
@@ -82,6 +86,7 @@ class ForwardedMessagesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def increment_forward_query_times(
         self, bot_name: str, group_or_user_id: str, forward_id: str
     ):
@@ -95,6 +100,7 @@ class ForwardedMessagesRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def clean_old_forwards(self, max_age_hours: int = 24) -> int:
         """删除超过指定小时数（默认 24 小时）的合并转发缓存记录。"""
         cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()

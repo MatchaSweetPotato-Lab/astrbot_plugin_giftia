@@ -27,11 +27,11 @@ class SlangApi:
                 conditions.append("(instr(term, ?) > 0 OR instr(description, ?) > 0)")
                 params.extend([search, search])
             where = " AND ".join(conditions)
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 f"SELECT COUNT(*) FROM slang WHERE {where}", params
             ) as cursor:
                 total = (await cursor.fetchone())[0]
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 f"SELECT * FROM slang WHERE {where} "
                 "ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
                 [*params, limit, (page - 1) * limit],
@@ -53,7 +53,7 @@ class SlangApi:
             Available bots and sessions with term counts, excluding sessions without slang.
         """
         try:
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT bot_name FROM slang UNION SELECT bot_name FROM chat_history"
             ) as cursor:
                 stored_bots = {row[0] for row in await cursor.fetchall() if row[0]}
@@ -66,7 +66,7 @@ class SlangApi:
                 selected = bots[0] if bots else ""
             sessions = []
             if selected:
-                async with self.giftia.db.conn.execute(
+                async with self.giftia.db.query(
                     """
                     SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
                     FROM slang

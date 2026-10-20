@@ -151,7 +151,7 @@ class MediaApi:
 
             # Query count
             count_sql = f"SELECT COUNT(*) as total FROM media_caption {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+            async with self.giftia.db.query(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
@@ -165,7 +165,7 @@ class MediaApi:
             """
             data_params = params + [limit, offset]
             items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     r_keys = r.keys() if hasattr(r, "keys") else []
@@ -214,7 +214,7 @@ class MediaApi:
             if not self._is_valid_hash(hash_val):
                 return error_response("无效的 hash_val 参数", status_code=400)
 
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 """
                 SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times, created_at
                 FROM media_caption
@@ -285,23 +285,23 @@ class MediaApi:
                 media_caption.source = source
 
             # Update DB
-            await self.giftia.db.conn.execute(
-                """
-                UPDATE media_caption
-                SET caption = ?, text = ?, genre = ?, character = ?, source = ?, updated_at = ?
-                WHERE hash_val = ?
-                """,
-                (
-                    caption,
-                    media_caption.text,
-                    media_caption.genre,
-                    media_caption.character,
-                    media_caption.source,
-                    datetime.now().isoformat(),
-                    hash_val,
-                ),
-            )
-            await self.giftia.db.conn.commit()
+            async with self.giftia.db.transaction() as conn:
+                await conn.execute(
+                    """
+                    UPDATE media_caption
+                    SET caption = ?, text = ?, genre = ?, character = ?, source = ?, updated_at = ?
+                    WHERE hash_val = ?
+                    """,
+                    (
+                        caption,
+                        media_caption.text,
+                        media_caption.genre,
+                        media_caption.character,
+                        media_caption.source,
+                        datetime.now().isoformat(),
+                        hash_val,
+                    ),
+                )
 
             # Update cache
             self.giftia.data_cache.caption[hash_val] = media_caption
@@ -323,10 +323,10 @@ class MediaApi:
                 return error_response("无效的 hash_val 参数", status_code=400)
 
             # Delete from DB
-            await self.giftia.db.conn.execute(
-                "DELETE FROM media_caption WHERE hash_val = ?", (hash_val,)
-            )
-            await self.giftia.db.conn.commit()
+            async with self.giftia.db.transaction() as conn:
+                await conn.execute(
+                    "DELETE FROM media_caption WHERE hash_val = ?", (hash_val,)
+                )
 
             # Remove from cache
             self.giftia.data_cache.caption.pop(hash_val, None)
@@ -542,7 +542,7 @@ class MediaApi:
         """
         try:
             genres = []
-            async with self.giftia.db.conn.execute(
+            async with self.giftia.db.query(
                 "SELECT DISTINCT genre FROM media_caption WHERE genre IS NOT NULL AND genre != ''"
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -627,7 +627,7 @@ class MediaApi:
             sql = f"SELECT hash_val FROM media_caption {where_clause}"
 
             matching_hashes = []
-            async with self.giftia.db.conn.execute(sql, params) as cursor:
+            async with self.giftia.db.query(sql, params) as cursor:
                 rows = await cursor.fetchall()
                 matching_hashes = [r["hash_val"] for r in rows if r["hash_val"]]
 

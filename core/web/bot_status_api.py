@@ -19,7 +19,7 @@ class BotStatusApi:
                 ORDER BY updated_at DESC
             """
             items = []
-            async with self.giftia.db.conn.execute(sql) as cursor:
+            async with self.giftia.db.query(sql) as cursor:
                 rows = await cursor.fetchall()
 
             for r in rows:

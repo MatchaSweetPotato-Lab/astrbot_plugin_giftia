@@ -189,7 +189,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             else:
                 scope = f"({scope}) AND ({user_scope})"
         predicate = f"bot_name=? AND ({scope}) AND revision=indexed_revision"
-        async with self.plugin.db.conn.execute(
+        async with self.plugin.db.query(
             f"SELECT memory_id FROM memories WHERE {predicate}",
             params,
         ) as cursor:
@@ -209,7 +209,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
 
         ids = [str(memory.get("id") or "") for memory in embedding_memories]
         placeholders = ",".join("?" for _ in ids)
-        async with self.plugin.db.conn.execute(
+        async with self.plugin.db.query(
             "SELECT memory_id, group_or_user_id, text, metadata, created_at, updated_at "
             f"FROM memories WHERE {predicate} AND memory_id IN ({placeholders})",
             (*params, *ids),

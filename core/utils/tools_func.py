@@ -474,7 +474,7 @@ class ToolsFunc:
             cfg = self.normalize_auto_clean_memory_config(raw_cfg)
             sql, params = self._build_auto_clean_memory_query(cfg)
 
-            async with self.db.conn.execute(sql, params) as cursor:
+            async with self.db.query(sql, params) as cursor:
                 rows = await cursor.fetchall()
 
             candidates = [
@@ -541,9 +541,7 @@ class ToolsFunc:
 
             # 2. 查询所有应保留的媒体哈希
             # A. 自定义表情包（stickers 表）
-            async with self.db.conn.execute(
-                "SELECT sticker_id FROM stickers"
-            ) as cursor:
+            async with self.db.query("SELECT sticker_id FROM stickers") as cursor:
                 rows = await cursor.fetchall()
                 sticker_hashes = {r["sticker_id"] for r in rows if r["sticker_id"]}
 
@@ -570,7 +568,7 @@ class ToolsFunc:
                 if conditions:
                     conditions.append("caption IS NOT NULL AND caption != ''")
                     sql = f"SELECT hash_val FROM media_caption WHERE {' AND '.join(conditions)}"
-                    async with self.db.conn.execute(sql, params) as cursor:
+                    async with self.db.query(sql, params) as cursor:
                         rows = await cursor.fetchall()
                         caption_keep_hashes = {
                             r["hash_val"] for r in rows if r["hash_val"]
@@ -579,7 +577,7 @@ class ToolsFunc:
             # C. 活跃会话消息引用的媒体哈希
             active_media_hashes = set()
             # 获取所有会话列表
-            async with self.db.conn.execute(
+            async with self.db.query(
                 "SELECT DISTINCT bot_name, group_or_user_id FROM chat_history"
             ) as cursor:
                 sessions = await cursor.fetchall()
@@ -593,7 +591,7 @@ class ToolsFunc:
                 group_or_user_id = session["group_or_user_id"]
                 if not bot_name or not group_or_user_id:
                     continue
-                async with self.db.conn.execute(
+                async with self.db.query(
                     "SELECT media_ids FROM chat_history WHERE bot_name = ? AND group_or_user_id = ? ORDER BY created_at DESC LIMIT ?",
                     (bot_name, group_or_user_id, msg_number),
                 ) as cursor:
@@ -608,7 +606,7 @@ class ToolsFunc:
                                 pass
 
             # D. 查询所有已经有成功转述（caption 非空）的媒体哈希，为了做时间窗口和清理判定
-            async with self.db.conn.execute(
+            async with self.db.query(
                 "SELECT hash_val FROM media_caption WHERE caption IS NOT NULL AND caption != ''"
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -658,11 +656,11 @@ class ToolsFunc:
 
                                 # 如果是无有效转述的死媒体记录，同步清理数据库行与内存 LRUCache
                                 if not is_transcribed:
-                                    await self.db.conn.execute(
-                                        "DELETE FROM media_caption WHERE hash_val = ?",
-                                        (hash_val,),
-                                    )
-                                    await self.db.conn.commit()
+                                    async with self.db.transaction() as conn:
+                                        await conn.execute(
+                                            "DELETE FROM media_caption WHERE hash_val = ?",
+                                            (hash_val,),
+                                        )
                                     if self.data_cache:
                                         self.data_cache.caption.pop(hash_val, None)
                         except Exception as e:

@@ -1,11 +1,13 @@
 from datetime import datetime
 
+from ..operations import serialized_operation
 from .base import BaseRepository
 
 
 class SlangRepository(BaseRepository):
     """Persist literal vocabulary definitions within a bot and session."""
 
+    @serialized_operation
     async def get_entries(self, bot_name: str, group_or_user_id: str) -> list[dict]:
         """Read the current session vocabulary in a deterministic order.
 
@@ -23,6 +25,7 @@ class SlangRepository(BaseRepository):
         ) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
+    @serialized_operation
     async def set_entry(
         self, bot_name: str, group_or_user_id: str, term: str, description: str
     ) -> None:
@@ -60,6 +63,7 @@ class SlangRepository(BaseRepository):
         )
         await self.conn.commit()
 
+    @serialized_operation
     async def delete_entry(
         self, bot_name: str, group_or_user_id: str, term: str
     ) -> bool:
