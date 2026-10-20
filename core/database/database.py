@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
+from functools import wraps
 
 import aiosqlite
 
@@ -16,7 +17,7 @@ from ..utils.schemas import (
     Status,
     Sticker,
 )
-from .operations import database_operation
+from .operations import GuardedQuery, database_operation
 from .profile_store import ProfileStoreMixin
 from .repositories.bot_status import BotStatusRepository
 from .repositories.chat_history import ChatHistoryRepository
@@ -34,6 +35,13 @@ from .schema import initialize_database
 class Database(ProfileStoreMixin):
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
+        execute = conn.execute
+
+        @wraps(execute)
+        def guarded_execute(sql, parameters=None):
+            return GuardedQuery(conn, execute(sql, parameters))
+
+        conn.execute = guarded_execute
         self.db_path = (
             StarTools.get_data_dir("astrbot_plugin_giftia") / "chat_history.db"
         )

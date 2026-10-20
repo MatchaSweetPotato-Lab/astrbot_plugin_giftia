@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import sqlite3
 from contextlib import asynccontextmanager
 
@@ -22,7 +23,9 @@ async def database(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reader_type", ["repository", "profile", "query"])
+@pytest.mark.parametrize(
+    "reader_type", ["repository", "profile", "query", "connection"]
+)
 async def test_memory_writer_waits_until_shared_reader_closes(
     database, monkeypatch, reader_type
 ):
@@ -50,6 +53,11 @@ async def test_memory_writer_waits_until_shared_reader_closes(
             return await db.get_kv_data("seed")
         if reader_type == "profile":
             return await db.get_group_profile("group", "bot")
+        if reader_type == "connection":
+            async with db.conn.execute(
+                "SELECT value FROM kv_store WHERE key='seed'"
+            ) as cursor:
+                return (await cursor.fetchone())[0]
         async with db.query("SELECT value FROM kv_store WHERE key='seed'") as cursor:
             return (await cursor.fetchone())[0]
 
@@ -76,6 +84,80 @@ async def test_memory_writer_waits_until_shared_reader_closes(
     assert await db.get_kv_data("committed-memory-batch") == 1
     await db.upsert_kv_data("after-memory", 1)
     assert not db.conn.in_transaction
+
+
+@pytest.mark.asyncio
+async def test_cancelled_direct_reader_releases_connection_for_memory_writer(database):
+    db = database
+    await db.upsert_kv_data("seed-1", 1)
+    await db.upsert_kv_data("seed-2", 2)
+    reading = asyncio.Event()
+
+    async def read_without_finishing():
+        async with db.conn.execute("SELECT * FROM kv_store ORDER BY key"):
+            reading.set()
+            await asyncio.Event().wait()
+
+    reader = asyncio.create_task(read_without_finishing())
+    writer = None
+    try:
+        await asyncio.wait_for(reading.wait(), timeout=2)
+        writer = asyncio.create_task(
+            db.memories_repo.insert_memories(
+                "bot", "group", [], batch_key="after-cancelled-reader"
+            )
+        )
+        await asyncio.sleep(0)
+    finally:
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+        if writer:
+            await asyncio.wait_for(writer, timeout=2)
+
+    await db.upsert_user_profile(
+        "bot", "group", "user", profile_fields={"avatar_description": "new avatar"}
+    )
+    assert await db.get_kv_data("after-cancelled-reader") == 1
+    profile = await db.get_user_profile_record("bot", "group", "user")
+    assert profile["avatar_description"] == "new avatar"
+    assert not db.conn.in_transaction
+
+
+@pytest.mark.asyncio
+async def test_failed_direct_query_releases_connection(database):
+    db = database
+    with pytest.raises(aiosqlite.OperationalError, match="no such table"):
+        async with db.conn.execute("SELECT * FROM missing_table"):
+            pass
+
+    await asyncio.wait_for(db.upsert_kv_data("after-failed-query", 1), timeout=2)
+    assert await db.get_kv_data("after-failed-query") == 1
+    assert not db.conn.in_transaction
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiting_direct_query_is_closed(database, recwarn):
+    db = database
+    entered = asyncio.Event()
+
+    async def read_value():
+        async with db.conn.execute("SELECT 1"):
+            entered.set()
+
+    async with db.query("SELECT 1"):
+        waiter = asyncio.create_task(read_value())
+        await asyncio.sleep(0)
+        assert not entered.is_set()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        del waiter
+
+    await asyncio.wait_for(db.upsert_kv_data("after-cancelled-waiter", 1), timeout=2)
+    gc.collect()
+    assert not any("was never awaited" in str(warning.message) for warning in recwarn)
+    assert await db.get_kv_data("after-cancelled-waiter") == 1
 
 
 @pytest.mark.asyncio
