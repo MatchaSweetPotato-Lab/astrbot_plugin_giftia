@@ -1724,6 +1724,7 @@ async def test_memory_observation_migration_preserves_legacy_progress_once(runti
     await runtime.db.upsert_kv_data("passive_memory:silence_armed:bot:group", 1)
     await runtime.db.conn.execute("DROP INDEX idx_history_memory_pending")
     await runtime.db.conn.execute("ALTER TABLE chat_history DROP COLUMN memory_status")
+    await runtime.db.conn.execute("PRAGMA user_version=0")
     await runtime.db.conn.commit()
     await initialize_database(runtime.db.conn)
     async with runtime.db.conn.execute(

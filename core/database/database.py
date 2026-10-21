@@ -66,7 +66,11 @@ class Database(ProfileStoreMixin):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(db_path)
         conn.row_factory = aiosqlite.Row
-        await initialize_database(conn)
+        try:
+            await initialize_database(conn)
+        except BaseException:
+            await conn.close()
+            raise
         return cls(conn)
 
     @asynccontextmanager
