@@ -198,7 +198,7 @@ def build_xml_instructions(
 
     if is_enabled(FeatureKey.TASK_BOARD):
         interactive_lines.append(
-            "- **短期任务看板**:\n"
+            "- **短期任务看板(仅适用于非定时的事件驱动类任务，如：发现某人活跃时提醒他喝水)**:\n"
             '  * **创建任务**: `<task_board action="create" user_id="创建者ID">一句自然语言任务</task_board>`。user_id 为任务创建者的用户 ID，必填。\n'
             '  * **完成任务**: `<task_board action="complete" task_id="任务ID">完成原因</task_board>`。只有在你已经实际完成任务要求，或用户明确确认该任务已完成时才使用。\n'
             '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
