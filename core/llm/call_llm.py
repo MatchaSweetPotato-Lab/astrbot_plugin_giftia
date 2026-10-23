@@ -201,6 +201,9 @@ class CallLLM:
         Returns:
             True to send, False to regenerate, or None on timeout or invalid output.
         """
+        logger.debug(f"\n<system_prompt>{REPLY_REVIEW_PROMPT}</system_prompt>")
+        logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
+
         response = None
         passed = None
         extra_info = {"status": "api_failed"}
