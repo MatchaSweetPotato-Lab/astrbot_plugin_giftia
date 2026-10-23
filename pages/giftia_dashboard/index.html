@@ -1497,7 +1497,7 @@
                     <button type="button" class="card-tab-btn" data-subtab="subtab-trigger" onclick="switchBotModalSubTab('subtab-trigger')">触发与接话策略</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-decision" onclick="switchBotModalSubTab('subtab-decision')">前置决策</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-reply" onclick="switchBotModalSubTab('subtab-reply')">正式回复</button>
-                    <button type="button" class="card-tab-btn" data-subtab="subtab-tts" onclick="switchBotModalSubTab('subtab-tts')">TTS XML 语音</button>
+                    <button type="button" class="card-tab-btn" data-subtab="subtab-tts" onclick="switchBotModalSubTab('subtab-tts')">TTS</button>
                     <button type="button" class="card-tab-btn" data-subtab="subtab-interactive" onclick="switchBotModalSubTab('subtab-interactive')">内置交互功能</button>
                 </div>
 
@@ -1631,9 +1631,8 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="bot-form-review-provider">复审模型（可选）</label>
+                        <label for="bot-form-review-provider">复审模型（可选） <span class="info-tooltip" data-tooltip="未选择时关闭。回复生成期间有新消息入库时，发送前复审一次；不通过则重新决策和生成，新回复直接发送。实际执行过原生工具或已进入后续工具轮次时跳过复审。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <select id="bot-form-review-provider"></select>
-                        <div class="muted-text" style="font-size: 0.8rem; margin-top: 6px;">未选择时关闭。回复生成期间有新消息入库时，发送前复审一次；不通过则重新决策和生成，新回复直接发送。实际执行过原生工具或已进入后续工具轮次时跳过复审。</div>
                     </div>
                 </div>
 
@@ -1641,7 +1640,7 @@
                 <div id="subtab-tts" class="bot-subtab-content" style="display: none;">
                     <div class="form-row form-row-switch" style="margin-bottom: 12px;">
                         <div style="flex: 1;">
-                            <strong style="color: var(--font-primary);">启用 TTS XML 标签输出</strong>
+                            <strong style="color: var(--font-primary);">启用 TTS</strong>
                             <span class="info-tooltip" data-tooltip="开启后在大模型 Prompt 中注入 XML 语音合成规则说明"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
                         </div>
                         <div class="switch-container">
