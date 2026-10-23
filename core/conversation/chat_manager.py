@@ -5,9 +5,10 @@ import time
 import uuid
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from xml.sax.saxutils import escape
 
 from aiocqhttp import CQHttp
 
@@ -26,6 +27,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 )
 from astrbot.core.utils.session_lock import session_lock_manager
 
+from ..llm.prompt import parse_message_to_str, truncate_message_content
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
 from ..utils.message_markdown import normalize_qq_markdown_chain
 from ..utils.message_media import format_node_components
@@ -33,7 +35,7 @@ from ..utils.notice_parse import NoticeParseResult
 from ..utils.schemas import MessageData, XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
-from .reply_pipeline import ReplyPipeline
+from .reply_pipeline import ReplyPipeline, ReplyReviewRejected
 
 SESSION_MIN_INTERVAL = 2.0
 SESSION_BATCH_LIMIT = 50
@@ -640,6 +642,7 @@ class ChatManager:
             group_or_user_id: Stored conversation identifier.
             state: Queue and timing state owned by this worker.
         """
+        review_retry: int | None = None
         try:
             while state.pending and not getattr(self.plugin, "_terminated", False):
                 state.wake.clear()
@@ -663,6 +666,8 @@ class ChatManager:
                     state.last_started + SESSION_MIN_INTERVAL,
                 )
                 remaining = ready_at - time.monotonic()
+                if review_retry is not None:
+                    remaining = 0
                 if remaining > 0:
                     try:
                         await asyncio.wait_for(state.wake.wait(), remaining)
@@ -675,6 +680,14 @@ class ChatManager:
                 # The shared AstrBot lock also serializes reminders and media callbacks.
                 async with session_lock_manager.acquire_lock(event.unified_msg_origin):
                     state.effects_started = False
+                    regenerate_after_id = review_retry
+                    is_review_retry = review_retry is not None
+                    review_retry = None
+                    review_context = ""
+                    reply_key = f"{bot_name}:{group_or_user_id}"
+                    previous_active_counter = self.plugin.active_reply_counters.get(
+                        reply_key, 0
+                    )
                     try:
                         async with self.plugin.parse_locks[parse_key]:
                             recent = await self.plugin.data_cache.get_recent_message(
@@ -698,6 +711,55 @@ class ChatManager:
                                     if msg.message_id not in later_ids
                                 ]
                             )
+                            if regenerate_after_id is not None:
+                                latest_id = await self.plugin.db.get_max_message_id(
+                                    bot_name, group_or_user_id
+                                )
+                                arrivals = (
+                                    await self.plugin.db.get_messages_by_id_range(
+                                        bot_name,
+                                        group_or_user_id,
+                                        regenerate_after_id + 1,
+                                        latest_id,
+                                    )
+                                )
+                                current_ids = {
+                                    item.message.message_id for item in state.current
+                                }
+                                # Overflow must still inform regeneration when all
+                                # original targets already fill the 50-message batch.
+                                deferred = [
+                                    parse_message_to_str(
+                                        replace(
+                                            msg,
+                                            content=escape(
+                                                truncate_message_content(
+                                                    msg.content,
+                                                    getattr(
+                                                        self.plugin,
+                                                        "reply_message_truncate_limit",
+                                                        1500,
+                                                    ),
+                                                )
+                                            ),
+                                        ),
+                                        truncate_limit=0,
+                                    )
+                                    for msg in arrivals
+                                    if msg.message_id not in current_ids
+                                    and msg.role == "message"
+                                    and not msg.is_recalled
+                                    and str(msg.user_id) != str(event.get_self_id())
+                                ]
+                                if deferred:
+                                    review_context = (
+                                        "<deferred_messages>\n"
+                                        "以下新消息尚未并入本批处理范围，但已使上一份草稿不再适合发送。"
+                                        "请结合这些消息重新决策和组织回复；这些消息仍保留后续处理，"
+                                        "本批待回复消息不变。\n"
+                                        + "\n".join(deferred)
+                                        + "\n</deferred_messages>"
+                                    )
                         blocked = [
                             item
                             for item in state.current
@@ -750,6 +812,7 @@ class ChatManager:
                             pending_messages=[item.message for item in state.current],
                             recent_messages=history,
                             force_reply=any(item.force_reply for item in state.current),
+                            review_context=review_context,
                         )
                         if not should_reply:
                             await self._set_batch_status(
@@ -759,6 +822,7 @@ class ChatManager:
 
                         # Freeze the reply after the decision and after acquiring the
                         # parse lock. Messages still being parsed cannot be consumed.
+                        review_after_id = None
                         async with self.plugin.parse_locks[parse_key]:
                             recent = await self.plugin.data_cache.get_recent_message(
                                 bot_name,
@@ -785,6 +849,14 @@ class ChatManager:
                                     if msg.message_id not in later_ids
                                 ]
                             )
+                            if not is_review_retry and self.plugin.bot_map[
+                                bot_name
+                            ].get("llm_reply_conf", {}).get("review_provider_id"):
+                                review_after_id = (
+                                    await self.plugin.db.get_max_message_id(
+                                        bot_name, group_or_user_id
+                                    )
+                                )
                         blocked = [
                             item
                             for item in state.current
@@ -828,12 +900,33 @@ class ChatManager:
                             memories,
                             recall_records,
                             meme_tags,
+                            review_after_id=review_after_id,
+                            review_context=review_context,
                         )
                         await self._set_batch_status(
                             bot_name,
                             group_or_user_id,
                             state.current,
                             "handled" if completed else "skipped",
+                        )
+                    except ReplyReviewRejected:
+                        # Keep every original target at the queue head. Database
+                        # audit values alone do not reconstruct the reply timeline.
+                        state.pending.extendleft(reversed(state.current))
+                        self.plugin.active_reply_counters[reply_key] = (
+                            previous_active_counter
+                        )
+                        review_retry = review_after_id
+                        for item in state.current:
+                            await self.plugin.db.update_message_decision(
+                                bot_name,
+                                group_or_user_id,
+                                item.message.message_id,
+                                2,
+                                2,
+                            )
+                        await self._set_batch_status(
+                            bot_name, group_or_user_id, state.current, "pending"
                         )
                     except asyncio.CancelledError:
                         await self._set_batch_status(
@@ -882,6 +975,9 @@ class ChatManager:
         relevant_memories: list[dict] | None,
         pending_recall_memories: list[dict] | None,
         meme_tags: str | None,
+        *,
+        review_after_id: int | None = None,
+        review_context: str = "",
     ) -> bool:
         """Generate and dispatch one frozen batch under the shared session lock.
 
@@ -894,6 +990,8 @@ class ChatManager:
             relevant_memories: Decision-selected memory records.
             pending_recall_memories: Memory records to commit on completion.
             meme_tags: Decision-selected sticker search tags.
+            review_after_id: Input watermark, omitted after a rejected draft.
+            review_context: Deferred arrivals that must still inform regeneration.
 
         Returns:
             Whether the reply finished normally, including intentional silence.
@@ -917,6 +1015,8 @@ class ChatManager:
                 relevant_memories=relevant_memories,
                 pending_recall_memories=pending_recall_memories,
                 meme_tags=meme_tags,
+                review_after_id=review_after_id,
+                other_data=[review_context] if review_context else None,
             ):
                 if not all(
                     self.decision_engine.check_whitelists(item.event)

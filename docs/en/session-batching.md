@@ -21,6 +21,8 @@ Batch starts in the same session are at least **2 seconds** apart. Each batch ho
 
 A decision against replying completes only its own batch. Arrivals during that decision form the next batch. When a decision allows a reply, ready messages arriving before the reply starts can join it, up to the same 50-message limit. Arrivals after the reply starts remain for the next round. Separate sessions can run independently.
 
+Select an optional review model under **正式回复 → 复审模型（可选）** in the bot editor (`llm_reply_conf.review_provider_id`); leaving it empty disables review. If new conversation messages arrive after the input is frozen, the first unsent draft can receive one consistency review before state changes or action dispatch. Only `message` content is reviewed, excluding speech, images and stickers. Approval sends the original draft and leaves arrivals queued. Rejection restores the original batch's undecided and pending states, preserves its order, merges arrivals within the 50-message limit, and reruns decision and generation. The regenerated reply is sent without another review; overflow stays queued. Each logical reply has its own single review opportunity. Actual native tool execution or later tool turns skip review. Timeouts (30 seconds) and invalid review output allow the original draft through.
+
 The “会话批处理” (session batching) settings group, stored as `concurrent_config`, has been removed:
 
 | Former setting (stored key) | Current behavior |

@@ -393,6 +393,11 @@ class BotApi:
                 ):
                     if key not in decision_conf:
                         decision_conf[key] = previous["decision_conf"][key]
+                reply_conf = body["llm_reply_conf"] = body.get("llm_reply_conf") or {}
+                if "review_provider_id" not in reply_conf:
+                    reply_conf["review_provider_id"] = previous.get(
+                        "llm_reply_conf", {}
+                    ).get("review_provider_id", "")
 
             normalized_bot = manager.normalize_bot_config(body)
 

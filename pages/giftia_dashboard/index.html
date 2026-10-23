@@ -1630,6 +1630,11 @@
                             <option value="random">random (随机抽取)</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label for="bot-form-review-provider">复审模型（可选）</label>
+                        <select id="bot-form-review-provider"></select>
+                        <div class="muted-text" style="font-size: 0.8rem; margin-top: 6px;">未选择时关闭。回复生成期间有新消息入库时，发送前复审一次；不通过则重新决策和生成，新回复直接发送。实际执行过原生工具或已进入后续工具轮次时跳过复审。</div>
+                    </div>
                 </div>
 
                 <!-- Sub-tab 4: TTS XML Conf -->

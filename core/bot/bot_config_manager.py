@@ -63,6 +63,7 @@ DEFAULT_BOT_CONFIG = {
         "provider_ids": [],
         "provider_selection_mode": "fallback",
         "persona_id": "default",
+        "review_provider_id": "",
     },
     "tts_config": {
         "enabled": False,
@@ -249,6 +250,9 @@ class BotConfigManager:
                 raw_reply.get("provider_selection_mode") or "fallback"
             ),
             "persona_id": str(raw_reply.get("persona_id") or "default").strip(),
+            "review_provider_id": str(
+                raw_reply.get("review_provider_id") or ""
+            ).strip(),
         }
 
         # tts_config

@@ -187,7 +187,8 @@ function openBotEditModal(botName = null) {
         llm_reply_conf: {
             provider_ids: [],
             provider_selection_mode: 'fallback',
-            persona_id: 'default'
+            persona_id: 'default',
+            review_provider_id: ''
         },
         tts_config: {
             enabled: false,
@@ -257,6 +258,7 @@ function openBotEditModal(botName = null) {
     });
 
     document.getElementById('bot-form-reply-mode').value = bot.llm_reply_conf?.provider_selection_mode || 'fallback';
+    renderSingleProviderSelect('bot-form-review-provider', stateBotMetadata.llm_providers, bot.llm_reply_conf?.review_provider_id || '');
 
     // 4. TTS Conf
     document.getElementById('bot-form-tts-enabled').checked = bot.tts_config?.enabled === true;
@@ -308,7 +310,7 @@ function renderPersonaSelectOptions(selectedPersonaId = 'default') {
 }
 
 /**
- * Render single-select TTS provider dropdown.
+ * Render a single-select provider dropdown.
  */
 function renderSingleProviderSelect(selectId, providers, selectedId) {
     const el = document.getElementById(selectId);
@@ -750,6 +752,7 @@ async function saveBotFromModal() {
             provider_ids: replySelectedProviders,
             provider_selection_mode: document.getElementById('bot-form-reply-mode').value,
             persona_id: document.getElementById('bot-form-reply-persona')?.value || 'default',
+            review_provider_id: document.getElementById('bot-form-review-provider').value,
         },
         tts_config: {
             enabled: document.getElementById('bot-form-tts-enabled').checked,
