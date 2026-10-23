@@ -29,6 +29,7 @@ from .native_tools import (
     NATIVE_TOOL_CONFIG_KEYS,
 )
 from .preset_prompts import (
+    REPLY_MEDIA_CAPTION_GUIDE,
     REPLY_REVIEW_PROMPT,
     build_xml_instructions,
     get_audio_caption_prompt,
@@ -214,7 +215,7 @@ class CallLLM:
                     system_prompt=REPLY_REVIEW_PROMPT,
                     prompt=user_prompt,
                 ),
-                timeout=30,
+                timeout=5,
             )
             extra_info["status"] = "parse_failed"
             completion = (getattr(response, "completion_text", "") or "").strip()
@@ -292,7 +293,9 @@ class CallLLM:
                         is_qq_official=is_qq_official_flag,
                         use_meme_manager=use_meme_manager,
                     )
-                    actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
+                    actual_system_prompt = "\n\n".join(
+                        (system_prompt or "", REPLY_MEDIA_CAPTION_GUIDE, xml_inst)
+                    )
                     tools_set = None
                     native_tools = ToolSet()
                     xml_tools = []
