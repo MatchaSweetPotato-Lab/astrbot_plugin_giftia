@@ -1,6 +1,8 @@
+import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
+from xml.etree.ElementTree import fromstring
 
 from xxhash import xxh3_64_hexdigest
 
@@ -27,6 +29,8 @@ from .native_tools import (
     NATIVE_TOOL_CONFIG_KEYS,
 )
 from .preset_prompts import (
+    REPLY_MEDIA_CAPTION_GUIDE,
+    REPLY_REVIEW_PROMPT,
     build_xml_instructions,
     get_audio_caption_prompt,
     get_decision_rules,
@@ -180,6 +184,78 @@ class CallLLM:
                     continue
         return None
 
+    async def call_llm_reply_review(
+        self,
+        provider_id: str,
+        user_prompt: str,
+        bot_name: str,
+        group_or_user_id: str,
+    ) -> bool | None:
+        """Review an unsent draft once without invoking tools.
+
+        Args:
+            provider_id: Explicitly selected review provider.
+            user_prompt: Original messages, draft and new conversation messages.
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+
+        Returns:
+            True to send, False to regenerate, or None on timeout or invalid output.
+        """
+        logger.debug(f"\n<system_prompt>{REPLY_REVIEW_PROMPT}</system_prompt>")
+        logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
+
+        response = None
+        passed = None
+        extra_info = {"status": "api_failed"}
+        try:
+            response = await asyncio.wait_for(
+                self.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    system_prompt=REPLY_REVIEW_PROMPT,
+                    prompt=user_prompt,
+                ),
+                timeout=5,
+            )
+            extra_info["status"] = "parse_failed"
+            completion = (getattr(response, "completion_text", "") or "").strip()
+            if completion.startswith("```") and completion.endswith("```"):
+                completion = "\n".join(completion.splitlines()[1:-1]).strip()
+            node = fromstring(completion)
+            verdict = (node.get("pass") or "").strip().lower()
+            if node.tag != "review" or verdict not in ("true", "false"):
+                raise ValueError("Invalid reply review verdict")
+            passed = verdict == "true"
+            extra_info = {
+                "status": "success",
+                "passed": passed,
+                "reason": node.get("reason", ""),
+            }
+            logger.info(
+                "[Giftia] Reply review for %s:%s: passed=%s, reason=%s",
+                bot_name,
+                group_or_user_id,
+                passed,
+                node.get("reason", ""),
+            )
+        except Exception as error:
+            extra_info["error"] = str(error)
+            logger.warning(
+                "[Giftia] Reply review unavailable for %s:%s; sending draft: %s",
+                bot_name,
+                group_or_user_id,
+                error,
+            )
+        await self._log_token_usage_safely(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            type_name="reply_review",
+            provider_id=provider_id,
+            llm_resp=response,
+            extra_info=extra_info,
+        )
+        return passed
+
     async def call_llm_reply(
         self,
         event: AstrMessageEvent,
@@ -217,7 +293,9 @@ class CallLLM:
                         is_qq_official=is_qq_official_flag,
                         use_meme_manager=use_meme_manager,
                     )
-                    actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
+                    actual_system_prompt = "\n\n".join(
+                        (system_prompt or "", REPLY_MEDIA_CAPTION_GUIDE, xml_inst)
+                    )
                     tools_set = None
                     native_tools = ToolSet()
                     xml_tools = []

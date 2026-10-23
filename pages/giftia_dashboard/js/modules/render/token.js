@@ -11,6 +11,8 @@ const keyColorsCache = {};
 const staticTypeColors = {
     'reply': '#6366f1',
     'reply_tokens': '#6366f1',
+    'reply_review': '#0ea5e9',
+    'reply_review_tokens': '#0ea5e9',
     'decision': '#10b981',
     'decision_tokens': '#10b981',
     'image_caption': '#f59e0b',
@@ -198,6 +200,7 @@ function renderChartAndProgressBars() {
             } else if (dimension === "type") {
                 const typeNameMap = {
                     'reply': '正式回复',
+                    'reply_review': '回复复审',
                     'decision': '前置决策',
                     'image_caption': '图片转述',
                     'sticker_analysis': '表情包分析',
@@ -265,6 +268,7 @@ function renderChartAndProgressBars() {
                                 if (dimension === "type") {
                                     const typeNameMap = {
                                         'reply': '正式回复',
+                                        'reply_review': '回复复审',
                                         'decision': '前置决策',
                                         'image_caption': '图片转述',
                                         'sticker_analysis': '表情包分析',
@@ -377,6 +381,7 @@ function renderChartAndProgressBars() {
     } else if (activeTokenTab === "type") {
         const categories = [
             { key: 'reply_tokens', name: '正式回复', class: 'reply' },
+            { key: 'reply_review_tokens', name: '回复复审', class: 'reply_review' },
             { key: 'decision_tokens', name: '前置决策', class: 'decision' },
             { key: 'image_caption_tokens', name: '图片转述', class: 'image_caption' },
             { key: 'sticker_analysis_tokens', name: '表情包分析', class: 'sticker_analysis' },
@@ -394,6 +399,8 @@ function renderChartAndProgressBars() {
                 let hoverTitle = "";
                 if (cat.key === 'reply_tokens') {
                     hoverTitle = `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`;
+                } else if (cat.key === 'reply_review_tokens') {
+                    hoverTitle = `输入 (Prompt): ${Number(summary.reply_review_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_review_completion_tokens || 0).toLocaleString()}`;
                 } else if (cat.key === 'decision_tokens') {
                     hoverTitle = `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`;
                 }

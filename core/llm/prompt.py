@@ -3,6 +3,8 @@ from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
+from astrbot.api.message_components import At, Plain, Reply
+
 from ..memory.atomic import memory_metadata
 from ..utils.schemas import (
     MediaCaption,
@@ -10,6 +12,7 @@ from ..utils.schemas import (
     SessionRecallMemory,
     ShortTask,
     Status,
+    XmlLlmResult,
     extract_media_ids,
 )
 
@@ -536,6 +539,106 @@ def build_reply_prompt(
         user_prompt.append("\n\n".join(other_data))
 
     return "\n\n".join(user_prompt)
+
+
+def build_reply_review_prompt(
+    reply_messages: list[MessageData],
+    new_messages: list[MessageData],
+    llm_result: XmlLlmResult,
+    media_captions: list[MediaCaption],
+    *,
+    nickname: str,
+    self_id: str,
+    session_id: str,
+    group_profile: str = "",
+    bot_status: Status | None = None,
+    message_truncate_limit: int = 1500,
+    user_profiles: list[dict] | None = None,
+    active_user_briefs: list[dict] | None = None,
+) -> str:
+    """Build a compact review input without speech, stickers or tool instructions.
+
+    Args:
+        reply_messages: Original frozen reply timeline.
+        new_messages: Incoming messages stored after that timeline was frozen.
+        llm_result: Unsent draft, including routing components in message chains.
+        media_captions: Cached descriptions for incoming message media.
+        nickname: Bot display name.
+        self_id: Bot account identifier.
+        session_id: Conversation identifier.
+        group_profile: Manually maintained conversation rules.
+        bot_status: Bot state before this draft is accepted.
+        message_truncate_limit: Per-input-message content limit.
+        user_profiles: Participant profiles containing preferred call names.
+        active_user_briefs: Existing member summaries with fallback call names.
+
+    Returns:
+        Review prompt, or an empty string when the draft has no message content.
+    """
+    drafts = []
+    for chain in llm_result.msg_chains:
+        parts = []
+        quote = ""
+        for component in chain:
+            if isinstance(component, Plain):
+                parts.append(escape(component.text))
+            elif isinstance(component, At):
+                parts.append(f"<at user_id={quoteattr(str(component.qq))}/>")
+            elif isinstance(component, Reply):
+                quote = f" quote={quoteattr(str(component.id))}"
+        if any(part.strip() for part in parts):
+            drafts.append(f"<message{quote}>{''.join(parts)}</message>")
+    if not drafts:
+        return ""
+
+    prompt = [
+        f"<background nickname={quoteattr(nickname)} self_id={quoteattr(self_id)} "
+        f"session_id={quoteattr(session_id)}>",
+    ]
+    if group_profile:
+        prompt.append(f"<group_rules>{escape(group_profile)}</group_rules>")
+    if bot_status:
+        prompt.append(f"<status>{escape(parse_status_to_str(bot_status))}</status>")
+    prompt.append("</background>")
+
+    processed, _ = process_media_captions_for_prompt(
+        [*reply_messages, *new_messages], media_captions, force_inline_all=True
+    )
+    profile_call_names = [
+        {"user_id": profile["user_id"], "call_name": record.get("call_name")}
+        for profile in user_profiles or []
+        if isinstance(record := profile.get("user_profile"), dict)
+    ]
+    processed = _apply_call_names_to_messages(
+        messages=processed,
+        user_id="",
+        user_profile=None,
+        active_user_briefs=[*(active_user_briefs or []), *profile_call_names],
+    )
+    for tag, messages in (
+        ("reply_messages", processed[: len(reply_messages)]),
+        ("new_messages", processed[len(reply_messages) :]),
+    ):
+        lines = [
+            parse_message_to_str(
+                replace(
+                    message,
+                    content=escape(
+                        truncate_message_content(
+                            message.content, message_truncate_limit
+                        )
+                    ),
+                ),
+                truncate_limit=0,
+            )
+            for message in messages
+        ]
+        prompt.append(f"<{tag}>\n" + "\n".join(lines) + f"\n</{tag}>")
+        if tag == "reply_messages":
+            prompt.append(
+                "<pending_reply>\n" + "\n".join(drafts) + "\n</pending_reply>"
+            )
+    return "\n\n".join(prompt)
 
 
 def build_slang_block(

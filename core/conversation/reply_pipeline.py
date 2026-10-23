@@ -8,7 +8,11 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
 from ..llm.preset_prompts import build_tts_xml_instructions
-from ..llm.prompt import build_reply_prompt, prepare_reply_message_context
+from ..llm.prompt import (
+    build_reply_prompt,
+    build_reply_review_prompt,
+    prepare_reply_message_context,
+)
 from ..memory.atomic import memory_metadata
 from ..memory.recall_scope import (
     resolve_memory_recall_scope,
@@ -19,6 +23,10 @@ from ..utils.schemas import MediaCaption, MessageData
 from .media_captioner import MediaCaptioner
 from .memory_recall import conf_float, conf_int, search_automatic_user_memories
 from .tool_executor import ToolExecutor
+
+
+class ReplyReviewRejected(RuntimeError):
+    """Request one regeneration before the draft has produced any side effects."""
 
 
 class ReplyPipeline:
@@ -213,9 +221,36 @@ class ReplyPipeline:
         recent_messages: list[MessageData] | None = None,
         task_creator_names: dict[str, str] | None = None,
         tool_context: dict | None = None,
+        review_after_id: int | None = None,
     ):
-        """
-        集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
+        """Generate frozen reply turns and review the first eligible unsent draft.
+
+        Args:
+            event: Platform routing event.
+            bot_name: Owning bot configuration.
+            nickname: Bot display name.
+            group_or_user_id: Owning conversation.
+            reply_messages: Frozen messages selected for this logical reply.
+            remind_message: Scheduled reminder text when no input batch exists.
+            relevant_memories: Memories selected by the decision model.
+            pending_recall_memories: Recalls committed after successful completion.
+            tool_results: Results accumulated across XML tool turns.
+            other_data: Additional context retained across tool turns.
+            times: Current XML tool-turn index.
+            sent_messages: Previously sent text used for duplicate suppression.
+            meme_tags: Decision-selected sticker search tags.
+            recent_messages: Frozen user history, extended only with bot operations.
+            task_creator_names: Trusted identities for task creation.
+            tool_context: Trusted state shared by tool invocations.
+            review_after_id: Input watermark; None disables review for this run.
+
+        Yields:
+            Parsed reply results ready for action dispatch.
+
+        Raises:
+            ReplyReviewRejected: The first draft conflicts with new messages.
+            RuntimeError: Generation fails or exceeds the tool-turn limit.
+            ValueError: A required persona or reply provider is missing.
         """
         reply_messages = reply_messages or []
         is_first_turn = sent_messages is None
@@ -613,6 +648,94 @@ class ReplyPipeline:
         # Filter out messages that have already been sent in the current XML tool calling loop.
         if getattr(self.plugin, "enable_anti_drool", False):
             filter_duplicate_replies(llm_result, sent_messages)
+
+        # Only the first unsent tool turn is eligible. Regeneration explicitly
+        # omits the watermark, so arrivals cannot cause an unbounded review loop.
+        review_provider = llm_reply_conf.get("review_provider_id")
+        if (
+            review_provider
+            and review_after_id is not None
+            and is_first_turn
+            and times == 0
+            and not llm_result.native_tools_called
+            and llm_result.msg_chains
+        ):
+            passed = None
+            try:
+                parse_key = f"{bot_name}:{event.unified_msg_origin}"
+                async with self.plugin.parse_locks[parse_key]:
+                    latest_id = await self.plugin.db.get_max_message_id(
+                        bot_name, group_or_user_id
+                    )
+                    new_messages = await self.plugin.db.get_messages_by_id_range(
+                        bot_name, group_or_user_id, review_after_id + 1, latest_id
+                    )
+                    new_messages = deepcopy(
+                        [
+                            message
+                            for message in new_messages
+                            if message.role == "message"
+                            and not message.is_recalled
+                            and str(message.user_id) != str(event.get_self_id())
+                        ]
+                    )
+                if new_messages:
+                    review_user_profiles = list(user_profiles)
+                    review_user_ids = {
+                        str(profile["user_id"]) for profile in review_user_profiles
+                    }
+                    for message in new_messages:
+                        uid = str(message.user_id or "")
+                        if uid and uid not in review_user_ids:
+                            review_user_ids.add(uid)
+                            review_user_profiles.append(
+                                {
+                                    "user_id": uid,
+                                    "user_profile": await self.plugin.data_cache.get_user_profile_record(
+                                        bot_name=bot_name,
+                                        group_or_user_id=group_or_user_id,
+                                        user_id=uid,
+                                    ),
+                                }
+                            )
+                    review_captions = (
+                        await self.media_captioner.get_cached_media_captions(
+                            bot_name=bot_name,
+                            recent_messages=[*prompt_reply_messages, *new_messages],
+                        )
+                    )
+                    review_prompt = build_reply_review_prompt(
+                        reply_messages=prompt_reply_messages,
+                        new_messages=new_messages,
+                        llm_result=llm_result,
+                        media_captions=review_captions,
+                        nickname=nickname,
+                        self_id=str(event.get_self_id()),
+                        session_id=group_or_user_id,
+                        group_profile=group_profile,
+                        bot_status=bot_status,
+                        user_profiles=review_user_profiles,
+                        active_user_briefs=active_user_briefs,
+                        message_truncate_limit=getattr(
+                            self.plugin, "reply_message_truncate_limit", 1500
+                        ),
+                    )
+                    if review_prompt:
+                        passed = await self.plugin.call_llm.call_llm_reply_review(
+                            provider_id=review_provider,
+                            user_prompt=review_prompt,
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                        )
+            except Exception as error:
+                logger.warning(
+                    "[Giftia] Could not prepare reply review for %s:%s; sending draft: %s",
+                    bot_name,
+                    group_or_user_id,
+                    error,
+                )
+            if passed is False:
+                raise ReplyReviewRejected("New messages conflict with the unsent draft")
 
         # 5. 空回复拦截处理
         if (

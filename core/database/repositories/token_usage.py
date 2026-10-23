@@ -218,6 +218,9 @@ class TokenUsageRepository(BaseRepository):
                 "reply_tokens": 0,
                 "reply_prompt_tokens": 0,
                 "reply_completion_tokens": 0,
+                "reply_review_tokens": 0,
+                "reply_review_prompt_tokens": 0,
+                "reply_review_completion_tokens": 0,
                 "image_caption_tokens": 0,
                 "audio_caption_tokens": 0,
                 "tts_chars": 0,
@@ -269,6 +272,10 @@ class TokenUsageRepository(BaseRepository):
                     summary["reply_tokens"] += total
                     summary["reply_prompt_tokens"] += prompt
                     summary["reply_completion_tokens"] += completion
+                elif type_name == "reply_review":
+                    summary["reply_review_tokens"] += total
+                    summary["reply_review_prompt_tokens"] += prompt
+                    summary["reply_review_completion_tokens"] += completion
                 elif type_name == "image_caption":
                     summary["image_caption_tokens"] += total
                 elif type_name == "audio_caption":

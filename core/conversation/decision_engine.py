@@ -265,6 +265,7 @@ class DecisionEngine:
         recent_messages: list[MessageData],
         *,
         force_reply: bool = False,
+        review_context: str = "",
     ) -> tuple[bool, list[dict] | None, list[dict] | None, str | None]:
         """Evaluate a frozen batch; admission and scheduling belong to the caller.
 
@@ -276,6 +277,7 @@ class DecisionEngine:
             pending_messages: Every message being decided in this round.
             recent_messages: Frozen history, excluding messages queued for later.
             force_reply: Whether a batch member requests a direct reply.
+            review_context: Deferred new messages relevant to a rejected draft.
 
         Returns:
             Reply choice, prompt records, pending cache records, and optional meme tags.
@@ -369,6 +371,8 @@ class DecisionEngine:
                 bot_name, group_or_user_id
             ),
         )
+        if review_context:
+            user_prompt += "\n\n" + review_context
 
         provider_ids = decision_conf.get("provider_ids")
         if not provider_ids:
