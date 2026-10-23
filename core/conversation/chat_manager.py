@@ -580,7 +580,9 @@ class ChatManager:
         now = time.monotonic()
         text_length = sum(
             len("".join(component.text.split()))
-            for component in normalize_qq_markdown_chain(event.get_messages() or [])
+            for component in normalize_qq_markdown_chain(
+                event.get_messages() or [], event=event
+            )
             if isinstance(component, Plain)
         )
         state.pending.append(QueuedMessage(event, message, trigger, now, text_length))
