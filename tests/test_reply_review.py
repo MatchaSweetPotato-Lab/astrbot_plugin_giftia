@@ -17,7 +17,7 @@ from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.call_llm import CallLLM
-from core.llm.prompt import build_reply_review_prompt
+from core.llm.prompt import build_decision_prompt, build_reply_review_prompt
 from core.utils.schemas import (
     MediaCaption,
     MessageData,
@@ -249,6 +249,118 @@ def test_review_prompt_preserves_routing_and_excludes_other_outputs():
     )
     assert original.content == "old <instruction>"
     assert new.content == "new [图片:photo]"
+
+
+def test_review_message_names_match_decision_and_preserve_nickname_fallback():
+    original = MessageData(
+        message_id="A",
+        user_id="alice",
+        nickname="Alice on platform",
+        content="question",
+    )
+    new_messages = [
+        MessageData(
+            message_id="B", user_id="bob", nickname="Bob on platform", content="update"
+        ),
+        MessageData(
+            message_id="C",
+            user_id="carol",
+            nickname="Carol on platform",
+            content="followup",
+        ),
+        MessageData(
+            message_id="D",
+            user_id="alice",
+            nickname="Alice renamed",
+            content="correction",
+        ),
+    ]
+    briefs = [
+        {"user_id": "bob", "call_name": "小波"},
+        {"user_id": "carol", "call_name": ""},
+    ]
+    decision = build_decision_prompt(
+        user_id="alice",
+        group_data="",
+        recent_messages=[],
+        pending_messages=[original, *new_messages],
+        bot_status=None,
+        user_profile={"call_name": "小爱"},
+        active_user_briefs=briefs,
+    )
+    review = build_reply_review_prompt(
+        [original],
+        new_messages,
+        XmlLlmResult(msg_chains=[[Plain("小爱和小波，收到。")]]),
+        [],
+        nickname="Bot",
+        self_id="self",
+        session_id="group",
+        user_profiles=[{"user_id": "alice", "user_profile": {"call_name": "小爱"}}],
+        active_user_briefs=briefs,
+    )
+    decision_root = fromstring(f"<root>{decision}</root>")
+    review_root = fromstring(f"<root>{review}</root>")
+    expected = {"A": "小爱", "B": "小波", "C": "Carol on platform", "D": "小爱"}
+    assert {
+        msg.get("message_id"): msg.get("nickname")
+        for msg in decision_root.findall("pending_messages/message")
+    } == expected
+    assert {
+        msg.get("message_id"): msg.get("nickname")
+        for tag in ("reply_messages", "new_messages")
+        for msg in review_root.findall(f"{tag}/message")
+    } == expected
+    assert [msg.nickname for msg in [original, *new_messages]] == [
+        "Alice on platform",
+        "Bob on platform",
+        "Carol on platform",
+        "Alice renamed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_loads_call_names_for_new_participants_once(runtime):
+    plugin = runtime.plugin
+    names = {"alice": "小爱", "bob": "小波"}
+    plugin.data_cache.get_user_profile_record.side_effect = lambda **kwargs: {
+        "call_name": names.get(kwargs["user_id"], "")
+    }
+
+    async def decide(**kwargs):
+        await runtime.decide(**kwargs)
+        return (
+            runtime.manager.decision_engine.evaluate_decision.await_count == 1,
+            None,
+            None,
+            None,
+        )
+
+    async def generate(**kwargs):
+        await runtime.send("B", user="bob")
+        await runtime.send("C", user="bob")
+        await runtime.send("D", user="carol")
+        return XmlLlmResult(msg_chains=[[Plain("小爱，收到小波的补充了。")]])
+
+    runtime.manager.decision_engine.evaluate_decision.side_effect = decide
+    plugin.call_llm.call_llm_reply.side_effect = generate
+    await runtime.send("A", user="alice")
+    await runtime.drain()
+    plugin.call_llm.call_llm_reply_review.assert_awaited_once()
+    prompt = plugin.call_llm.call_llm_reply_review.await_args.kwargs["user_prompt"]
+    root = fromstring(f"<root>{prompt}</root>")
+    assert root.find("reply_messages/message").get("nickname") == "小爱"
+    assert [msg.get("nickname") for msg in root.findall("new_messages/message")] == [
+        "小波",
+        "小波",
+        "carol",
+    ]
+    assert [
+        call.kwargs["user_id"]
+        for call in plugin.data_cache.get_user_profile_record.await_args_list
+    ] == ["alice", "bob", "carol"]
+    stored = await plugin.db.get_messages("group", "bot")
+    assert [message.nickname for message in stored] == ["alice", "bob", "bob", "carol"]
 
 
 @pytest.mark.asyncio

@@ -553,6 +553,8 @@ def build_reply_review_prompt(
     group_profile: str = "",
     bot_status: Status | None = None,
     message_truncate_limit: int = 1500,
+    user_profiles: list[dict] | None = None,
+    active_user_briefs: list[dict] | None = None,
 ) -> str:
     """Build a compact review input without speech, stickers or tool instructions.
 
@@ -567,6 +569,8 @@ def build_reply_review_prompt(
         group_profile: Manually maintained conversation rules.
         bot_status: Bot state before this draft is accepted.
         message_truncate_limit: Per-input-message content limit.
+        user_profiles: Participant profiles containing preferred call names.
+        active_user_briefs: Existing member summaries with fallback call names.
 
     Returns:
         Review prompt, or an empty string when the draft has no message content.
@@ -599,6 +603,17 @@ def build_reply_review_prompt(
 
     processed, _ = process_media_captions_for_prompt(
         [*reply_messages, *new_messages], media_captions, force_inline_all=True
+    )
+    profile_call_names = [
+        {"user_id": profile["user_id"], "call_name": record.get("call_name")}
+        for profile in user_profiles or []
+        if isinstance(record := profile.get("user_profile"), dict)
+    ]
+    processed = _apply_call_names_to_messages(
+        messages=processed,
+        user_id="",
+        user_profile=None,
+        active_user_briefs=[*(active_user_briefs or []), *profile_call_names],
     )
     for tag, messages in (
         ("reply_messages", processed[: len(reply_messages)]),

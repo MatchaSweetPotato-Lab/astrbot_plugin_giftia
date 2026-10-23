@@ -680,6 +680,24 @@ class ReplyPipeline:
                         ]
                     )
                 if new_messages:
+                    review_user_profiles = list(user_profiles)
+                    review_user_ids = {
+                        str(profile["user_id"]) for profile in review_user_profiles
+                    }
+                    for message in new_messages:
+                        uid = str(message.user_id or "")
+                        if uid and uid not in review_user_ids:
+                            review_user_ids.add(uid)
+                            review_user_profiles.append(
+                                {
+                                    "user_id": uid,
+                                    "user_profile": await self.plugin.data_cache.get_user_profile_record(
+                                        bot_name=bot_name,
+                                        group_or_user_id=group_or_user_id,
+                                        user_id=uid,
+                                    ),
+                                }
+                            )
                     review_captions = (
                         await self.media_captioner.get_cached_media_captions(
                             bot_name=bot_name,
@@ -696,6 +714,8 @@ class ReplyPipeline:
                         session_id=group_or_user_id,
                         group_profile=group_profile,
                         bot_status=bot_status,
+                        user_profiles=review_user_profiles,
+                        active_user_briefs=active_user_briefs,
                         message_truncate_limit=getattr(
                             self.plugin, "reply_message_truncate_limit", 1500
                         ),
