@@ -13,6 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import (
 )
 
 MENTION = r"[@e\.e\.](mqqapi://markdown/mention?at_type=1&at_tinyid=1017789696)"
+ESCAPED_MENTION = MENTION.replace("](", r"]\(").replace(")", r"\)")
 BODY = "这次看到了嘛"
 READABLE = f"@e.e.(1017789696) {BODY}"
 
@@ -28,17 +29,209 @@ def parser():
     )
 
 
+@pytest.fixture
+def event_from_segments():
+    async def create(segments):
+        raw = Event.from_payload(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "self_id": 3970706156,
+                "group_id": 1102207288,
+                "user_id": 4018683728,
+                "sender": {"user_id": 4018683728, "nickname": "王小桃"},
+                "message_id": -1958290251,
+                "message": segments,
+            }
+        )
+        adapter = SimpleNamespace(
+            bot=SimpleNamespace(call_action=AsyncMock(return_value={"card": "e.e."}))
+        )
+        message_obj = await AiocqhttpAdapter._convert_handle_message_event(
+            adapter, raw, get_reply=False
+        )
+        return SimpleNamespace(
+            message_obj=message_obj,
+            get_self_id=lambda: "3970706156",
+            get_messages=lambda: message_obj.message,
+            get_group_id=lambda: "1102207288",
+            get_sender_id=lambda: "4018683728",
+            get_sender_name=lambda: "王小桃",
+        )
+
+    return create
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("markdown_first", [True, False])
 @pytest.mark.parametrize("markdown_key", ["content", "markdown"])
-async def test_official_bot_markdown_and_fallback_are_stored_once(
-    parser, markdown_first, markdown_key
+@pytest.mark.parametrize("body", ["sensei 在这里哦", "**收到**\n\n指令已执行"])
+async def test_markdown_without_mentions_drops_only_its_text_fallback(
+    parser, event_from_segments, markdown_first, markdown_key, body
 ):
-    markdown = {"type": "markdown", "data": {markdown_key: MENTION + BODY}}
+    markdown = {"type": "markdown", "data": {markdown_key: body}}
+    fallback = {"type": "text", "data": {"text": body}}
+    segments = [markdown, fallback] if markdown_first else [fallback, markdown]
+    event = await event_from_segments(segments)
+    original = [component.toDict() for component in event.get_messages()]
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content == body
+    parser.data_cache.add_message.assert_awaited_once_with("bot", "1102207288", message)
+    assert [component.toDict() for component in event.get_messages()] == original
+    assert event.message_obj.raw_message["message"] == segments
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("segment_type", ["markdown", "text"])
+async def test_identical_segments_of_the_same_type_are_preserved(
+    parser, event_from_segments, segment_type
+):
+    text = MENTION + BODY
+    key = "content" if segment_type == "markdown" else "text"
+    segment = {"type": segment_type, "data": {key: text}}
+    event = await event_from_segments([segment, segment])
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content.count(BODY) == 2
+    assert message.content.count("@e.e.(1017789696)") == 2
+
+
+@pytest.mark.asyncio
+async def test_reported_raw_markdown_with_trailing_mention_is_stored_once(
+    parser, event_from_segments
+):
+    text = "sensei 在这里哦" + MENTION
+    event = await event_from_segments(
+        [
+            {"type": "reply", "data": {"id": "1367513543"}},
+            {"type": "markdown", "data": {"content": text}},
+            {"type": "text", "data": {"text": text}},
+        ]
+    )
+    quote = event.get_messages()[0]
+    quote.chain = [At(qq="4018683728", name="王小桃"), Plain("艾特我并引用这条消息")]
+    quote.sender_id = "1017789696"
+    quote.sender_nickname = "e.e."
+    original = [component.toDict() for component in event.get_messages()]
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content == (
+        '<quote message_id="1367513543" sender_id="1017789696" sender_name="e.e.">'
+        "@王小桃(4018683728) 艾特我并引用这条消息</quote> "
+        "sensei 在这里哦 @e.e.(1017789696)"
+    )
+    assert message.message_id == "-1958290251"
+    parser.data_cache.add_message.assert_awaited_once_with("bot", "1102207288", message)
+    assert [component.toDict() for component in event.get_messages()] == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fallback", [MENTION + BODY + "。", MENTION.replace("1017789696", "10002") + BODY]
+)
+async def test_different_raw_markdown_and_text_are_preserved(
+    parser, event_from_segments, fallback
+):
+    event = await event_from_segments(
+        [
+            {"type": "markdown", "data": {"content": MENTION + BODY}},
+            {"type": "text", "data": {"text": fallback}},
+        ]
+    )
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content.count(BODY) == 2
+
+
+@pytest.mark.asyncio
+async def test_grouped_text_fallback_matches_adapter_grouping(
+    parser, event_from_segments
+):
+    event = await event_from_segments(
+        [
+            {"type": "markdown", "data": {"content": BODY}},
+            {"type": "text", "data": {"text": BODY[:3]}},
+            {"type": "text", "data": {"text": BODY[3:]}},
+        ]
+    )
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content == BODY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context", ["outgoing", "quote", "modified"])
+async def test_raw_source_does_not_apply_to_other_or_modified_chains(
+    parser, event_from_segments, context
+):
+    event = await event_from_segments(
+        [
+            {"type": "markdown", "data": {"content": BODY}},
+            {"type": "text", "data": {"text": BODY}},
+        ]
+    )
+    body = BODY
+    chain = [Plain(body), Plain(body)]
+    if context == "quote":
+        chain = [Reply(id="other", chain=chain)]
+    elif context == "modified":
+        body = "其他插件改写的正文"
+        chain = event.get_messages()
+        for comp in chain:
+            comp.text = body
+
+    result = await parser.chain_to_result(chain, event=event)
+
+    assert result.content.count(body) == 2
+
+
+@pytest.mark.asyncio
+async def test_raw_fallback_separated_by_quote_is_preserved(
+    parser, event_from_segments
+):
+    event = await event_from_segments(
+        [
+            {"type": "markdown", "data": {"content": BODY}},
+            {"type": "reply", "data": {"id": "original"}},
+            {"type": "text", "data": {"text": BODY}},
+        ]
+    )
+
+    message, _, _ = await parser.parse_user_message(event, "bot")
+
+    assert message.content.count(BODY) == 2
+
+
+@pytest.mark.asyncio
+async def test_adjacent_markdown_without_source_types_is_preserved(parser):
+    result = await parser.chain_to_result(
+        [Plain(MENTION + BODY), Plain(MENTION + BODY)]
+    )
+
+    assert result.content == f"{READABLE} {READABLE}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("markdown_first", [True, False])
+@pytest.mark.parametrize("markdown_key", ["content", "markdown"])
+@pytest.mark.parametrize("mention", [MENTION, ESCAPED_MENTION])
+@pytest.mark.parametrize("fallback_kind", ["native", "markdown_text"])
+async def test_official_bot_markdown_and_fallback_are_stored_once(
+    parser, markdown_first, markdown_key, mention, fallback_kind
+):
+    markdown = {"type": "markdown", "data": {markdown_key: mention + BODY}}
     fallback = [
         {"type": "at", "data": {"qq": "1017789696"}},
         {"type": "text", "data": {"text": BODY}},
     ]
+    if fallback_kind == "markdown_text":
+        fallback = [{"type": "text", "data": {"text": mention + BODY}}]
     segments = [markdown, *fallback] if markdown_first else [*fallback, markdown]
     raw = Event.from_payload(
         {
@@ -76,9 +269,105 @@ async def test_official_bot_markdown_and_fallback_are_stored_once(
 
 
 @pytest.mark.asyncio
-async def test_markdown_only_keeps_a_readable_mention(parser):
-    result = await parser.chain_to_result([Plain(MENTION + BODY)])
+@pytest.mark.parametrize("mention", [MENTION, ESCAPED_MENTION])
+async def test_markdown_only_keeps_a_readable_mention(parser, mention):
+    result = await parser.chain_to_result([Plain(mention + BODY)])
     assert result.content == READABLE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("markdown_first", [True, False])
+@pytest.mark.parametrize("mention", [MENTION, ESCAPED_MENTION])
+async def test_duplicate_markdown_with_quote_matches_reported_outline(
+    parser, event_from_segments, markdown_first, mention
+):
+    body = "收到，sensei 的指令已执行"
+    quote = Reply(
+        id="-419929186",
+        sender_id="1017789696",
+        sender_nickname="e.e.",
+        message_str=" @王小桃(4018683728) 艾特我并引用这条消息",
+        chain=[At(qq="4018683728", name="王小桃"), Plain("艾特我并引用这条消息")],
+    )
+    markdown = {"type": "markdown", "data": {"content": mention + body}}
+    fallback = {"type": "text", "data": {"text": mention + body}}
+    segments = [markdown, fallback] if markdown_first else [fallback, markdown]
+    event = await event_from_segments(
+        [{"type": "reply", "data": {"id": "-419929186"}}, *segments]
+    )
+    chain = event.get_messages()
+    chain[0] = quote
+    original = [component.toDict() for component in chain]
+    assert AstrMessageEvent._outline_chain(None, chain) == (
+        "[引用消息(e.e.:  @王小桃(4018683728) 艾特我并引用这条消息)] "
+        + " ".join([mention + body] * 2)
+    )
+
+    result = await parser.chain_to_result(chain, event=event)
+
+    assert result.content == (
+        '<quote message_id="-419929186" sender_id="1017789696" sender_name="e.e.">'
+        "@王小桃(4018683728) 艾特我并引用这条消息</quote> "
+        f"@e.e.(1017789696) {body}"
+    )
+    assert [component.toDict() for component in chain] == original
+
+
+@pytest.mark.asyncio
+async def test_duplicate_markdown_and_native_fallback_are_stored_once(
+    parser, event_from_segments
+):
+    event = await event_from_segments(
+        [
+            {"type": "markdown", "data": {"content": ESCAPED_MENTION + BODY}},
+            {"type": "text", "data": {"text": ESCAPED_MENTION + BODY}},
+            {"type": "at", "data": {"qq": "1017789696"}},
+            {"type": "text", "data": {"text": BODY}},
+        ]
+    )
+    event.get_messages()[2].name = "群名片"
+    result = await parser.chain_to_result(event.get_messages(), event=event)
+    assert result.content == f"@群名片(1017789696) {BODY}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "other",
+    [
+        MENTION.replace("1017789696", "10002") + BODY,
+        MENTION + BODY + "。",
+        MENTION + "另一句话",
+    ],
+)
+async def test_distinct_markdown_components_are_preserved(parser, other):
+    separate = await parser.chain_to_result([Plain(other)])
+    result = await parser.chain_to_result([Plain(ESCAPED_MENTION + BODY), Plain(other)])
+    assert result.content == f"{READABLE} {separate.content}"
+
+
+@pytest.mark.asyncio
+async def test_full_markdown_repetition_inside_one_component_is_preserved(parser):
+    result = await parser.chain_to_result([Plain(f"{MENTION}{BODY} {MENTION}{BODY}")])
+    assert result.content == f"{READABLE}  {READABLE}"
+
+
+@pytest.mark.asyncio
+async def test_markdown_copies_separated_by_quote_are_preserved(parser):
+    result = await parser.chain_to_result(
+        [
+            Plain(MENTION + BODY),
+            Reply(
+                id="original",
+                sender_id=None,
+                sender_nickname=None,
+                chain=[Plain("引用内容")],
+            ),
+            Plain(MENTION + BODY),
+        ]
+    )
+    assert result.content == (
+        f'{READABLE} <quote message_id="original">引用内容</quote> {READABLE}'
+    )
 
 
 @pytest.mark.asyncio
@@ -226,8 +515,15 @@ async def test_unrelated_and_unknown_links_are_preserved(parser, text):
 
 
 @pytest.mark.asyncio
-async def test_reply_and_forwarded_component_chains_use_the_same_normalization(parser):
-    chain = [Plain(MENTION + BODY), At(qq="1017789696", name="e.e."), Plain(BODY)]
+@pytest.mark.parametrize("mention", [MENTION, ESCAPED_MENTION])
+async def test_reply_and_forwarded_component_chains_use_the_same_normalization(
+    parser, mention
+):
+    chain = [
+        Plain(mention + BODY),
+        At(qq="1017789696", name="e.e."),
+        Plain(BODY),
+    ]
     reply = await parser.chain_to_result([Reply(id="original", chain=chain)])
     assert reply.content.startswith('<quote message_id="original"')
     assert reply.content.endswith(f">{READABLE}</quote>")

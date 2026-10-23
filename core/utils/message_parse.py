@@ -295,7 +295,7 @@ class MessageParser:
 
         # Expand cards in a local queue to share normal image caching and the
         # per-message caption budget without changing the caller's chain.
-        chain = normalize_qq_markdown_chain(chain)
+        chain = normalize_qq_markdown_chain(chain, event=event)
         msg_parts = []
         result = ChainParseResult()
         index = 0
