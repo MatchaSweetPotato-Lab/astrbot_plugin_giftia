@@ -4,6 +4,7 @@ import re
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..database.profile_store import PROFILE_NAMES_CTE
 from ..database.relation_history_store import RelationHistoryConflictError
 from .web_helpers import USER_PROFILE_FIELD_KEYS
 
@@ -46,7 +47,10 @@ class ProfileApi:
                 conditions.append("up.user_id = ?")
                 params.append(user_id)
             if search:
-                like_fields = [f"up.{field}" for field in USER_PROFILE_FIELD_KEYS]
+                like_fields = [
+                    "up.resolved_call_name" if field == "call_name" else f"up.{field}"
+                    for field in USER_PROFILE_FIELD_KEYS
+                ]
                 alias_exists = """
                     EXISTS (
                         SELECT 1
@@ -74,30 +78,35 @@ class ProfileApi:
                 where_clause = "WHERE " + " AND ".join(conditions)
 
             # Query count
-            count_sql = f"SELECT COUNT(*) as total FROM user_profiles up {where_clause}"
-            async with self.giftia.db.query(count_sql, params) as cursor:
+            name_params = [group_or_user_id or "", group_or_user_id or ""]
+            count_sql = (
+                PROFILE_NAMES_CTE
+                + f"SELECT COUNT(*) as total FROM profiles up {where_clause}"
+            )
+            async with self.giftia.db.query(
+                count_sql, [*name_params, *params]
+            ) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
             # Query data
-            data_sql = f"""
+            data_sql = (
+                PROFILE_NAMES_CTE
+                + f"""
                 SELECT up.id, up.bot_name, up.user_id,
-                       COALESCE(NULLIF(?, ''), (
-                           SELECT ups.group_or_user_id FROM user_profile_sessions ups
-                           WHERE ups.bot_name=up.bot_name AND ups.user_id=up.user_id
-                           ORDER BY ups.group_or_user_id LIMIT 1
-                       ), '') AS group_or_user_id,
-                       up.call_name, up.personality,
+                       ? AS group_or_user_id,
+                       up.resolved_call_name AS call_name, up.local_call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
                        up.avatar_description,
                        up.created_at, up.updated_at,
                        up.title
-                FROM user_profiles up
+                FROM profiles up
                 {where_clause}
                 ORDER BY up.updated_at DESC
                 LIMIT ? OFFSET ?
             """
-            data_params = [group_or_user_id or "", *params, limit, offset]
+            )
+            data_params = [*name_params, group_or_user_id or "", *params, limit, offset]
             items = []
             async with self.giftia.db.query(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
@@ -109,6 +118,7 @@ class ProfileApi:
                             "group_or_user_id": r["group_or_user_id"],
                             "user_id": r["user_id"],
                             "call_name": r["call_name"] or "",
+                            "local_call_name": r["local_call_name"] or "",
                             "aliases": await self.giftia.db.get_user_aliases_text(
                                 bot_name=r["bot_name"],
                                 group_or_user_id=r["group_or_user_id"],
@@ -300,7 +310,19 @@ class ProfileApi:
                     conditions.append("up.user_id = ?")
                     params.append(user_id)
                 if search:
-                    like_fields = [f"up.{field}" for field in USER_PROFILE_FIELD_KEYS]
+                    like_fields = [
+                        """COALESCE(
+                            (SELECT cn.call_name FROM user_call_names cn
+                             WHERE cn.bot_name=up.bot_name AND cn.user_id=up.user_id
+                               AND cn.group_or_user_id=ups.group_or_user_id),
+                            (SELECT cn.call_name FROM user_call_names cn
+                             WHERE cn.bot_name=up.bot_name AND cn.user_id=up.user_id
+                             ORDER BY cn.updated_at DESC, cn.id DESC LIMIT 1)
+                        )"""
+                        if field == "call_name"
+                        else f"up.{field}"
+                        for field in USER_PROFILE_FIELD_KEYS
+                    ]
                     alias_exists = """
                         EXISTS (
                             SELECT 1

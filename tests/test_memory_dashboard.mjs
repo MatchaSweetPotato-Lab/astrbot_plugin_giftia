@@ -174,7 +174,7 @@ test('manual creation saves all participants and selects the saved conversation'
 test('profile rendering and saves exclude retired fields without clearing stored history', async () => {
     const profile = {
         bot_name: 'bot', group_or_user_id: 'group', user_id: 'A', relation: 5,
-        call_name: 'local name', attitude: 'friendly', avatar_description: 'cat',
+        call_name: 'local name', local_call_name: 'local name', attitude: 'friendly', avatar_description: 'cat',
         personality: 'retired personality', interests: 'retired interests',
         agreements: 'retired agreement', extra: 'retired extra', title: 'retired title'
     };
@@ -192,6 +192,24 @@ test('profile rendering and saves exclude retired fields without clearing stored
     assert.equal(Object.hasOwn(body, 'relation'), false);
     for (const retired of ['personality', 'interests', 'agreements', 'extra', 'title']) assert.equal(Object.hasOwn(body, retired), false);
     assert.equal(profile.agreements, 'retired agreement');
+});
+
+test('fallback names are placeholders and are not copied into a local profile on save', async () => {
+    window.openEditUserProfileModal({
+        bot_name: 'bot', group_or_user_id: 'group-c', user_id: 'A',
+        call_name: 'name from another group', local_call_name: '',
+    });
+    const field = get('edit-user-prof-call-name');
+    assert.equal(field.value, '');
+    assert.match(field.placeholder, /name from another group/);
+    get('edit-user-prof-avatar').value = 'updated avatar';
+    let body;
+    window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
+    await window.submitEditUserProfile();
+    assert.equal(body.call_name, '');
+    assert.equal(body.group_or_user_id, 'group-c');
+    window.openEditUserProfileModal({ call_name: 'local name', local_call_name: 'local name' });
+    assert.doesNotMatch(field.placeholder, /local name/);
 });
 
 test('profile cards show three newest changes and open history with the exact scoped object', () => {

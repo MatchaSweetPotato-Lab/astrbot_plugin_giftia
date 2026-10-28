@@ -590,6 +590,84 @@ async def test_profile_filters_keep_session_membership_and_shared_fields(profile
 
 
 @pytest.mark.asyncio
+async def test_profile_names_and_search_follow_the_selected_session(profile_api):
+    client, plugin = profile_api
+    for group, fields in (
+        ("group-a", {"call_name": "骑士"}),
+        ("group-b", {"call_name": "学者"}),
+        ("group-c", {"avatar_description": "头像"}),
+    ):
+        await plugin.data_cache.set_user_profile(
+            "bot", group, "user", profile_fields=fields
+        )
+    for group, name, local in (
+        ("group-a", "骑士", "骑士"),
+        ("group-b", "学者", "学者"),
+        ("group-c", "学者", ""),
+    ):
+        data = (
+            await client.get(
+                "/profiles/user", params={"bot_name": "bot", "group_or_user_id": group}
+            )
+        ).json()["data"]["items"][0]
+        assert data["call_name"] == name
+        assert data["local_call_name"] == local
+    filters = (
+        await client.get(
+            "/profiles/user/filter_options",
+            params={"bot_name": "bot", "search": "骑士"},
+        )
+    ).json()["data"]
+    assert [item["group_or_user_id"] for item in filters["sessions"]] == ["group-a"]
+    data = (
+        await client.get(
+            "/profiles/user",
+            params={"bot_name": "bot", "group_or_user_id": "group-b", "search": "骑士"},
+        )
+    ).json()["data"]
+    assert data["total"] == 0
+    await client.post(
+        "/profiles/user/update",
+        json={
+            "bot_name": "bot",
+            "group_or_user_id": "group-a",
+            "user_id": "user",
+            "call_name": "骑士",
+            "avatar_description": "修改头像",
+        },
+    )
+    assert (await plugin.db.get_user_call_names("bot", "group-c", "user"))[
+        "call_name"
+    ] == "学者"
+    # Saving an empty local field must not pin the displayed fallback to this group.
+    await client.post(
+        "/profiles/user/update",
+        json={
+            "bot_name": "bot",
+            "group_or_user_id": "group-c",
+            "user_id": "user",
+            "call_name": "",
+            "attitude": "友好",
+        },
+    )
+    await client.post(
+        "/profiles/user/update",
+        json={
+            "bot_name": "bot",
+            "group_or_user_id": "group-b",
+            "user_id": "user",
+            "call_name": "新学者",
+        },
+    )
+    assert (await plugin.db.get_user_call_names("bot", "group-c", "user"))[
+        "call_name"
+    ] == "新学者"
+    assert (await plugin.db.get_user_call_names("bot", "group-a", "user"))[
+        "call_name"
+    ] == "骑士"
+
+
+@pytest.mark.asyncio
 async def test_history_edits_from_another_group_keep_source_and_share_revision(
     profile_api,
 ):

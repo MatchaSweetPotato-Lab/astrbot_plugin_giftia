@@ -444,9 +444,42 @@ async def _migrate_legacy_to_v1(conn: aiosqlite.Connection) -> None:
         await conn.execute(statement)
 
 
-# Schema versions are independent of plugin releases. Append (2, migrate_to_v2),
-# then (3, migrate_to_v3), etc.; never renumber or remove an applied migration.
-MIGRATIONS = ((1, _migrate_legacy_to_v1),)
+async def _migrate_to_v2(conn: aiosqlite.Connection) -> None:
+    """Keep legacy names as a fallback and store future names per conversation.
+
+    Args:
+        conn: Database connection being initialized.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_call_names (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_name TEXT NOT NULL,
+            group_or_user_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            call_name TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(bot_name, group_or_user_id, user_id)
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_user_call_names_recent
+        ON user_call_names (bot_name, user_id, updated_at DESC, id DESC)
+    """)
+    # Shared names have no recoverable source conversation; do not invent one.
+    await conn.execute("""
+        INSERT OR IGNORE INTO user_call_names
+            (bot_name, group_or_user_id, user_id, call_name, updated_at)
+        SELECT bot_name, '', user_id, TRIM(call_name),
+               COALESCE(strftime('%Y-%m-%d %H:%M:%f', updated_at),
+                        strftime('%Y-%m-%d %H:%M:%f', created_at),
+                        '1970-01-01 00:00:00.000')
+        FROM user_profiles WHERE NULLIF(TRIM(call_name), '') IS NOT NULL
+    """)
+    await conn.execute("UPDATE user_profiles SET call_name=NULL")
+
+
+# Schema versions are independent of plugin releases; released steps stay frozen.
+MIGRATIONS = ((1, _migrate_legacy_to_v1), (2, _migrate_to_v2))
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 
