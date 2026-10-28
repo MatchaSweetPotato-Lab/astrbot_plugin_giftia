@@ -193,14 +193,14 @@ class GetMessageContextTool(FunctionTool):
 class SearchUserProfileTool(FunctionTool):
     plugin: Any = None
     name: str = "search_user_profile"
-    description: str = "按用户ID、共享称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；分页查看跨群共享的互动评价历史，非本群记录标注来源。"
+    description: str = "按用户ID、任一会话称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；展示各会话全部称呼并标注非本会话来源，分页查看跨群共享的互动评价历史，非本群记录标注来源。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词，仅匹配用户ID、昵称、你的称呼、其他外号或头像描述。",
+                    "description": "搜索关键词，仅匹配用户ID、当前会话昵称、任一会话的称呼、当前会话其他外号或头像描述。",
                 },
                 "limit": {
                     "type": "integer",
@@ -230,6 +230,15 @@ class SearchUserProfileTool(FunctionTool):
                 f"基础分：{item['base_relation']}；互动分：{item['interaction_score']:.1f}"
             )
         for profile_field, label in USER_PROFILE_FIELDS:
+            if profile_field == "call_name" and item.get("call_names"):
+                for name in item["call_names"]:
+                    value = normalize_profile_value(name.get("call_name"))
+                    if value:
+                        source = name.get("source_label")
+                        lines.append(
+                            f"- {label}：{value}" + (f" [{source}]" if source else "")
+                        )
+                continue
             value = normalize_profile_value(item.get(profile_field))
             if value:
                 lines.append(f"- {label}：{value}")

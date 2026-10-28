@@ -347,7 +347,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             limit: Maximum number of matching members, capped at twenty.
 
         Returns:
-            Matching profiles with current scores and aliases.
+            Matching profiles with current scores, local aliases and all scoped names.
         """
         query = (query or "").strip()
         if not query:
@@ -381,7 +381,12 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             WHERE up.bot_name = ?
               AND (
                 up.user_id LIKE ?
-                OR up.resolved_call_name LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM user_call_names cn
+                    WHERE cn.bot_name = up.bot_name
+                      AND cn.user_id = up.user_id
+                      AND cn.call_name LIKE ?
+                )
                 OR EXISTS (
                     SELECT 1
                     FROM user_aliases ua
@@ -424,7 +429,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 group_or_user_id,
                 bot_name,
                 like,  # up.user_id
-                like,  # up.call_name
+                like,  # cn.call_name
                 group_or_user_id,
                 like,  # ua.alias
                 like,  # up.avatar_description
@@ -441,6 +446,24 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
         results = [dict(row) for row in rows]
         for item in results:
+            async with self.conn.execute(
+                "SELECT group_or_user_id, call_name FROM user_call_names "
+                "WHERE bot_name=? AND user_id=? "
+                "ORDER BY (group_or_user_id=? AND group_or_user_id!='') DESC, "
+                "updated_at DESC, id DESC",
+                (bot_name, item["user_id"], group_or_user_id),
+            ) as cursor:
+                item["call_names"] = [dict(row) for row in await cursor.fetchall()]
+            for name in item["call_names"]:
+                source = name["group_or_user_id"]
+                if not source:
+                    name["source_label"] = "来源未知（旧共享称呼）"
+                elif source == group_or_user_id:
+                    name["source_label"] = ""
+                elif source == item["user_id"]:
+                    name["source_label"] = "来源私聊"
+                else:
+                    name["source_label"] = f"来源群聊：{source}"
             item.update(
                 await self.get_relation_score(
                     bot_name, group_or_user_id, item["user_id"]

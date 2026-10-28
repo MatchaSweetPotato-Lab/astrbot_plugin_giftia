@@ -198,6 +198,69 @@ async def test_tool_history_shared_across_groups_and_isolated_by_bot_and_member(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("session", ["group", "other-group", "missing-group", "123"])
+async def test_tool_lists_all_scoped_names_and_labels_external_sources(
+    runtime, session
+):
+    runtime.event.get_group_id.return_value = "" if session == "123" else session
+    runtime.event.get_sender_id.return_value = "123"
+    names = {"group": "骑士", "other-group": "学者", "123": "朋友"}
+    for source, name in names.items():
+        await runtime.db.upsert_user_profile(
+            "bot", source, "123", profile_fields={"call_name": name}
+        )
+    for bot, user, name in (
+        ("other-bot", "123", "其他机器人称呼"),
+        ("bot", "456", "其他成员称呼"),
+    ):
+        await runtime.db.upsert_user_profile(
+            bot, "group", user, profile_fields={"call_name": name}
+        )
+    await runtime.db.conn.execute(
+        "INSERT INTO user_call_names "
+        "(bot_name, group_or_user_id, user_id, call_name, updated_at) "
+        "VALUES ('bot', '', '123', '旧称呼', '2020-01-01 00:00:00')"
+    )
+    await runtime.db.conn.commit()
+    writes = runtime.db.conn.total_changes
+
+    # The lookup matches a foreign name even when a local name takes precedence.
+    result = await runtime.tool.call(runtime.context, "学者")
+    lines = [line for line in result.splitlines() if line.startswith("- 你的称呼：")]
+    assert len(lines) == 4
+    for source, name in names.items():
+        label = (
+            ""
+            if source == session
+            else " [来源私聊]"
+            if source == "123"
+            else f" [来源群聊：{source}]"
+        )
+        assert f"- 你的称呼：{name}{label}" in lines
+    assert "- 你的称呼：旧称呼 [来源未知（旧共享称呼）]" in lines
+    assert lines[0] == (
+        f"- 你的称呼：{names[session]}"
+        if session in names
+        else "- 你的称呼：朋友 [来源私聊]"
+    )
+    assert "其他机器人称呼" not in result
+    assert "其他成员称呼" not in result
+    assert runtime.db.conn.total_changes == writes
+
+
+@pytest.mark.asyncio
+async def test_tool_keeps_identical_names_from_different_groups(runtime):
+    for session in ("group", "other-group", "third-group"):
+        await runtime.db.upsert_user_profile(
+            "bot", session, "123", profile_fields={"call_name": "同一个称呼"}
+        )
+    result = await runtime.tool.call(runtime.context, "123")
+    assert result.count("你的称呼：同一个称呼") == 3
+    assert "你的称呼：同一个称呼 [来源群聊：other-group]" in result
+    assert "你的称呼：同一个称呼 [来源群聊：third-group]" in result
+
+
+@pytest.mark.asyncio
 async def test_tool_without_history_keeps_profile_and_shows_empty_state(runtime):
     await seed_history(runtime, 0)
     result = await runtime.tool.call(runtime.context, "123", page=3)

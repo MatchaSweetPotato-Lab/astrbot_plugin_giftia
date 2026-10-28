@@ -7,6 +7,8 @@ from core.database import migrations, schema_v1
 from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
+from core.llm.prompt import build_decision_prompt, build_reply_prompt
+from core.utils.schemas import MessageData
 
 
 @pytest_asyncio.fixture
@@ -85,7 +87,9 @@ async def test_clearing_local_names_reveals_the_latest_remaining_name(runtime):
 
 
 @pytest.mark.asyncio
-async def test_search_and_alias_filtering_use_the_requesting_groups_name(runtime):
+async def test_search_matches_all_names_and_alias_filtering_uses_the_local_name(
+    runtime,
+):
     rt = runtime
     await rt.cache.set_user_profile(
         "bot", "group-b", "user", profile_fields={"call_name": "学者"}
@@ -97,7 +101,16 @@ async def test_search_and_alias_filtering_use_the_requesting_groups_name(runtime
     await rt.cache.set_user_profile(
         "bot", "group-a", "user", profile_fields={"call_name": "骑士"}
     )
-    assert await rt.db.search_user_profiles("bot", "group-a", "学者") == []
+    result = await rt.db.search_user_profiles("bot", "group-a", "学者")
+    assert result[0]["call_name"] == "骑士"
+    assert result[0]["call_names"] == [
+        {"group_or_user_id": "group-a", "call_name": "骑士", "source_label": ""},
+        {
+            "group_or_user_id": "group-b",
+            "call_name": "学者",
+            "source_label": "来源群聊：group-b",
+        },
+    ]
     assert (await rt.db.search_user_profiles("bot", "group-b", "学者"))[0][
         "call_name"
     ] == "学者"
@@ -111,6 +124,66 @@ async def test_search_and_alias_filtering_use_the_requesting_groups_name(runtime
     assert (
         await rt.db.get_user_aliases("bot", "group-b", "user", ignore_count_filter=True)
     )[0]["alias"] == "骑士"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session,expected", [("group-a", "骑士"), ("group-c", "学者")])
+async def test_profile_search_keeps_automatic_prompts_on_one_effective_name(
+    runtime, session, expected
+):
+    for group, name in (("group-a", "骑士"), ("group-b", "学者")):
+        await runtime.cache.set_user_profile(
+            "bot", group, "user", profile_fields={"call_name": name}
+        )
+    before = await runtime.cache.get_user_profile_record("bot", session, "user")
+    result = await runtime.db.search_user_profiles("bot", session, "user")
+    assert len(result[0]["call_names"]) == 2
+    record = await runtime.cache.get_user_profile_record("bot", session, "user")
+    assert record == before
+    assert "call_names" not in record
+    briefs = await runtime.cache.build_active_user_briefs(
+        "bot",
+        session,
+        [MessageData(user_id="user", nickname="平台昵称", content="在吗")],
+    )
+    assert briefs[0]["call_name"] == expected
+    assert "call_names" not in briefs[0]
+
+    for prompt in (
+        build_decision_prompt(
+            user_id="user",
+            group_data="",
+            recent_messages=[],
+            pending_messages=[],
+            bot_status=None,
+            user_profile=record,
+        ),
+        build_reply_prompt(
+            recent_messages=[],
+            media_captions=[],
+            bot_status=None,
+            user_id="user",
+            user_profile=record,
+        ),
+        build_decision_prompt(
+            user_id="another-user",
+            group_data="",
+            recent_messages=[],
+            pending_messages=[],
+            bot_status=None,
+            active_user_briefs=briefs,
+        ),
+        build_reply_prompt(
+            recent_messages=[],
+            media_captions=[],
+            bot_status=None,
+            user_id="another-user",
+            active_user_briefs=briefs,
+        ),
+    ):
+        assert prompt.count(f"你的称呼：{expected}") == 1
+        assert ("学者" if expected == "骑士" else "骑士") not in prompt
+        assert "来源群聊" not in prompt
 
 
 @pytest.mark.asyncio
