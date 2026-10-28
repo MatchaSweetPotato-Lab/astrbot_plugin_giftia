@@ -418,45 +418,6 @@ class XmlParse:
                         }
                     )
 
-                elif tag_name == "search_chat_history":
-                    keyword = self._attr_str(child, "keyword", "")
-                    user_id = self._attr_str(child, "user_id", "")
-                    start_time = self._attr_str(child, "start_time", "")
-                    end_time = self._attr_str(child, "end_time", "")
-                    sort_order = self._attr_str(child, "sort_order", "desc")
-                    limit_str = self._attr_str(child, "limit", "30")
-                    try:
-                        limit = int(limit_str)
-                    except ValueError:
-                        limit = 30
-                    result.search_histories.append(
-                        {
-                            "group_or_user_id": group_or_user_id,
-                            "keyword": keyword,
-                            "user_id": user_id,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "sort_order": sort_order,
-                            "limit": limit,
-                        }
-                    )
-
-                elif tag_name == "get_message_context":
-                    message_id = self._attr_str(child, "message_id", "")
-                    limit_str = self._attr_str(child, "limit", "30")
-                    try:
-                        limit = int(limit_str)
-                    except ValueError:
-                        limit = 30
-                    if message_id:
-                        result.get_message_contexts.append(
-                            {
-                                "group_or_user_id": group_or_user_id,
-                                "message_id": message_id,
-                                "limit": limit,
-                            }
-                        )
-
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
                     text = self._attr_str(child, "arguments", "") or child.get_text(

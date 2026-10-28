@@ -580,7 +580,6 @@ async def test_full_batch_retains_conflicting_overflow_as_regeneration_context(
 @pytest.mark.asyncio
 async def test_tool_followup_does_not_review_after_first_turn(runtime):
     plugin = runtime.plugin
-    runtime.manager.reply_pipeline.tool_executor.execute_queries = AsyncMock()
 
     async def generate(**kwargs):
         if plugin.call_llm.call_llm_reply.await_count == 1:

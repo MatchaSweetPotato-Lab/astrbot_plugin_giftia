@@ -51,8 +51,6 @@ class ReplyPipeline:
             "native_tools_called",
             "add_stickers",
             "send_stickers",
-            "search_histories",
-            "get_message_contexts",
             "task_board_actions",
             "slang_actions",
             "tts_segments",
@@ -784,26 +782,14 @@ class ReplyPipeline:
         yield llm_result
 
         # 初始化参数用于潜在的下一次递归
-        if other_data is None:
-            other_data = []
         if tool_results is None:
             tool_results = []
 
         # Dispatcher 已经在对应输出顺序位置执行了 XML 工具。
         tool_results.extend(llm_result.xml_tool_results)
-        await self.tool_executor.execute_queries(
-            bot_name=bot_name,
-            llm_result=llm_result,
-            other_data=other_data,
-        )
 
         # 10. 判断是否需要继续循环迭代
-        if (
-            len(llm_result.tools_to_call) > 0
-            or len(llm_result.xml_tool_results) > 0
-            or len(llm_result.search_histories) > 0
-            or len(llm_result.get_message_contexts) > 0
-        ):
+        if llm_result.tools_to_call or llm_result.xml_tool_results:
             logger.debug(f"{bot_name} llm step {times + 1} ...")
             async for chunk in self.dispatch_llm_reply_loop(
                 event=event,

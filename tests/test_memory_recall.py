@@ -352,7 +352,6 @@ async def test_reply_keeps_all_profiles_across_tool_turns_without_new_arrivals(r
         XmlLlmResult(tools_to_call=[("test", {})]),
         XmlLlmResult(),
     ]
-    runtime.pipeline.tool_executor.execute_queries = AsyncMock()
     runtime.cache.get_recent_message.return_value = [
         MessageData(message_id="C", user_id="carol", content="new arrival"),
         MessageData(message_id="R", user_id="self", content="bot output"),
@@ -750,7 +749,6 @@ async def test_full_automatic_user_priority_survives_tool_turns(runtime):
         XmlLlmResult(tools_to_call=[("other_tool", {})]),
         XmlLlmResult(),
     ]
-    runtime.pipeline.tool_executor.execute_queries = AsyncMock()
     pending = []
     await runtime.run(
         reply_messages=[MessageData(user_id="alice", content="topic")],
