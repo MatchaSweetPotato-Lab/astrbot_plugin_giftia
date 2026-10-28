@@ -260,7 +260,7 @@ def test_report_normalizes_missing_fields_without_mutating_record(command, relat
 )
 def test_empty_report_fields_are_omitted_and_history_remains_optional(command, empty):
     _, plugin, _ = command
-    record = {field: empty for field in USER_PROFILE_FIELDS}
+    record = dict.fromkeys(USER_PROFILE_FIELDS, empty)
     data = build_user_profile_report("bot", "小吉", "group", "user", record)
     assert data["profile_fields"] == {}
     assert all(data[field] == "" for field in USER_PROFILE_FIELDS)
@@ -547,7 +547,11 @@ async def test_actual_command_wrapper_accepts_aliases_and_full_arguments(
         for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_user_profile"
     )
-    decorator = wrapper_node.decorator_list[0]
+    decorator = next(
+        decorator
+        for decorator in wrapper_node.decorator_list
+        if isinstance(decorator, ast.Call) and decorator.func.attr == "command"
+    )
     assert decorator.func.attr == "command"
     assert decorator.args[0].value == "画像"
     wrapper_node.decorator_list = []

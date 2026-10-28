@@ -494,7 +494,7 @@ caption: {media_caption.caption}"""
                     else f"当前会话尚未收录黑话「{term}」。"
                 )
             elif not event.is_admin():
-                message = "仅 AstrBot 管理员可以通过指令新增或覆盖黑话。"
+                return
             else:
                 try:
                     await repo.set_entry(bot_name, session_id, term, parts[1])

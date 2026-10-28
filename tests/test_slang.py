@@ -250,7 +250,8 @@ async def test_command_query_permissions_multiline_override_and_private_scope(ru
         send=AsyncMock(),
     )
     handler = CommandHandler(runtime)
-    await anext(handler.slang(event))
+    assert [chunk async for chunk in handler.slang(event)] == []
+    event.send.assert_not_awaited()
     assert not await runtime.db.slang_repo.get_entries("bot", "group")
     event.is_admin.return_value = True
     await anext(handler.slang(event))

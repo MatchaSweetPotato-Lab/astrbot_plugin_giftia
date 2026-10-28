@@ -505,12 +505,7 @@ async def test_command_registration_permissions_and_logging_exclusion(
     runtime, event, method, command, arg
 ):
     wrapper, decorators = plugin_method(method)
-    assert decorators[0].func.attr == "permission_type"
-    assert decorators[0].args[0].attr == "ADMIN"
-    assert {
-        keyword.arg: ast.literal_eval(keyword.value)
-        for keyword in decorators[0].keywords
-    } == {"raise_error": False}
+    assert decorators[0].id == "admin_permission"
     assert decorators[1].args[0].value == command
     permission = PermissionTypeFilter(PermissionType.ADMIN)
     assert permission.filter(event, {})
