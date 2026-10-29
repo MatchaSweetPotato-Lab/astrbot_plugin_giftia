@@ -1001,7 +1001,7 @@
                 <input type="hidden" id="edit-user-prof-bot">
                 <input type="hidden" id="edit-user-prof-group">
                 <input type="hidden" id="edit-user-prof-user">
-                <p class="muted-text">画像、称呼和好感度在同一机器人下跨群共享，外号按当前群维护。约定、关系、偏好和习惯在“长期记忆”中管理。</p>
+                <p class="muted-text">称呼和外号按当前会话维护；称呼留空时使用同一机器人最近设置的称呼。画像和好感度仍跨群共享。约定、关系、偏好和习惯在“长期记忆”中管理。</p>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="edit-user-prof-base-relation">好感度基础分</label>
@@ -1009,8 +1009,8 @@
                         <small class="muted-text">最终好感度 = 基础分 + 互动分。互动分自动计算，初始 50，范围 0～100。</small>
                     </div>
                     <div class="form-group">
-                        <label for="edit-user-prof-call-name">你的称呼</label>
-                        <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
+                        <label for="edit-user-prof-call-name">本会话称呼</label>
+                        <input type="text" id="edit-user-prof-call-name" placeholder="留空时使用最近设置的称呼">
                     </div>
                 </div>
                 <div class="form-group">

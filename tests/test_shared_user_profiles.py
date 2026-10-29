@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 import pytest_asyncio
-
 from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
@@ -190,6 +189,9 @@ async def test_shared_cache_keeps_aliases_local_and_invalidates_scores_across_gr
     )
     assert (await rt.cache.get_user_profile_record("bot", "group-a", "user"))[
         "call_name"
+    ] == "小明"
+    assert (await rt.cache.get_user_profile_record("bot", "group-b", "user"))[
+        "call_name"
     ] == "明同学"
     results = await asyncio.gather(
         rt.cache.update_relation("bot", "group-a", "user", 2, "认真道谢", [7]),
@@ -281,7 +283,7 @@ async def test_session_cleanup_preserves_shared_profile_and_other_group_data(
     rt.cache.ltm = SimpleNamespace(delete_all_memories=AsyncMock())
     await rt.cache.delete_all_memories("bot", "group-a")
     record = await rt.cache.get_user_profile_record("bot", "group-b", "user")
-    assert record["call_name"] == "小明" and record["base_relation"] == 12
+    assert record["call_name"] is None and record["base_relation"] == 12
     assert record["total_count"] == 1
     assert (
         await rt.db.get_user_aliases("bot", "group-a", "user", ignore_count_filter=True)

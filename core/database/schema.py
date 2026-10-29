@@ -119,6 +119,17 @@ TABLE_DEFINITIONS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS user_call_names (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bot_name TEXT NOT NULL,
+        group_or_user_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        call_name TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(bot_name, group_or_user_id, user_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS relation_changes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bot_name TEXT NOT NULL,
@@ -269,6 +280,9 @@ INDEX_DEFINITIONS = (
     CREATE INDEX IF NOT EXISTS idx_group_bot ON chat_history (group_or_user_id, bot_name, created_at)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_history_bot_user_group ON chat_history (bot_name, user_id, group_or_user_id, created_at)
+    """,
+    """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_message_id_unique ON chat_history (message_id, group_or_user_id, bot_name)
     """,
     """
@@ -291,6 +305,10 @@ INDEX_DEFINITIONS = (
     """,
     """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_alias_unique ON user_aliases (bot_name, group_or_user_id, user_id, alias)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_user_call_names_recent
+    ON user_call_names (bot_name, user_id, updated_at DESC, id DESC)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_user_alias_lookup ON user_aliases (bot_name, group_or_user_id, user_id, alias_count, first_seen_at)

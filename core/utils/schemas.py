@@ -207,12 +207,7 @@ FLAT_CLOSABLE_TAGS = [
     "kick",
     "leave",
     "summary_user_profile",
-    "save_memory",
-    "search_chat_history",
-    "get_message_context",
-    "update_memory",
     "update_relation",
-    "set_relation_title",
     "tool_call",
     "task_board",
     "short_task",
@@ -287,10 +282,6 @@ class XmlLlmResult:
     add_stickers: list[str] = field(default_factory=list)
     # 发送表情包，表情ID
     send_stickers: list[str] = field(default_factory=list)
-    # 历史记录搜索
-    search_histories: list[dict] = field(default_factory=list)
-    # 消息上下文查询
-    get_message_contexts: list[dict] = field(default_factory=list)
     # 短期任务看板操作
     task_board_actions: list[dict] = field(default_factory=list)
     slang_actions: list[dict] = field(default_factory=list)

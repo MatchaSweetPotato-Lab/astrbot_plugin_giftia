@@ -10,78 +10,12 @@ from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContex
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 from ..llm.native_tools import NATIVE_CONTEXT_KEY
-from ..utils.schemas import MessageData, XmlLlmResult
+from ..utils.schemas import MessageData
 
 
 class ToolExecutor:
     def __init__(self, plugin):
         self.plugin = plugin
-
-    async def execute_queries(
-        self,
-        bot_name: str,
-        llm_result: XmlLlmResult,
-        other_data: list[str],
-    ) -> None:
-        """Populate history query context after ordered output dispatch.
-
-        Args:
-            bot_name: Bot configuration name.
-            llm_result: Parsed history and message-context queries.
-            other_data: Query results appended in place.
-        """
-
-        # Search chat history.
-        if llm_result.search_histories:
-            for item in llm_result.search_histories:
-                limit = min(item.get("limit", 30), 50)
-                msgs = await self.plugin.db.search_messages(
-                    group_or_user_id=item["group_or_user_id"],
-                    bot_name=bot_name,
-                    user_id=item.get("user_id") or None,
-                    keyword=item.get("keyword") or None,
-                    start_time=item.get("start_time") or None,
-                    end_time=item.get("end_time") or None,
-                    sort_order=item.get("sort_order") or "desc",
-                    limit=limit,
-                )
-                if not msgs:
-                    other_data.append("# 查询到的历史记录\n未找到相关历史记录")
-                else:
-                    lines = [
-                        f"[{m.time}] {m.nickname}({m.user_id}): {m.content}"
-                        for m in msgs
-                    ]
-                    other_data.append("# 查询到的历史记录\n" + "\n".join(lines))
-
-        # Read the context surrounding a message.
-        if llm_result.get_message_contexts:
-            for item in llm_result.get_message_contexts:
-                limit = min(item.get("limit", 30), 50)
-                msgs = await self.plugin.db.get_message_context(
-                    message_id=item["message_id"],
-                    group_or_user_id=item["group_or_user_id"],
-                    bot_name=bot_name,
-                    limit=limit,
-                )
-                if not msgs:
-                    other_data.append(
-                        f"# 消息上下文(ID:{item['message_id']})\n未找到上下文"
-                    )
-                else:
-                    lines = []
-                    for m in msgs:
-                        prefix = (
-                            "=> "
-                            if str(m.message_id) == str(item["message_id"])
-                            else "   "
-                        )
-                        lines.append(
-                            f"{prefix}[{m.time}] {m.nickname}({m.user_id}): {m.content}"
-                        )
-                    other_data.append(
-                        f"# 消息上下文(ID:{item['message_id']})\n" + "\n".join(lines)
-                    )
 
     async def execute_tool(
         self,

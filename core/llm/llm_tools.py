@@ -42,11 +42,17 @@ TOOLS_NAMESPACE = [
 class SearchChatHistoryTool(FunctionTool):
     plugin: Any = None
     name: str = "search_chat_history"
-    description: str = "搜索历史记录，所有参数均可选填"
+    description: str = (
+        "搜索聊天历史，可指定群号；不填默认查询当前会话，所有参数均可选填。"
+    )
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "目标群号；省略或留空时查询当前群聊，私聊中则查询当前私聊。",
+                },
                 "keyword": {
                     "type": "string",
                     "description": "关键字，如果你要查找两人说过的第一句话，这里可填用户ID",
@@ -85,6 +91,7 @@ class SearchChatHistoryTool(FunctionTool):
         end_time: str = "",
         sort_order: str = "desc",
         limit: int = 30,
+        group_id: str = "",
     ):
         if self.plugin is None:
             logger.warning("SearchChatHistoryTool 未绑定插件实例")
@@ -96,7 +103,9 @@ class SearchChatHistoryTool(FunctionTool):
             logger.warning("SearchChatHistoryTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
 
-        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        group_or_user_id = (
+            (group_id or "").strip() or event.get_group_id() or event.get_sender_id()
+        )
         limit = min(limit, 50)
         msgs = await plugin.db.search_messages(
             group_or_user_id=group_or_user_id,
@@ -120,7 +129,7 @@ class SearchChatHistoryTool(FunctionTool):
 class GetMessageContextTool(FunctionTool):
     plugin: Any = None
     name: str = "get_message_context"
-    description: str = "获取特定消息前后的上下文记录。如果你在搜索记录时得到了一条消息，可以用它的message_id来这里获取上下文。"
+    description: str = "获取特定消息前后的上下文记录，可指定群号，不填默认当前会话。如果你在搜索记录时得到了一条消息，可以用它的message_id来这里获取上下文。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -128,6 +137,10 @@ class GetMessageContextTool(FunctionTool):
                 "message_id": {
                     "type": "string",
                     "description": "目标消息的ID。",
+                },
+                "group_id": {
+                    "type": "string",
+                    "description": "目标群号；省略或留空时查询当前群聊，私聊中则查询当前私聊。",
                 },
                 "limit": {
                     "type": "integer",
@@ -143,6 +156,7 @@ class GetMessageContextTool(FunctionTool):
         context: ContextWrapper[AstrAgentContext],
         message_id: str,
         limit: int = 30,
+        group_id: str = "",
     ):
         if self.plugin is None:
             logger.warning("GetMessageContextTool 未绑定插件实例")
@@ -154,7 +168,9 @@ class GetMessageContextTool(FunctionTool):
             logger.warning("GetMessageContextTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
 
-        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        group_or_user_id = (
+            (group_id or "").strip() or event.get_group_id() or event.get_sender_id()
+        )
         limit = min(limit, 50)
         msgs = await plugin.db.get_message_context(
             message_id=message_id,
@@ -177,14 +193,14 @@ class GetMessageContextTool(FunctionTool):
 class SearchUserProfileTool(FunctionTool):
     plugin: Any = None
     name: str = "search_user_profile"
-    description: str = "按用户ID、共享称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；分页查看跨群共享的互动评价历史，非本群记录标注来源。"
+    description: str = "按用户ID、任一会话称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；展示各会话全部称呼并标注非本会话来源，分页查看跨群共享的互动评价历史，非本群记录标注来源。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词，仅匹配用户ID、昵称、你的称呼、其他外号或头像描述。",
+                    "description": "搜索关键词，仅匹配用户ID、当前会话昵称、任一会话的称呼、当前会话其他外号或头像描述。",
                 },
                 "limit": {
                     "type": "integer",
@@ -214,6 +230,15 @@ class SearchUserProfileTool(FunctionTool):
                 f"基础分：{item['base_relation']}；互动分：{item['interaction_score']:.1f}"
             )
         for profile_field, label in USER_PROFILE_FIELDS:
+            if profile_field == "call_name" and item.get("call_names"):
+                for name in item["call_names"]:
+                    value = normalize_profile_value(name.get("call_name"))
+                    if value:
+                        source = name.get("source_label")
+                        lines.append(
+                            f"- {label}：{value}" + (f" [{source}]" if source else "")
+                        )
+                continue
             value = normalize_profile_value(item.get(profile_field))
             if value:
                 lines.append(f"- {label}：{value}")

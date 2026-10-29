@@ -487,7 +487,7 @@ class DataCache:
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> str | None:
         """获取用户画像"""
-        fmt_key = f"{bot_name}:{user_id}"
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
         profile = self.user_profiles.get(fmt_key)
         if profile:
             return profile
@@ -516,10 +516,15 @@ class DataCache:
             )
             if record is None:
                 return None
-            record = {key: value for key, value in record.items() if key != "aliases"}
+            record = {
+                key: value
+                for key, value in record.items()
+                if key not in ("aliases", "call_name", "local_call_name")
+            }
             self.user_profile_records[fmt_key] = record
         return {
             **record,
+            **await self.db.get_user_call_names(bot_name, group_or_user_id, user_id),
             "aliases": await self.db.get_user_aliases_text(
                 bot_name, group_or_user_id, user_id
             ),
@@ -534,7 +539,11 @@ class DataCache:
         """
         key = f"{bot_name}:{user_id}"
         self.user_profile_records.pop(key, None)
-        self.user_profiles.pop(key, None)
+        for cached_key in list(self.user_profiles):
+            if cached_key.startswith(f"{bot_name}:") and cached_key.endswith(
+                f":{user_id}"
+            ):
+                self.user_profiles.pop(cached_key, None)
         self.relations.pop(key, None)
 
     async def set_user_profile(

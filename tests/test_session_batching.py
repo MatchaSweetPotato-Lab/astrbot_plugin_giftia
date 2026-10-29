@@ -919,6 +919,7 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
             )
         ),
         db=SimpleNamespace(
+            get_user_common_groups=AsyncMock(return_value={}),
             get_relation_changes=AsyncMock(return_value=[]),
             get_relation_score=AsyncMock(return_value={}),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),
@@ -939,7 +940,6 @@ async def test_tool_round_keeps_user_snapshot_and_appends_own_output():
     )
     pipeline = ReplyPipeline(plugin)
     pipeline.media_captioner.get_cached_media_captions = AsyncMock(return_value=[])
-    pipeline.tool_executor.execute_queries = AsyncMock()
     async for _ in pipeline.dispatch_llm_reply_loop(
         event,
         "bot",

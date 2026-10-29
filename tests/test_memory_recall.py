@@ -78,6 +78,7 @@ def runtime():
             )
         ),
         db=SimpleNamespace(
+            get_user_common_groups=AsyncMock(return_value={}),
             get_relation_changes=AsyncMock(return_value=[]),
             get_relation_score=AsyncMock(return_value={}),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),
@@ -116,6 +117,44 @@ def runtime():
         search=plugin.passive_memory_manager.search_and_filter_memories,
         run=run,
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_injects_common_groups_only_into_each_speakers_full_profile(
+    runtime,
+):
+    runtime.plugin.db.get_user_common_groups.return_value = {
+        "alice": [
+            {"group_id": "123456", "recently_active": True},
+            {"group_id": "789012", "recently_active": False},
+        ],
+        "carol": [{"group_id": "345678", "recently_active": False}],
+    }
+    messages = [
+        MessageData(user_id="alice", content="hello"),
+        MessageData(user_id="bob", content="hello"),
+        MessageData(user_id="carol", content="hello"),
+        MessageData(user_id="alice", content="again"),
+    ]
+    await runtime.run(reply_messages=messages)
+    runtime.plugin.db.get_user_common_groups.assert_awaited_once_with(
+        "bot", "group", ["alice", "bob", "carol"]
+    )
+    prompt = runtime.plugin.call_llm.call_llm_reply.await_args.kwargs["user_prompt"]
+    profiles = {
+        profile.get("user_id"): profile.text
+        for profile in fromstring(f"<root>{prompt}</root>").findall("user_profile")
+    }
+    assert "已知共同群聊：123456（近期活跃）、789012" in profiles["alice"]
+    assert "已知共同群聊：345678" in profiles["carol"]
+    assert "近期活跃" not in profiles["carol"]
+    assert "bob" not in profiles
+    assert prompt.count("已知共同群聊：") == 2
+
+    runtime.plugin.db.get_user_common_groups.return_value = {}
+    await runtime.run(reply_messages=messages)
+    prompt = runtime.plugin.call_llm.call_llm_reply.await_args.kwargs["user_prompt"]
+    assert "已知共同群聊" not in prompt
 
 
 @pytest.mark.asyncio
@@ -352,7 +391,6 @@ async def test_reply_keeps_all_profiles_across_tool_turns_without_new_arrivals(r
         XmlLlmResult(tools_to_call=[("test", {})]),
         XmlLlmResult(),
     ]
-    runtime.pipeline.tool_executor.execute_queries = AsyncMock()
     runtime.cache.get_recent_message.return_value = [
         MessageData(message_id="C", user_id="carol", content="new arrival"),
         MessageData(message_id="R", user_id="self", content="bot output"),
@@ -750,7 +788,6 @@ async def test_full_automatic_user_priority_survives_tool_turns(runtime):
         XmlLlmResult(tools_to_call=[("other_tool", {})]),
         XmlLlmResult(),
     ]
-    runtime.pipeline.tool_executor.execute_queries = AsyncMock()
     pending = []
     await runtime.run(
         reply_messages=[MessageData(user_id="alice", content="topic")],

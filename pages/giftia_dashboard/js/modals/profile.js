@@ -6,7 +6,9 @@ window.openEditUserProfileModal = function(item) {
     document.getElementById("edit-user-prof-group").value = item.group_or_user_id;
     document.getElementById("edit-user-prof-user").value = item.user_id;
     document.getElementById("edit-user-prof-base-relation").value = item.base_relation ?? 0;
-    document.getElementById("edit-user-prof-call-name").value = item.call_name || "";
+    const callNameInput = document.getElementById("edit-user-prof-call-name");
+    callNameInput.value = item.local_call_name || "";
+    callNameInput.placeholder = !item.local_call_name && item.call_name ? `留空时使用：${item.call_name}` : "留空时使用最近设置的称呼";
     document.getElementById("edit-user-prof-attitude").value = item.attitude || "";
     document.getElementById("edit-user-prof-avatar").value = item.avatar_description || "";
     window.openModal("edit-user-profile-modal");

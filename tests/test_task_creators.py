@@ -4,16 +4,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
-    AiocqhttpMessageEvent,
-)
-
 from core.conversation.action_dispatcher import ActionDispatcher
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.llm.preset_prompts import build_xml_instructions
 from core.llm.xml_parse import XmlParse
 from core.utils.scheduler import Scheduler
 from core.utils.schemas import MessageData, Status
+
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
 
 
 @pytest.fixture
@@ -70,6 +70,7 @@ def runtime():
             )
         ),
         db=SimpleNamespace(
+            get_user_common_groups=AsyncMock(return_value={}),
             get_relation_changes=AsyncMock(return_value=[]),
             get_relation_score=AsyncMock(return_value={}),
             slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),

@@ -279,8 +279,7 @@ async def test_rules_command_preserves_original_text_and_overwrites_only_current
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "set_group_rules"
     )
     permission, command = wrapper_node.decorator_list
-    assert permission.func.attr == "permission_type"
-    assert permission.args[0].attr == "ADMIN"
+    assert permission.id == "admin_permission"
     assert command.args[0].value == "群规"
     wrapper_node.decorator_list = []
     namespace = {"AstrMessageEvent": AstrMessageEvent, "GreedyStr": GreedyStr}

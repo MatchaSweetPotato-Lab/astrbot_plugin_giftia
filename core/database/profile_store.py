@@ -4,8 +4,114 @@ from .operations import serialized_operation
 from .relation_history_store import RelationHistoryStoreMixin
 from .utils import parse_aliases
 
+# Both placeholders identify the requesting conversation. All readers use the
+# same resolution order, including SQL search and dashboard filtering.
+PROFILE_NAMES_CTE = """
+    WITH profiles AS (
+        SELECT up.*,
+            (
+                SELECT cn.call_name FROM user_call_names cn
+                WHERE cn.bot_name=up.bot_name AND cn.user_id=up.user_id
+                ORDER BY (cn.group_or_user_id=? AND cn.group_or_user_id!='') DESC,
+                         cn.updated_at DESC, cn.id DESC
+                LIMIT 1
+            ) AS resolved_call_name,
+            (
+                SELECT cn.call_name FROM user_call_names cn
+                WHERE cn.bot_name=up.bot_name AND cn.user_id=up.user_id
+                  AND cn.group_or_user_id=?
+                LIMIT 1
+            ) AS local_call_name
+        FROM user_profiles up
+    )
+"""
+
 
 class ProfileStoreMixin(RelationHistoryStoreMixin):
+    @serialized_operation
+    async def get_user_common_groups(
+        self, bot_name: str, group_or_user_id: str, user_ids: list[str]
+    ) -> dict[str, list[dict]]:
+        """Find other groups where this bot has recorded each member speaking.
+
+        Args:
+            bot_name: Bot owning the recorded messages.
+            group_or_user_id: Current conversation, excluded from the results.
+            user_ids: Members whose known groups should be fetched together.
+
+        Returns:
+            Groups per member with their last message timestamp and a recent
+            activity flag for speech within the past 24 hours. Active groups
+            come first, followed by the latest message time and group ID.
+        """
+        groups = {str(uid): [] for uid in user_ids if uid}
+        if not groups:
+            return groups
+
+        placeholders = ",".join("?" for _ in groups)
+        async with self.conn.execute(
+            f"""
+            SELECT user_id, group_or_user_id, MAX(created_at) AS last_message_at
+            FROM chat_history
+            WHERE bot_name = ? AND user_id IN ({placeholders})
+              AND group_or_user_id IS NOT NULL AND group_or_user_id != ''
+              AND group_or_user_id != ? AND group_or_user_id != user_id
+              AND COALESCE(role, 'message') = 'message'
+              AND COALESCE(is_recalled, 0) = 0
+            GROUP BY user_id, group_or_user_id
+            """,
+            (bot_name, *groups, group_or_user_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        now = datetime.now().timestamp()
+        for row in rows:
+            try:
+                last_message_at = datetime.fromisoformat(
+                    row["last_message_at"]
+                ).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                last_message_at = 0.0
+            groups[row["user_id"]].append(
+                {
+                    "group_id": row["group_or_user_id"],
+                    "last_message_at": last_message_at,
+                    "recently_active": 0 <= now - last_message_at <= 24 * 60 * 60,
+                }
+            )
+        for user_groups in groups.values():
+            user_groups.sort(
+                key=lambda group: (
+                    not group["recently_active"],
+                    -group["last_message_at"],
+                    group["group_id"],
+                )
+            )
+        return groups
+
+    @serialized_operation
+    async def get_user_call_names(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> dict:
+        """Resolve the local name, falling back to the latest name within this bot.
+
+        Args:
+            bot_name: Bot owning the names.
+            group_or_user_id: Requesting conversation.
+            user_id: Member whose names are requested.
+
+        Returns:
+            Effective call_name and the independently editable local_call_name.
+        """
+        async with self.conn.execute(
+            PROFILE_NAMES_CTE
+            + "SELECT resolved_call_name AS call_name, local_call_name FROM profiles "
+            "WHERE bot_name=? AND user_id=?",
+            (group_or_user_id, group_or_user_id, bot_name, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else {"call_name": None, "local_call_name": None}
+
     @serialized_operation
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
@@ -42,6 +148,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
     ) -> list[dict]:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
         params: list = [bot_name, group_or_user_id, user_id]
+        local_call_name = (
+            await self.get_user_call_names(bot_name, group_or_user_id, user_id)
+        )["local_call_name"]
+        params.extend([local_call_name, local_call_name])
 
         count_clause = "AND ua.alias_count >= 3" if not ignore_count_filter else ""
 
@@ -54,11 +164,9 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             f"""
             SELECT ua.alias, ua.alias_count, ua.first_seen_at, ua.last_seen_at
             FROM user_aliases ua
-            LEFT JOIN user_profiles up ON ua.bot_name = up.bot_name
-                AND ua.user_id = up.user_id
             WHERE ua.bot_name = ? AND ua.group_or_user_id = ? AND ua.user_id = ?
                 {count_clause}
-                AND (up.call_name IS NULL OR LOWER(TRIM(ua.alias)) != LOWER(TRIM(up.call_name)))
+                AND (? IS NULL OR LOWER(TRIM(ua.alias)) != LOWER(TRIM(?)))
             ORDER BY ua.alias_count DESC, ua.first_seen_at ASC, ua.id ASC
             {limit_clause}
             """,
@@ -108,14 +216,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         if not alias_items:
             return []
 
-        call_name = None
-        async with self.conn.execute(
-            "SELECT call_name FROM user_profiles WHERE user_id = ? AND bot_name = ? LIMIT 1",
-            (user_id, bot_name),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row and row["call_name"]:
-                call_name = str(row["call_name"]).strip().lower()
+        local_call_name = (
+            await self.get_user_call_names(bot_name, group_or_user_id, user_id)
+        )["local_call_name"]
+        local_call_name = local_call_name.strip().lower() if local_call_name else None
 
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if increment_count:
@@ -131,7 +235,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
         rejected_aliases = []
         for alias in alias_items:
-            if call_name and alias.strip().lower() == call_name:
+            if local_call_name and alias.strip().lower() == local_call_name:
                 continue
             # Check ownership in the write itself to prevent concurrent claims.
             cursor = await self.conn.execute(
@@ -252,9 +356,11 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
     ) -> dict | None:
         """获取用户画像完整记录"""
         async with self.conn.execute(
-            """
+            PROFILE_NAMES_CTE
+            + """
             SELECT
-                up.call_name,
+                up.resolved_call_name AS call_name,
+                up.local_call_name,
                 up.aliases,
                 up.personality,
                 up.interests,
@@ -263,11 +369,11 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.extra,
                 up.avatar_description,
                 up.title
-            FROM user_profiles up
+            FROM profiles up
             WHERE up.user_id = ? AND up.bot_name = ?
             LIMIT 1
             """,
-            (user_id, bot_name),
+            (group_or_user_id, group_or_user_id, user_id, bot_name),
         ) as cursor:
             row = await cursor.fetchone()
         if not row:
@@ -302,7 +408,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             limit: Maximum number of matching members, capped at twenty.
 
         Returns:
-            Matching profiles with current scores and aliases.
+            Matching profiles with current scores, local aliases and all scoped names.
         """
         query = (query or "").strip()
         if not query:
@@ -311,12 +417,14 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         like = f"%{query}%"
         limit = max(1, min(int(limit or 5), 20))
         async with self.conn.execute(
-            """
+            PROFILE_NAMES_CTE
+            + """
             SELECT
                 up.user_id,
                 ? AS group_or_user_id,
                 up.bot_name,
-                up.call_name,
+                up.resolved_call_name AS call_name,
+                up.local_call_name,
                 up.attitude,
                 up.avatar_description,
                 (
@@ -330,11 +438,16 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                     ORDER BY ch.created_at DESC
                     LIMIT 1
                 ) AS nickname
-            FROM user_profiles up
+            FROM profiles up
             WHERE up.bot_name = ?
               AND (
                 up.user_id LIKE ?
-                OR up.call_name LIKE ?
+                OR EXISTS (
+                    SELECT 1 FROM user_call_names cn
+                    WHERE cn.bot_name = up.bot_name
+                      AND cn.user_id = up.user_id
+                      AND cn.call_name LIKE ?
+                )
                 OR EXISTS (
                     SELECT 1
                     FROM user_aliases ua
@@ -356,7 +469,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             ORDER BY
                 CASE
                     WHEN up.user_id = ? THEN 0
-                    WHEN up.call_name = ? THEN 1
+                    WHEN up.resolved_call_name = ? THEN 1
                     WHEN EXISTS (
                         SELECT 1
                         FROM user_aliases ua
@@ -373,9 +486,11 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             (
                 group_or_user_id,
                 group_or_user_id,
+                group_or_user_id,
+                group_or_user_id,
                 bot_name,
                 like,  # up.user_id
-                like,  # up.call_name
+                like,  # cn.call_name
                 group_or_user_id,
                 like,  # ua.alias
                 like,  # up.avatar_description
@@ -392,6 +507,24 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
         results = [dict(row) for row in rows]
         for item in results:
+            async with self.conn.execute(
+                "SELECT group_or_user_id, call_name FROM user_call_names "
+                "WHERE bot_name=? AND user_id=? "
+                "ORDER BY (group_or_user_id=? AND group_or_user_id!='') DESC, "
+                "updated_at DESC, id DESC",
+                (bot_name, item["user_id"], group_or_user_id),
+            ) as cursor:
+                item["call_names"] = [dict(row) for row in await cursor.fetchall()]
+            for name in item["call_names"]:
+                source = name["group_or_user_id"]
+                if not source:
+                    name["source_label"] = "来源未知（旧共享称呼）"
+                elif source == group_or_user_id:
+                    name["source_label"] = ""
+                elif source == item["user_id"]:
+                    name["source_label"] = "来源私聊"
+                else:
+                    name["source_label"] = f"来源群聊：{source}"
             item.update(
                 await self.get_relation_score(
                     bot_name, group_or_user_id, item["user_id"]
@@ -417,7 +550,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
     ):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         profile_columns = [
-            "call_name",
             "personality",
             "interests",
             "attitude",
@@ -462,7 +594,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             (
                 user_id,
                 bot_name,
-                profile_fields.get("call_name"),
+                None,
                 None,
                 profile_fields.get("personality"),
                 profile_fields.get("interests"),
@@ -482,17 +614,42 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
                 (bot_name, group_or_user_id, user_id),
             )
-        new_call_name = profile_fields.get("call_name")
+        new_call_name = str(profile_fields.get("call_name") or "").strip()
+        if "call_name" in profile_fields:
+            if new_call_name:
+                await self.conn.execute(
+                    """
+                    INSERT INTO user_call_names
+                        (bot_name, group_or_user_id, user_id, call_name, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(bot_name, group_or_user_id, user_id) DO UPDATE SET
+                        call_name=excluded.call_name, updated_at=excluded.updated_at
+                    WHERE user_call_names.call_name != excluded.call_name
+                    """,
+                    (
+                        bot_name,
+                        group_or_user_id,
+                        user_id,
+                        new_call_name,
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    ),
+                )
+            else:
+                await self.conn.execute(
+                    "DELETE FROM user_call_names WHERE bot_name=? "
+                    "AND group_or_user_id=? AND user_id=?",
+                    (bot_name, group_or_user_id, user_id),
+                )
         if new_call_name:
             stripped = new_call_name.strip()
             if stripped:
                 await self.conn.execute(
                     """
                     DELETE FROM user_aliases
-                    WHERE user_id = ? AND bot_name = ?
+                    WHERE user_id = ? AND bot_name = ? AND group_or_user_id = ?
                         AND LOWER(TRIM(alias)) = LOWER(?)
                     """,
-                    (user_id, bot_name, stripped),
+                    (user_id, bot_name, group_or_user_id, stripped),
                 )
         await self.conn.commit()
 
@@ -527,6 +684,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             "DELETE FROM user_profile_sessions WHERE bot_name=? AND user_id=?",
             (bot_name, user_id),
         )
+        await self.conn.execute(
+            "DELETE FROM user_call_names WHERE bot_name=? AND user_id=?",
+            (bot_name, user_id),
+        )
         await self.conn.commit()
 
     @serialized_operation
@@ -538,6 +699,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             group_or_user_id: Conversation whose local data is cleared.
         """
         await self.delete_all_relations(bot_name, group_or_user_id)
+        await self.conn.execute(
+            "DELETE FROM user_call_names WHERE bot_name=? AND group_or_user_id=?",
+            (bot_name, group_or_user_id),
+        )
         await self.conn.execute(
             """
             DELETE FROM user_profile_sessions WHERE group_or_user_id = ? AND bot_name = ?
