@@ -493,6 +493,7 @@ async def test_xml_tool_outputs_and_results_follow_order(
         get_persona_v3_by_id=lambda _: {"prompt": "test"}
     )
     plugin.db = SimpleNamespace(
+        get_user_common_groups=AsyncMock(return_value={}),
         get_relation_changes=AsyncMock(return_value=[]),
         get_relation_score=AsyncMock(return_value={}),
         slang_repo=SimpleNamespace(get_entries=AsyncMock(return_value=[])),

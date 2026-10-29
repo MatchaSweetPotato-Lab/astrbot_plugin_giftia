@@ -280,6 +280,9 @@ INDEX_DEFINITIONS = (
     CREATE INDEX IF NOT EXISTS idx_group_bot ON chat_history (group_or_user_id, bot_name, created_at)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_history_bot_user_group ON chat_history (bot_name, user_id, group_or_user_id, created_at)
+    """,
+    """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_message_id_unique ON chat_history (message_id, group_or_user_id, bot_name)
     """,
     """

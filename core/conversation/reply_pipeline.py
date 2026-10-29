@@ -397,6 +397,13 @@ class ReplyPipeline:
                 reply_users[uid] = msg.nickname or reply_users.get(uid, "")
         if not reply_messages and sender_id and sender_id != self_id:
             reply_users[sender_id] = event.get_sender_name() or ""
+        common_groups = (
+            await self.plugin.db.get_user_common_groups(
+                bot_name, group_or_user_id, list(reply_users)
+            )
+            if reply_users
+            else {}
+        )
         user_profiles = []
         for uid, user_nickname in reply_users.items():
             (
@@ -437,6 +444,7 @@ class ReplyPipeline:
                     "user_relation": user_relation,
                     "relation_changes": relation_changes,
                     "relation_score": relation_score,
+                    "common_groups": common_groups.get(uid, []),
                 }
             )
         active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(

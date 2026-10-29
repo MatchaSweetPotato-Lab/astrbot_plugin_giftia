@@ -478,8 +478,24 @@ async def _migrate_to_v2(conn: aiosqlite.Connection) -> None:
     await conn.execute("UPDATE user_profiles SET call_name=NULL")
 
 
+async def _migrate_to_v3(conn: aiosqlite.Connection) -> None:
+    """Index member speech for common-group lookups across conversations.
+
+    Args:
+        conn: Database connection being initialized.
+    """
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_history_bot_user_group
+        ON chat_history (bot_name, user_id, group_or_user_id, created_at)
+    """)
+
+
 # Schema versions are independent of plugin releases; released steps stay frozen.
-MIGRATIONS = ((1, _migrate_legacy_to_v1), (2, _migrate_to_v2))
+MIGRATIONS = (
+    (1, _migrate_legacy_to_v1),
+    (2, _migrate_to_v2),
+    (3, _migrate_to_v3),
+)
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 

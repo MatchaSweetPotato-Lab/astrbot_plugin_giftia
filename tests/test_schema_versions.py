@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 import pytest_asyncio
-
 from core.database import migrations, schema
 
 
@@ -48,6 +47,10 @@ async def test_fresh_database_has_latest_schema_without_running_migrations(
     assert {"processing_status", "memory_status"} <= columns
     async with database.execute("PRAGMA index_list(user_profiles)") as cursor:
         assert "idx_user_id_unique" in {row[1] for row in await cursor.fetchall()}
+    async with database.execute("PRAGMA index_list(chat_history)") as cursor:
+        assert "idx_history_bot_user_group" in {
+            row[1] for row in await cursor.fetchall()
+        }
     async with database.execute("PRAGMA table_info(user_profile_sessions)") as cursor:
         assert {row[1] for row in await cursor.fetchall()} == {
             "bot_name",

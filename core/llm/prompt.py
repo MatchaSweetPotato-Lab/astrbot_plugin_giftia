@@ -973,6 +973,7 @@ def build_user_profile_block(
     nickname: str | None = None,
     relation_changes: list[dict] | None = None,
     relation_score: dict[str, int | float] | None = None,
+    common_groups: list[dict] | None = None,
 ) -> str:
     parts = []
 
@@ -988,6 +989,16 @@ def build_user_profile_block(
         profile_text = normalize_profile_text(user_profile)
         if profile_text:
             parts.append(profile_text)
+
+    if common_groups:
+        parts.append(
+            "已知共同群聊："
+            + "、".join(
+                escape(str(group["group_id"]))
+                + ("（近期活跃）" if group["recently_active"] else "")
+                for group in common_groups
+            )
+        )
 
     if relation_score:
         user_relation = (relation_score["relation"], "")

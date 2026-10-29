@@ -29,6 +29,67 @@ PROFILE_NAMES_CTE = """
 
 class ProfileStoreMixin(RelationHistoryStoreMixin):
     @serialized_operation
+    async def get_user_common_groups(
+        self, bot_name: str, group_or_user_id: str, user_ids: list[str]
+    ) -> dict[str, list[dict]]:
+        """Find other groups where this bot has recorded each member speaking.
+
+        Args:
+            bot_name: Bot owning the recorded messages.
+            group_or_user_id: Current conversation, excluded from the results.
+            user_ids: Members whose known groups should be fetched together.
+
+        Returns:
+            Groups per member with their last message timestamp and a recent
+            activity flag for speech within the past 24 hours. Active groups
+            come first, followed by the latest message time and group ID.
+        """
+        groups = {str(uid): [] for uid in user_ids if uid}
+        if not groups:
+            return groups
+
+        placeholders = ",".join("?" for _ in groups)
+        async with self.conn.execute(
+            f"""
+            SELECT user_id, group_or_user_id, MAX(created_at) AS last_message_at
+            FROM chat_history
+            WHERE bot_name = ? AND user_id IN ({placeholders})
+              AND group_or_user_id IS NOT NULL AND group_or_user_id != ''
+              AND group_or_user_id != ? AND group_or_user_id != user_id
+              AND COALESCE(role, 'message') = 'message'
+              AND COALESCE(is_recalled, 0) = 0
+            GROUP BY user_id, group_or_user_id
+            """,
+            (bot_name, *groups, group_or_user_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        now = datetime.now().timestamp()
+        for row in rows:
+            try:
+                last_message_at = datetime.fromisoformat(
+                    row["last_message_at"]
+                ).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                last_message_at = 0.0
+            groups[row["user_id"]].append(
+                {
+                    "group_id": row["group_or_user_id"],
+                    "last_message_at": last_message_at,
+                    "recently_active": 0 <= now - last_message_at <= 24 * 60 * 60,
+                }
+            )
+        for user_groups in groups.values():
+            user_groups.sort(
+                key=lambda group: (
+                    not group["recently_active"],
+                    -group["last_message_at"],
+                    group["group_id"],
+                )
+            )
+        return groups
+
+    @serialized_operation
     async def get_user_call_names(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict:
