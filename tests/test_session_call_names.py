@@ -87,6 +87,65 @@ async def test_clearing_local_names_reveals_the_latest_remaining_name(runtime):
 
 
 @pytest.mark.asyncio
+async def test_local_alias_matching_fallback_name_can_be_saved(runtime):
+    rt = runtime
+    await rt.cache.set_user_profile(
+        "bot", "group-a", "user", profile_fields={"call_name": "骑士"}
+    )
+    for _ in range(3):
+        await rt.db.upsert_user_aliases("bot", "group-b", "user", "骑士")
+
+    aliases = await rt.db.get_user_aliases("bot", "group-b", "user")
+    assert [(item["alias"], item["alias_count"]) for item in aliases] == [("骑士", 3)]
+    record = await rt.cache.get_user_profile_record("bot", "group-b", "user")
+    assert record["call_name"] == "骑士"
+    assert record["local_call_name"] is None
+    assert record["aliases"] == "骑士"
+
+
+@pytest.mark.asyncio
+async def test_existing_local_alias_matching_new_fallback_remains_visible(runtime):
+    rt = runtime
+    for _ in range(3):
+        await rt.db.upsert_user_aliases("bot", "group-b", "user", "骑士")
+    await rt.cache.set_user_profile(
+        "bot", "group-a", "user", profile_fields={"call_name": "骑士"}
+    )
+
+    for ignore_count_filter in (False, True):
+        aliases = await rt.db.get_user_aliases(
+            "bot", "group-b", "user", ignore_count_filter=ignore_count_filter
+        )
+        assert [(item["alias"], item["alias_count"]) for item in aliases] == [
+            ("骑士", 3)
+        ]
+    assert await rt.db.get_user_aliases_text("bot", "group-b", "user") == "骑士"
+
+
+@pytest.mark.asyncio
+async def test_alias_matching_local_name_is_still_excluded(runtime):
+    rt = runtime
+    await rt.cache.set_user_profile(
+        "bot", "group-b", "user", profile_fields={"call_name": "Alice"}
+    )
+    await rt.db.upsert_user_aliases("bot", "group-b", "user", [" alice ", "ALICE"])
+    async with rt.db.conn.execute("SELECT COUNT(*) FROM user_aliases") as cursor:
+        assert (await cursor.fetchone())[0] == 0
+
+    # Preserve read-time filtering for duplicates already present in the database.
+    await rt.db.conn.execute(
+        "INSERT INTO user_aliases "
+        "(bot_name, group_or_user_id, user_id, alias, alias_count) "
+        "VALUES ('bot', 'group-b', 'user', ' alice ', 3)"
+    )
+    await rt.db.conn.commit()
+    assert (
+        await rt.db.get_user_aliases("bot", "group-b", "user", ignore_count_filter=True)
+        == []
+    )
+
+
+@pytest.mark.asyncio
 async def test_search_matches_all_names_and_alias_filtering_uses_the_local_name(
     runtime,
 ):

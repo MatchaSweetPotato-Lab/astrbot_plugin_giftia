@@ -148,10 +148,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
     ) -> list[dict]:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
         params: list = [bot_name, group_or_user_id, user_id]
-        call_name = (
+        local_call_name = (
             await self.get_user_call_names(bot_name, group_or_user_id, user_id)
-        )["call_name"]
-        params.extend([call_name, call_name])
+        )["local_call_name"]
+        params.extend([local_call_name, local_call_name])
 
         count_clause = "AND ua.alias_count >= 3" if not ignore_count_filter else ""
 
@@ -216,10 +216,10 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         if not alias_items:
             return []
 
-        call_name = (
+        local_call_name = (
             await self.get_user_call_names(bot_name, group_or_user_id, user_id)
-        )["call_name"]
-        call_name = call_name.strip().lower() if call_name else None
+        )["local_call_name"]
+        local_call_name = local_call_name.strip().lower() if local_call_name else None
 
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if increment_count:
@@ -235,7 +235,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
         rejected_aliases = []
         for alias in alias_items:
-            if call_name and alias.strip().lower() == call_name:
+            if local_call_name and alias.strip().lower() == local_call_name:
                 continue
             # Check ownership in the write itself to prevent concurrent claims.
             cursor = await self.conn.execute(
