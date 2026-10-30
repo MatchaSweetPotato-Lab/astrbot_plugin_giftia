@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 
 from astrbot.api import logger
 from astrbot.api.star import StarTools
@@ -14,6 +15,11 @@ INTERACTIVE_FEATURES_METADATA = [
     {"key": FeatureKey.REPEAT, "label": "消息复读", "note": "仅OneBot"},
     {"key": FeatureKey.LIKE, "label": "点赞名片", "note": "仅OneBot"},
     {"key": FeatureKey.DELETE, "label": "撤回自身消息", "note": ""},
+    {
+        "key": FeatureKey.BLOCK_USER,
+        "label": "屏蔽/取消屏蔽用户",
+        "note": "",
+    },
     {"key": FeatureKey.GROUP_ADMIN, "label": "群管禁言/踢人", "note": "踢人仅OneBot"},
     {"key": FeatureKey.TASK_BOARD, "label": "短期任务看板", "note": ""},
     {
@@ -140,6 +146,57 @@ class BotConfigManager:
         except Exception as e:
             logger.error(f"[Giftia BotConfigManager] 保存 {self.config_file} 失败: {e}")
             return False
+
+    def set_user_blocked(
+        self,
+        bot_name: str,
+        unified_msg_origin: str,
+        user_id: str,
+        *,
+        blocked: bool,
+    ) -> bool:
+        """Persist a session-scoped block change and refresh live bot maps.
+
+        Args:
+            bot_name: Name of the bot configuration owning the block list.
+            unified_msg_origin: Trusted platform session from the current event.
+            user_id: Single platform user ID, without numeric conversion.
+            blocked: Whether to block the user or remove an existing block.
+
+        Returns:
+            Whether the configuration was saved and the live maps refreshed.
+
+        Raises:
+            ValueError: If the user, session, or bot configuration is invalid.
+        """
+        user_id = str(user_id or "").strip()
+        if (
+            not user_id
+            or len(user_id.split()) != 1
+            or user_id.startswith("@")
+            or user_id == "all"
+        ):
+            raise ValueError("必须提供单个有效的用户ID。")
+        if not unified_msg_origin:
+            raise ValueError("未提供当前会话标识。")
+        bots = deepcopy(self.load_bots())
+        bot = next((b for b in bots if b["name"] == bot_name), None)
+        if bot is None:
+            raise ValueError("未找到对应的 Bot 配置。")
+        users = bot["blocked_users"].get(unified_msg_origin, [])
+        if blocked:
+            if user_id not in users:
+                users.append(user_id)
+        elif user_id in users:
+            users.remove(user_id)
+        if users:
+            bot["blocked_users"][unified_msg_origin] = users
+        else:
+            bot["blocked_users"].pop(unified_msg_origin, None)
+        if not self.save_bots(bots):
+            return False
+        self.plugin.sync_bot_maps()
+        return True
 
     @staticmethod
     def format_signature_voice_item(v: str | dict) -> str:

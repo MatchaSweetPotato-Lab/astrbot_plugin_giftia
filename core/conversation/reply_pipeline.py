@@ -47,6 +47,7 @@ class ReplyPipeline:
             "ban",
             "kick",
             "leave",
+            "user_block_actions",
             "tools_to_call",
             "native_tools_called",
             "add_stickers",

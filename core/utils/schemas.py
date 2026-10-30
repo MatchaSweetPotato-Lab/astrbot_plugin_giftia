@@ -22,6 +22,7 @@ class FeatureKey:
     REPEAT = "repeat"
     LIKE = "like"
     DELETE = "delete"
+    BLOCK_USER = "block_user"
     GROUP_ADMIN = "group_admin"
     TASK_BOARD = "task_board"
     SLANG = "slang"
@@ -205,6 +206,8 @@ FLAT_CLOSABLE_TAGS = [
     "poke",
     "ban",
     "kick",
+    "block_user",
+    "unblock_user",
     "leave",
     "summary_user_profile",
     "update_relation",
@@ -266,6 +269,8 @@ class XmlLlmResult:
     kick: list[tuple[str, str]] = field(default_factory=list)
     # 退群，同上。群号
     leave: list[str] = field(default_factory=list)
+    # Ordered block-list changes scoped to the current bot and platform session.
+    user_block_actions: list[tuple[str, str]] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
