@@ -209,7 +209,7 @@ class CallLLM:
         started_at = perf_counter()
         logger.info(
             f"[Giftia] Reply review started for {bot_name}:{group_or_user_id}: "
-            f"provider={provider_id}, timeout=5s, prompt_chars={len(user_prompt)}"
+            f"provider={provider_id}, timeout=10s, prompt_chars={len(user_prompt)}"
         )
         response = None
         raw_completion = ""
@@ -223,7 +223,7 @@ class CallLLM:
                     system_prompt=REPLY_REVIEW_PROMPT,
                     prompt=user_prompt,
                 ),
-                timeout=5,
+                timeout=10,
             )
             extra_info["status"] = "parse_failed"
             raw_completion = getattr(response, "completion_text", "") or ""
