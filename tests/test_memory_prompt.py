@@ -15,12 +15,14 @@ from core.bot.bot_config_manager import (
 from core.conversation.decision_engine import DecisionEngine
 from core.llm.native_tools import SearchMemoryTool
 from core.llm.preset_prompts import build_xml_instructions
-from core.llm.prompt import build_memory_items, build_reply_prompt
+from core.llm.prompt import build_decision_prompt, build_memory_items, build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     Decision,
     MessageData,
     SessionRecallMemory,
+    ShortTask,
+    Status,
 )
 
 
@@ -158,9 +160,7 @@ def test_memory_context_keeps_one_chronological_source_locator(cached):
         "message_id": '-9007199254740993&"',
     }
     assert rendered.text == record["text"]
-    guide = root.find("memory_usage_rules").text
-    for field in ("get_message_context", "message_id", "source", "group_id"):
-        assert field in guide
+    assert root.find("memory_usage_rules") is None
     for omitted in (
         "internal-id",
         "hidden original quote",
@@ -206,15 +206,66 @@ def test_memory_source_is_relative_to_current_session_and_kept_only_once(
     if current_session != "200":
         expected["source"] = f"来源{'私聊' if private else '群聊'}：200"
     assert memory.attrib == expected
-    guide = root.find("memory_usage_rules").text
-    if current_session == "200":
-        assert "隐私" not in guide
-    else:
-        assert "带 source 属性的记忆" in guide
-        assert "这些记忆若可能涉及隐私" in guide
+    assert root.find("memory_usage_rules") is None
     assert "source_session_id" not in prompt and "stale-session" not in prompt
     assert metadata["source_session_id"] == "200"
     assert metadata["source_label"] == "来源群聊：stale-session"
+
+
+@pytest.mark.parametrize("decision", [False, True])
+def test_user_context_keeps_session_data_without_fixed_usage_instructions(decision):
+    message = MessageData(user_id="member", content="会话专属词")
+    data = {
+        "recent_messages": [],
+        "bot_status": Status(),
+        "user_id": "member",
+        "group_data": "",
+        "group_profile": "会话自定义规则\n保留这段数据",
+        "short_tasks": [
+            ShortTask(
+                task_id="task",
+                bot_name="bot",
+                group_or_user_id="current",
+                creator_user_id="member",
+                creator_nickname="成员",
+                content="会话任务数据",
+                status="active",
+            )
+        ],
+        "slang_entries": [{"term": "会话专属词", "description": "本会话词汇解释"}],
+    }
+    if decision:
+        prompt = build_decision_prompt(**data, pending_messages=[message])
+    else:
+        prompt = build_reply_prompt(
+            **data,
+            media_captions=[],
+            reply_messages=[message],
+            relevant_memories=[
+                {
+                    "text": "会话记忆数据",
+                    "metadata": {"source_session_id": "other"},
+                }
+            ],
+            current_session_id="current",
+            relation_changes=[
+                {"source_label": "来源群聊：other", "reason": "互动数据", "delta": 1}
+            ],
+        )
+    root = fromstring("<context>" + prompt + "</context>")
+    assert root.find("group_rules").text.strip() == data["group_profile"]
+    assert root.find("task_board/task").text == "会话任务数据"
+    assert root.find("task_board/rule") is None
+    assert root.find("slang/term").text == "本会话词汇解释"
+    assert root.find("memory_usage_rules") is None
+    for rule in (
+        "任务默认保持进行中",
+        "以下词条仅供理解对话",
+        "非本会话互动记录若可能涉及隐私",
+        "这些记忆若可能涉及隐私",
+        "get_message_context",
+    ):
+        assert rule not in prompt
 
 
 @pytest.mark.parametrize(

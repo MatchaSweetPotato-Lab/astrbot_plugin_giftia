@@ -297,10 +297,6 @@ class SearchUserProfileTool(FunctionTool):
                 )
             if not history["items"]:
                 lines.append("暂无互动评价记录")
-            elif any(change.get("source_label") for change in history["items"]):
-                lines.append(
-                    "非本会话互动记录若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
-                )
 
         return "\n".join(lines)
 

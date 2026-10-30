@@ -29,7 +29,7 @@ from .native_tools import (
     NATIVE_TOOL_CONFIG_KEYS,
 )
 from .preset_prompts import (
-    REPLY_MEDIA_CAPTION_GUIDE,
+    REPLY_CONTEXT_GUIDE,
     REPLY_REVIEW_PROMPT,
     build_xml_instructions,
     get_audio_caption_prompt,
@@ -294,7 +294,7 @@ class CallLLM:
                         use_meme_manager=use_meme_manager,
                     )
                     actual_system_prompt = "\n\n".join(
-                        (system_prompt or "", REPLY_MEDIA_CAPTION_GUIDE, xml_inst)
+                        (system_prompt or "", REPLY_CONTEXT_GUIDE, xml_inst)
                     )
                     tools_set = None
                     native_tools = ToolSet()

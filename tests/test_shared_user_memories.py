@@ -376,7 +376,7 @@ async def test_sources_and_evidence_survive_recall_cache_without_entering_fact_t
     assert "source_session_id" not in prompt
     assert "private original quote" not in prompt
     assert "associated_user_ids" not in prompt
-    assert root.find("memory_usage_rules") is not None
+    assert root.find("memory_usage_rules") is None
     async with rt.db.conn.execute("SELECT hit_count, metadata FROM memories") as cursor:
         stored = await cursor.fetchall()
     assert all(row["hit_count"] == 1 for row in stored)
