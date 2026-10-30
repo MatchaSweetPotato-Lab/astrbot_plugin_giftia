@@ -44,7 +44,7 @@ class SearchChatHistoryTool(FunctionTool):
     name: str = "search_chat_history"
     description: str = (
         "搜索聊天历史，可指定群号；不填默认查询当前会话，所有参数均可选填。"
-        "每条记录包含 message_id，可传给 get_message_context 获取上下文。"
+        "可用返回的有效 message_id 续查上下文；头部若标有 group_id，续查时一并传入。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -104,9 +104,8 @@ class SearchChatHistoryTool(FunctionTool):
             logger.warning("SearchChatHistoryTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
 
-        group_or_user_id = (
-            (group_id or "").strip() or event.get_group_id() or event.get_sender_id()
-        )
+        current_session_id = event.get_group_id() or event.get_sender_id()
+        group_or_user_id = (group_id or "").strip() or current_session_id
         limit = min(limit, 50)
         msgs = await plugin.db.search_messages(
             group_or_user_id=group_or_user_id,
@@ -131,12 +130,24 @@ class SearchChatHistoryTool(FunctionTool):
                 )
                 call_names[m.user_id] = names["call_name"]
             nickname = call_names[m.user_id] or m.nickname
+            row_message_id = (
+                str(m.message_id) if type(m.message_id) in (str, int) else ""
+            )
+            message_ref = (
+                f"[message_id={row_message_id}]"
+                if row_message_id.strip()
+                else "[缺少消息 ID，无法续查]"
+            )
             timestamp = re.sub(r"(\d{2}:\d{2}:\d{2})[.,]\d+", r"\1", m.time)
             lines.append(
-                f"[{timestamp}] [message_id={m.message_id}] "
-                f"{nickname}({m.user_id}): {m.content}"
+                f"[{timestamp}] {message_ref} {nickname}({m.user_id}): {m.content}"
             )
-        return "查询到的历史记录:\n" + "\n".join(lines)
+        scope = (
+            f"（group_id={group_or_user_id}）"
+            if str(group_or_user_id) != str(current_session_id)
+            else ""
+        )
+        return f"查询到的历史记录{scope}:\n" + "\n".join(lines)
 
 
 @dataclass
@@ -153,7 +164,7 @@ class GetMessageContextTool(FunctionTool):
             "properties": {
                 "message_id": {
                     "type": "string",
-                    "description": "目标消息的真实 message_id。",
+                    "description": "目标消息的非空真实 message_id。",
                 },
                 "group_id": {
                     "type": "string",
@@ -178,6 +189,9 @@ class GetMessageContextTool(FunctionTool):
         if self.plugin is None:
             logger.warning("GetMessageContextTool 未绑定插件实例")
             return "检索失败：未找到插件实例"
+        if type(message_id) not in (str, int) or not str(message_id).strip():
+            return "查询失败：请提供有效的非空消息 ID"
+        message_id = str(message_id)
         plugin: Giftia = self.plugin
         event: AstrMessageEvent = context.context.event
         bot_name = resolve_bot_name(plugin, event)
@@ -185,9 +199,8 @@ class GetMessageContextTool(FunctionTool):
             logger.warning("GetMessageContextTool 未找到对应的 bot_name")
             return "检索失败：未找到对应的 bot_name"
 
-        group_or_user_id = (
-            (group_id or "").strip() or event.get_group_id() or event.get_sender_id()
-        )
+        current_session_id = event.get_group_id() or event.get_sender_id()
+        group_or_user_id = (group_id or "").strip() or current_session_id
         limit = min(limit, 50)
         msgs = await plugin.db.get_message_context(
             message_id=message_id,
@@ -208,13 +221,25 @@ class GetMessageContextTool(FunctionTool):
                 )
                 call_names[m.user_id] = names["call_name"]
             nickname = call_names[m.user_id] or m.nickname
-            prefix = "=> " if str(m.message_id) == str(message_id) else "   "
+            row_message_id = (
+                str(m.message_id) if type(m.message_id) in (str, int) else ""
+            )
+            message_ref = (
+                f"[message_id={row_message_id}]"
+                if row_message_id.strip()
+                else "[缺少消息 ID，无法续查]"
+            )
+            prefix = "=> " if row_message_id == message_id else "   "
             timestamp = re.sub(r"(\d{2}:\d{2}:\d{2})[.,]\d+", r"\1", m.time)
             lines.append(
-                f"{prefix}[{timestamp}] [message_id={m.message_id}] "
-                f"{nickname}({m.user_id}): {m.content}"
+                f"{prefix}[{timestamp}] {message_ref} {nickname}({m.user_id}): {m.content}"
             )
-        return f"消息 {message_id} 的上下文:\n" + "\n".join(lines)
+        scope = (
+            f"（group_id={group_or_user_id}）"
+            if str(group_or_user_id) != str(current_session_id)
+            else ""
+        )
+        return f"消息 {message_id} 的上下文{scope}:\n" + "\n".join(lines)
 
 
 @dataclass

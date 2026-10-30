@@ -126,6 +126,11 @@ async def test_query_scope_defaults_and_explicit_groups(
     if expected_group == "999":
         assert "未找到" in output
     else:
+        if expected_group != current_session:
+            assert f"group_id={expected_group}" in output.splitlines()[0]
+            assert output.count("group_id=") == 1
+        else:
+            assert "group_id=" not in output
         for label in ("before", "target", "after"):
             assert f"bot/{expected_group}/{label}" in output
             assert f"[message_id=shared-{label}]" in output
@@ -138,6 +143,117 @@ async def test_query_scope_defaults_and_explicit_groups(
             assert f"bot/{session}/" not in output
     assert "other-bot/" not in output
     assert event.get_group_id() == ("" if private else "100")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("name", ["search_chat_history", "get_message_context"])
+@pytest.mark.parametrize("message_id", [None, "", " \t "])
+@pytest.mark.parametrize("group_id", [None, "200"])
+async def test_missing_message_ids_keep_content_without_exposing_followup_ids(
+    runtime, mode, name, message_id, group_id
+):
+    db = runtime.tools[name].plugin.db
+    session = group_id or "100"
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id=session,
+            message_id=message_id,
+            user_id="alice",
+            nickname="Member",
+            content="legacy record without a usable ID",
+            time="2026-10-28T12:00:30+08:00",
+        ),
+    )
+    arguments = (
+        {"keyword": "legacy record"}
+        if name == "search_chat_history"
+        else {"message_id": "shared-target", "limit": 1}
+    )
+    if group_id is not None:
+        arguments["group_id"] = group_id
+    if mode == "native":
+        output = await runtime.tools[name].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", name, arguments
+        )
+        output = result["results"]
+    [legacy_line] = [line for line in output.splitlines() if "legacy record" in line]
+    assert "缺少消息 ID，无法续查" in legacy_line
+    assert "message_id=" not in legacy_line
+    assert "=>" not in legacy_line
+    if name == "get_message_context":
+        assert "=> [" in output and "[message_id=shared-target]" in output
+    async with db.query(
+        "SELECT message_id FROM chat_history "
+        "WHERE bot_name='bot' AND group_or_user_id=? AND content=?",
+        (session, "legacy record without a usable ID"),
+    ) as cursor:
+        stored = await cursor.fetchone()
+    assert stored["message_id"] == message_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("message_id", [None, "", " \t\n ", False, [], {}])
+async def test_context_rejects_invalid_message_ids_before_querying(
+    runtime, monkeypatch, mode, message_id
+):
+    db = runtime.tools["get_message_context"].plugin.db
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id="100",
+            message_id="",
+            user_id="alice",
+            content="this empty-ID row must never be returned",
+            time="2026-10-28T12:00:30+08:00",
+        ),
+    )
+    query = AsyncMock(wraps=db.get_message_context)
+    monkeypatch.setattr(db, "get_message_context", query)
+    arguments = {"message_id": message_id, "limit": 0}
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    assert "非空消息 ID" in output
+    assert "this empty-ID row" not in output
+    query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("message_id", [0, -123, "local_opaque-id"])
+async def test_context_preserves_numeric_and_local_message_ids(runtime, mode, message_id):
+    db = runtime.tools["get_message_context"].plugin.db
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id="100",
+            message_id=str(message_id),
+            user_id="alice",
+            nickname="Member",
+            content="numeric or local ID target",
+            time="2026-10-28T12:01:30+08:00",
+        ),
+    )
+    arguments = {"message_id": message_id, "limit": 0}
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    assert f"[message_id={message_id}]" in output
+    assert "numeric or local ID target" in output
+    assert output.count("=>") == 1
 
 
 @pytest.mark.asyncio
@@ -227,7 +343,7 @@ async def test_search_result_message_id_fetches_context(runtime, mode, private, 
     expected_session = group_id or current_session
     arguments = {"keyword": "needle", "user_id": "bob", "limit": 1}
     for name in ("search_chat_history", "get_message_context"):
-        if group_id is not None:
+        if name == "search_chat_history" and group_id is not None:
             arguments["group_id"] = group_id
         if mode == "native":
             output = await runtime.tools[name].call(runtime.run, **arguments)
@@ -250,6 +366,9 @@ async def test_search_result_message_id_fetches_context(runtime, mode, private, 
             match = re.search(r"\[message_id=([^\]]+)\]", output)
             assert match is not None, "Search results must expose a message ID"
             arguments = {"message_id": match.group(1), "limit": 1}
+            scope = re.search(r"group_id=([^）\s]+)", output.splitlines()[0])
+            if scope is not None:
+                arguments["group_id"] = scope.group(1)
         else:
             for label in ("before", "target", "after"):
                 assert f"bot/{expected_session}/{label}" in output
