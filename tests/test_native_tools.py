@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from xml.etree.ElementTree import fromstring
 
 import pytest
 import pytest_asyncio
@@ -282,7 +283,8 @@ async def test_memory_tool_keeps_user_scope_sources_and_multiple_searches(runtim
             "text": "Alice likes photography",
             "metadata": {
                 "source_label": "来源群聊：other",
-                "evidence": [{"quote": "hidden quote"}],
+                "source_session_id": "other",
+                "evidence": [{"message_id": "original-message", "quote": "hidden quote"}],
             },
         }
     ]
@@ -290,6 +292,14 @@ async def test_memory_tool_keeps_user_scope_sources_and_multiple_searches(runtim
     second = json.loads(await rt.tools["search_memory"].call(rt.run, "camera", "carol"))
     assert first["status"] == second["status"] == "success"
     assert "来源群聊：other" in first["memory_context"]
+    for result in (first, second):
+        memory = fromstring(result["memory_context"])
+        assert memory.attrib["message_id"] == "original-message"
+        assert memory.attrib["source"] == "来源群聊：other"
+        assert "source_session_id" not in result["memory_context"] + result["usage"]
+        for field in ("get_message_context", "source", "group_id"):
+            assert field in result["usage"]
+        assert "带 source 属性的记忆" in result["usage"]
     assert (
         "hidden quote" not in first["memory_context"]
         and "hidden-id" not in first["memory_context"]

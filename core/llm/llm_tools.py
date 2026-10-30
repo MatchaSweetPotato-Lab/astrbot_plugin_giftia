@@ -144,9 +144,8 @@ class GetMessageContextTool(FunctionTool):
     plugin: Any = None
     name: str = "get_message_context"
     description: str = (
-        "获取特定消息前后的上下文记录，可指定群号，不填默认当前会话。"
-        "使用 search_chat_history 返回的 message_id；"
-        "若搜索时指定了 group_id，此处需传入相同的群号。"
+        "根据已知的真实消息 ID 获取其前后的上下文记录。"
+        "可指定该消息所属会话，留空默认查询当前会话。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -154,11 +153,11 @@ class GetMessageContextTool(FunctionTool):
             "properties": {
                 "message_id": {
                     "type": "string",
-                    "description": "目标消息的 message_id，取自 search_chat_history 返回的记录。",
+                    "description": "目标消息的真实 message_id。",
                 },
                 "group_id": {
                     "type": "string",
-                    "description": "目标群号；省略或留空时查询当前群聊，私聊中则查询当前私聊。",
+                    "description": "消息所属会话 ID（群号或私聊用户 ID）；省略或留空时使用当前会话。",
                 },
                 "limit": {
                     "type": "integer",

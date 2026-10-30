@@ -362,15 +362,18 @@ async def test_sources_and_evidence_survive_recall_cache_without_entering_fact_t
     assert json.loads(
         next(item.metadata for item in cached if item.memory_id == "foreign")
     )["evidence"] == [{"quote": "private original quote"}]
-    prompt = build_reply_prompt([], [], None, session_recalled_memories=cached)
+    prompt = build_reply_prompt(
+        [], [], None, session_recalled_memories=cached, current_session_id="current"
+    )
     root = fromstring("<context>" + prompt + "</context>")
     memories = {
         item.text: item.attrib
         for item in root.findall("session_recalled_memories/memory")
     }
     assert memories["fact foreign <&>"]["source"] == f"来源群聊：{source}"
-    assert memories["fact private <&>"]["source"] == "来源私聊"
+    assert memories["fact private <&>"]["source"] == "来源私聊：alice"
     assert "source" not in memories["fact local <&>"]
+    assert "source_session_id" not in prompt
     assert "private original quote" not in prompt
     assert "associated_user_ids" not in prompt
     assert root.find("memory_usage_rules") is not None

@@ -2,14 +2,17 @@ import json
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from xml.etree.ElementTree import Element, tostring
+from xml.etree.ElementTree import Element, fromstring, tostring
 
 import pytest
 import pytest_asyncio
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.conversation.tool_executor import ToolExecutor
+from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.llm.llm_tools import GetMessageContextTool, SearchChatHistoryTool
+from core.llm.native_tools import SearchMemoryTool
+from core.llm.prompt import build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import SYSTEM_XML_TAGS, MessageData
 
@@ -256,6 +259,88 @@ async def test_search_result_message_id_fetches_context(runtime, mode, private, 
             for session in ("100", "200", "300"):
                 if session != expected_session:
                     assert f"bot/{session}/" not in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("source_session", ["100", "200", "300"])
+async def test_memory_tool_and_automatic_recall_locate_the_same_original_context(
+    runtime, monkeypatch, mode, source_session
+):
+    plugin = runtime.tools["get_message_context"].plugin
+    plugin.bot_map = {"bot": {}}
+    plugin.embedding_conf = {"enabled": True}
+    source_messages = await plugin.db.get_message_context(
+        "shared-target", source_session, "bot", limit=1
+    )
+    record = {
+        "id": "internal-memory",
+        "text": "我记得成员在这个会话说过的话。",
+        "metadata": {
+            "source_session_id": source_session,
+            "associated_user_ids": ["300"] if source_session == "300" else ["bob"],
+            "evidence": [
+                {"message_id": message.message_id, "time": message.time}
+                for message in reversed(source_messages)
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        "core.llm.native_tools.search_memories_with_rerank",
+        AsyncMock(return_value=[record]),
+    )
+    runtime.tools["search_memory"] = SearchMemoryTool(plugin=plugin)
+    if mode == "native":
+        output = await runtime.tools["search_memory"].call(runtime.run, query="以前的话")
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "search_memory", {"query": "以前的话"}
+        )
+        output = result["results"]
+    tool_memory = fromstring(json.loads(output)["memory_context"])
+    expected = {"message_id": "shared-target"}
+    if source_session != "100":
+        kind = "私聊" if source_session == "300" else "群聊"
+        expected["source"] = f"来源{kind}：{source_session}"
+    assert tool_memory.attrib == expected
+    assert "source_session_id" not in output
+
+    cache = DataCache(plugin.db, None, None)
+    pooled = cache.merge_session_recalled_memories("bot", "100", [record])
+    for recalled in (
+        {"relevant_memories": [record]},
+        {"session_recalled_memories": pooled},
+    ):
+        prompt = build_reply_prompt(
+            recent_messages=[],
+            media_captions=[],
+            bot_status=None,
+            current_session_id="100",
+            **recalled,
+        )
+        root = fromstring("<context>" + prompt + "</context>")
+        [memory] = root.findall(".//memory")
+        assert memory.attrib == expected
+
+    arguments = {
+        "message_id": tool_memory.attrib["message_id"],
+        "limit": 1,
+    }
+    if "source" in tool_memory.attrib:
+        arguments["group_id"] = tool_memory.attrib["source"].partition("：")[2]
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    for label in ("before", "target", "after"):
+        assert f"bot/{source_session}/{label}" in output
+    assert "other-bot/" not in output
+    for session in ("100", "200", "300"):
+        if session != source_session:
+            assert f"bot/{session}/" not in output
 
 
 @pytest.mark.asyncio

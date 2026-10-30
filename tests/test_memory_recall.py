@@ -325,6 +325,7 @@ async def test_foreign_pool_memories_follow_current_participants_without_losing_
         "associated_user_ids": ["alice"],
         "source_session_id": "other-group",
         "source_label": "来源群聊：other-group",
+        "evidence": [{"message_id": "original-message", "time": "2026-10-30T12:00:00"}],
     }
     runtime.cache.merge_session_recalled_memories(
         "bot", "group", [foreign, memory("local", text="local fact")]
@@ -337,6 +338,15 @@ async def test_foreign_pool_memories_follow_current_participants_without_losing_
     prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
     assert "Alice's foreign fact" in prompt
     assert "来源群聊：other-group" in prompt
+    root = fromstring("<context>" + prompt + "</context>")
+    [rendered] = [
+        item
+        for item in root.findall("session_recalled_memories/memory")
+        if item.text == "Alice's foreign fact"
+    ]
+    assert rendered.attrib["message_id"] == "original-message"
+    assert rendered.attrib["source"] == "来源群聊：other-group"
+    assert "source_session_id" not in prompt
 
 
 @pytest.mark.asyncio

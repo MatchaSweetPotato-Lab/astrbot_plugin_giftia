@@ -27,6 +27,15 @@ MSG_PROPS = [
 # 操作同上
 CAPTION_PROPS = ["genre", "character", "source", "text", "caption"]
 MAX_FORWARDED_INDEX_IN_PROMPT = 20
+MEMORY_CONTEXT_LOOKUP_GUIDE = (
+    "记忆附带 message_id 时，可用 get_message_context 按需核对原文："
+    "未标 source 时使用当前会话，省略 group_id；"
+    "标注 source 时，将其中的群号或私聊用户 ID 传入 group_id。"
+)
+MEMORY_SOURCE_PRIVACY_GUIDE = (
+    "带 source 属性的记忆来自其他会话，不要误认为本会话发生的经历；"
+    "这些记忆若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
+)
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
@@ -391,6 +400,7 @@ def build_reply_prompt(
     relation_changes: list[dict] | None = None,
     relation_score: dict[str, int | float] | None = None,
     user_profiles: list[dict] | None = None,
+    current_session_id: str = "",
 ) -> str:
     recent_messages, reply_messages = prepare_reply_message_context(
         recent_messages, reply_messages or []
@@ -440,8 +450,14 @@ def build_reply_prompt(
 
     # Current results take precedence over copies from earlier turns.
     seen_memory_ids = set()
-    relevant_block = build_memory_items(relevant_memories or [], seen_memory_ids)
-    session_block = build_memory_items(session_recalled_memories or [], seen_memory_ids)
+    relevant_block = build_memory_items(
+        relevant_memories or [], seen_memory_ids, current_session_id=current_session_id
+    )
+    session_block = build_memory_items(
+        session_recalled_memories or [],
+        seen_memory_ids,
+        current_session_id=current_session_id,
+    )
     user_prompt = []
 
     # Keep rules, tasks, and member summaries in the stable prefix.
@@ -459,15 +475,12 @@ def build_reply_prompt(
         user_prompt.append(active_user_briefs_block)
 
     # Recalled context includes this batch and memories retained by the session pool.
-    if (relevant_block or session_block) and any(
-        memory_metadata(
-            item if isinstance(item, dict) else {"metadata": item.metadata}
-        ).get("source_label")
-        for item in [*(relevant_memories or []), *(session_recalled_memories or [])]
-    ):
+    if relevant_block or session_block:
+        memory_usage_rules = MEMORY_CONTEXT_LOOKUP_GUIDE
+        if "<memory source=" in relevant_block or "<memory source=" in session_block:
+            memory_usage_rules += MEMORY_SOURCE_PRIVACY_GUIDE
         user_prompt.append(
-            "<memory_usage_rules>标注来源的记忆来自其他会话，不要误认为本会话发生的经历。"
-            "若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。</memory_usage_rules>"
+            f"<memory_usage_rules>{memory_usage_rules}</memory_usage_rules>"
         )
     if session_block:
         user_prompt.append(
@@ -872,18 +885,25 @@ def format_memory_time(value: str) -> str:
         return normalized[:16] if len(normalized) >= 16 else normalized
 
 
-def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
+def build_memory_items(
+    memories,
+    seen_ids: set[str] | None = None,
+    *,
+    current_session_id: str = "",
+) -> str:
     """Render compact memory context without exposing maintenance identifiers.
 
     Args:
         memories: Recalled dictionaries or persisted memory records.
         seen_ids: Shared internal identifiers already rendered in this prompt.
+        current_session_id: Requesting conversation used to identify external sources.
 
     Returns:
-        Escaped memory XML with factual text and available times.
+        Escaped memory XML with factual text, times and at most one source locator.
     """
     if seen_ids is None:
         seen_ids = set()
+    current_session_id = str(current_session_id or "").strip()
     xmls = []
     for memory in memories:
         item = (
@@ -903,8 +923,64 @@ def build_memory_items(memories, seen_ids: set[str] | None = None) -> str:
         metadata = memory_metadata(item)
         attrs = []
         source_label = str(metadata.get("source_label") or "").strip()
+        source_session_id = metadata.get("source_session_id") or item.get(
+            "group_or_user_id"
+        )
+        source_session_id = (
+            str(source_session_id).strip()
+            if type(source_session_id) in (str, int)
+            else ""
+        )
+        if source_session_id and (current_session_id or source_label):
+            if source_session_id == current_session_id:
+                source_label = ""
+            else:
+                associated = metadata.get("associated_user_ids", [])
+                is_private = source_label.startswith("来源私聊") or (
+                    isinstance(associated, list)
+                    and any(
+                        type(uid) in (str, int) and str(uid) == source_session_id
+                        for uid in associated
+                    )
+                )
+                source_label = (
+                    f"来源{'私聊' if is_private else '群聊'}：{source_session_id}"
+                )
         if source_label:
             attrs.append(f"source={quoteattr(source_label)}")
+        evidence = metadata.get("evidence")
+        if (
+            source_session_id
+            and (source_session_id == current_session_id or source_label)
+            and isinstance(evidence, list)
+        ):
+            message_ids = []
+            timed_ids = []
+            for ref in evidence:
+                if not isinstance(ref, dict) or type(ref.get("message_id")) not in (
+                    str,
+                    int,
+                ):
+                    continue
+                message_id = str(ref["message_id"]).strip()
+                if not message_id:
+                    continue
+                message_ids.append(message_id)
+                try:
+                    timestamp = datetime.fromisoformat(
+                        str(ref.get("time") or "").replace("Z", "+00:00")
+                    ).timestamp()
+                except (ValueError, OverflowError, OSError):
+                    continue
+                timed_ids.append((timestamp, message_id))
+            # Prefer chronological evidence; legacy records may lack usable times.
+            if timed_ids:
+                timed_ids.sort(key=lambda entry: entry[0])
+                message_ids = [message_id for _, message_id in timed_ids]
+            if message_ids:
+                attrs.append(
+                    f"message_id={quoteattr(message_ids[len(message_ids) // 2])}"
+                )
         times = {
             field: item.get(field) or metadata.get(field)
             for field in (

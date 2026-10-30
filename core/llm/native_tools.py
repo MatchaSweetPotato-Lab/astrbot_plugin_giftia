@@ -13,7 +13,11 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from ..conversation.memory_recall import search_memories_with_rerank
 from ..memory.recall_scope import resolve_memory_recall_scope
 from ..utils.event_utils import get_adapter_id, resolve_bot_name
-from .prompt import build_memory_items
+from .prompt import (
+    MEMORY_CONTEXT_LOOKUP_GUIDE,
+    MEMORY_SOURCE_PRIVACY_GUIDE,
+    build_memory_items,
+)
 
 NATIVE_CONTEXT_KEY = "giftia_native_tools"
 NATIVE_TOOL_CONFIG_KEYS = {
@@ -163,8 +167,10 @@ class SearchMemoryTool(FunctionTool):
                 {
                     "status": "success",
                     "count": len(memories),
-                    "memory_context": build_memory_items(memories),
-                    "usage": "非本会话记忆不能误认作当前会话经历；若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。",
+                    "memory_context": build_memory_items(
+                        memories, current_session_id=state["session_id"]
+                    ),
+                    "usage": MEMORY_CONTEXT_LOOKUP_GUIDE + MEMORY_SOURCE_PRIVACY_GUIDE,
                 },
                 ensure_ascii=False,
             )
