@@ -44,6 +44,7 @@ class SearchChatHistoryTool(FunctionTool):
     name: str = "search_chat_history"
     description: str = (
         "搜索聊天历史，可指定群号；不填默认查询当前会话，所有参数均可选填。"
+        "每条记录包含 message_id，可传给 get_message_context 获取上下文。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -121,7 +122,20 @@ class SearchChatHistoryTool(FunctionTool):
             logger.info("SearchChatHistoryTool 未找到相关历史记录")
             return "未找到相关历史记录"
 
-        lines = [f"[{m.time}] {m.nickname}({m.user_id}): {m.content}" for m in msgs]
+        call_names = {}
+        lines = []
+        for m in msgs:
+            if m.user_id not in call_names:
+                names = await plugin.db.get_user_call_names(
+                    bot_name, group_or_user_id, m.user_id
+                )
+                call_names[m.user_id] = names["call_name"]
+            nickname = call_names[m.user_id] or m.nickname
+            timestamp = re.sub(r"(\d{2}:\d{2}:\d{2})[.,]\d+", r"\1", m.time)
+            lines.append(
+                f"[{timestamp}] [message_id={m.message_id}] "
+                f"{nickname}({m.user_id}): {m.content}"
+            )
         return "查询到的历史记录:\n" + "\n".join(lines)
 
 
@@ -129,14 +143,18 @@ class SearchChatHistoryTool(FunctionTool):
 class GetMessageContextTool(FunctionTool):
     plugin: Any = None
     name: str = "get_message_context"
-    description: str = "获取特定消息前后的上下文记录，可指定群号，不填默认当前会话。如果你在搜索记录时得到了一条消息，可以用它的message_id来这里获取上下文。"
+    description: str = (
+        "获取特定消息前后的上下文记录，可指定群号，不填默认当前会话。"
+        "使用 search_chat_history 返回的 message_id；"
+        "若搜索时指定了 group_id，此处需传入相同的群号。"
+    )
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "message_id": {
                     "type": "string",
-                    "description": "目标消息的ID。",
+                    "description": "目标消息的 message_id，取自 search_chat_history 返回的记录。",
                 },
                 "group_id": {
                     "type": "string",
@@ -182,10 +200,21 @@ class GetMessageContextTool(FunctionTool):
             logger.warning("GetMessageContextTool 未找到上下文记录")
             return "未找到上下文记录"
 
+        call_names = {}
         lines = []
         for m in msgs:
+            if m.user_id not in call_names:
+                names = await plugin.db.get_user_call_names(
+                    bot_name, group_or_user_id, m.user_id
+                )
+                call_names[m.user_id] = names["call_name"]
+            nickname = call_names[m.user_id] or m.nickname
             prefix = "=> " if str(m.message_id) == str(message_id) else "   "
-            lines.append(f"{prefix}[{m.time}] {m.nickname}({m.user_id}): {m.content}")
+            timestamp = re.sub(r"(\d{2}:\d{2}:\d{2})[.,]\d+", r"\1", m.time)
+            lines.append(
+                f"{prefix}[{timestamp}] [message_id={m.message_id}] "
+                f"{nickname}({m.user_id}): {m.content}"
+            )
         return f"消息 {message_id} 的上下文:\n" + "\n".join(lines)
 
 
