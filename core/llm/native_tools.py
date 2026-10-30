@@ -163,8 +163,9 @@ class SearchMemoryTool(FunctionTool):
                 {
                     "status": "success",
                     "count": len(memories),
-                    "memory_context": build_memory_items(memories),
-                    "usage": "非本会话记忆不能误认作当前会话经历；若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。",
+                    "memory_context": build_memory_items(
+                        memories, current_session_id=state["session_id"]
+                    ),
                 },
                 ensure_ascii=False,
             )

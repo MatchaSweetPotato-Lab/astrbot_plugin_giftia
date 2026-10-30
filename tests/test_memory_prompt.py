@@ -15,12 +15,14 @@ from core.bot.bot_config_manager import (
 from core.conversation.decision_engine import DecisionEngine
 from core.llm.native_tools import SearchMemoryTool
 from core.llm.preset_prompts import build_xml_instructions
-from core.llm.prompt import build_reply_prompt
+from core.llm.prompt import build_decision_prompt, build_memory_items, build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     Decision,
     MessageData,
     SessionRecallMemory,
+    ShortTask,
+    Status,
 )
 
 
@@ -111,6 +113,197 @@ def test_legacy_classification_does_not_enter_context_or_invent_event_time():
         "relevant_memories/memory"
     )
     assert set(memory.attrib) == {"recorded_at"}
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_memory_context_keeps_one_chronological_source_locator(cached):
+    metadata = {
+        "source_session_id": 'other&"group',
+        "source_label": "来源群聊：other",
+        "evidence": [
+            {"message_id": "late", "time": "2026-10-30T04:00:00Z"},
+            {"message_id": "early", "time": "2026-10-30T10:00:00+08:00"},
+            {
+                "source_id": 999,
+                "message_id": '-9007199254740993&"',
+                "time": "2026-10-29T23:00:00-04:00",
+                "quote": "hidden original quote",
+            },
+            {"message_id": "undated", "time": "invalid"},
+            {"source_id": 123},
+            {"message_id": False},
+            None,
+        ],
+    }
+    record = {"id": "internal-id", "text": "我记得这件事。", "metadata": metadata}
+    if cached:
+        memories = [
+            SessionRecallMemory(
+                memory_id=record["id"], text=record["text"], metadata=json.dumps(metadata)
+            )
+        ]
+    else:
+        memories = [record]
+    prompt = build_reply_prompt(
+        recent_messages=[],
+        media_captions=[],
+        bot_status=None,
+        current_session_id="current",
+        **{
+            "session_recalled_memories" if cached else "relevant_memories": memories
+        },
+    )
+    root = fromstring("<context>" + prompt + "</context>")
+    [rendered] = root.findall(".//memory")
+    assert rendered.attrib == {
+        "source": '来源群聊：other&"group',
+        "message_id": '-9007199254740993&"',
+    }
+    assert rendered.text == record["text"]
+    assert root.find("memory_usage_rules") is None
+    for omitted in (
+        "internal-id",
+        "hidden original quote",
+        "source_id=",
+        "source_session_id",
+        "undated",
+    ):
+        assert omitted not in prompt
+    assert metadata["evidence"][0]["message_id"] == "late"
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("current_session", ["200", "current"])
+def test_memory_source_is_relative_to_current_session_and_kept_only_once(
+    cached, private, current_session
+):
+    metadata = {
+        "source_session_id": "200",
+        "source_label": "来源群聊：stale-session",
+        "associated_user_ids": ["200"] if private else ["member"],
+        "evidence": [{"message_id": "original"}],
+    }
+    record = {"id": "fact", "text": "一个事实", "metadata": metadata}
+    if cached:
+        memories = [
+            SessionRecallMemory(
+                memory_id="fact", text=record["text"], metadata=json.dumps(metadata)
+            )
+        ]
+    else:
+        memories = [record]
+    prompt = build_reply_prompt(
+        [],
+        [],
+        None,
+        current_session_id=current_session,
+        **{"session_recalled_memories" if cached else "relevant_memories": memories},
+    )
+    root = fromstring("<context>" + prompt + "</context>")
+    [memory] = root.findall(".//memory")
+    expected = {"message_id": "original"}
+    if current_session != "200":
+        expected["source"] = f"来源{'私聊' if private else '群聊'}：200"
+    assert memory.attrib == expected
+    assert root.find("memory_usage_rules") is None
+    assert "source_session_id" not in prompt and "stale-session" not in prompt
+    assert metadata["source_session_id"] == "200"
+    assert metadata["source_label"] == "来源群聊：stale-session"
+
+
+@pytest.mark.parametrize("decision", [False, True])
+def test_user_context_keeps_session_data_without_fixed_usage_instructions(decision):
+    message = MessageData(user_id="member", content="会话专属词")
+    data = {
+        "recent_messages": [],
+        "bot_status": Status(),
+        "user_id": "member",
+        "group_data": "",
+        "group_profile": "会话自定义规则\n保留这段数据",
+        "short_tasks": [
+            ShortTask(
+                task_id="task",
+                bot_name="bot",
+                group_or_user_id="current",
+                creator_user_id="member",
+                creator_nickname="成员",
+                content="会话任务数据",
+                status="active",
+            )
+        ],
+        "slang_entries": [{"term": "会话专属词", "description": "本会话词汇解释"}],
+    }
+    if decision:
+        prompt = build_decision_prompt(**data, pending_messages=[message])
+    else:
+        prompt = build_reply_prompt(
+            **data,
+            media_captions=[],
+            reply_messages=[message],
+            relevant_memories=[
+                {
+                    "text": "会话记忆数据",
+                    "metadata": {"source_session_id": "other"},
+                }
+            ],
+            current_session_id="current",
+            relation_changes=[
+                {"source_label": "来源群聊：other", "reason": "互动数据", "delta": 1}
+            ],
+        )
+    root = fromstring("<context>" + prompt + "</context>")
+    assert root.find("group_rules").text.strip() == data["group_profile"]
+    assert root.find("task_board/task").text == "会话任务数据"
+    assert root.find("task_board/rule") is None
+    assert root.find("slang/term").text == "本会话词汇解释"
+    assert root.find("memory_usage_rules") is None
+    for rule in (
+        "任务默认保持进行中",
+        "以下词条仅供理解对话",
+        "非本会话互动记录若可能涉及隐私",
+        "这些记忆若可能涉及隐私",
+        "get_message_context",
+    ):
+        assert rule not in prompt
+
+
+@pytest.mark.parametrize(
+    "metadata,scope,expected",
+    [
+        (
+            {"source_session_id": "200", "evidence": [{"source_id": 7}]},
+            {},
+            {"source": "来源群聊：200"},
+        ),
+        ({"evidence": [{"message_id": "real"}]}, {}, {}),
+        (
+            {"source_session_id": "200", "evidence": "broken"},
+            {},
+            {"source": "来源群聊：200"},
+        ),
+        (
+            {"source_session_id": "200", "evidence": [None, {"message_id": []}]},
+            {},
+            {"source": "来源群聊：200"},
+        ),
+        (
+            {"evidence": [{"message_id": -123}]},
+            {"group_or_user_id": "300"},
+            {"message_id": "-123"},
+        ),
+    ],
+)
+def test_legacy_memory_locators_require_real_message_ids_and_known_sessions(
+    metadata, scope, expected
+):
+    rendered = fromstring(
+        build_memory_items(
+            [{"text": "旧记忆", "metadata": metadata, **scope}],
+            current_session_id="300",
+        )
+    )
+    assert rendered.attrib == expected
 
 
 @pytest.mark.asyncio

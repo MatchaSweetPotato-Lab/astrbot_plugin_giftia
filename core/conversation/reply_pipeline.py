@@ -547,6 +547,7 @@ class ReplyPipeline:
 
         # 3. 构造回复提示词 Prompt
         user_prompt = build_reply_prompt(
+            current_session_id=group_or_user_id,
             recent_messages=prompt_recent_messages,
             media_captions=media_captions,
             reply_messages=prompt_reply_messages,

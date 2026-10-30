@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from xml.etree.ElementTree import fromstring
 
 import pytest
 import pytest_asyncio
@@ -25,8 +26,10 @@ from core.llm.native_tools import (
     ListScheduledTasksTool,
     SearchMemoryTool,
 )
+from core.llm.prompt import build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.scheduler import Scheduler
+from core.utils.schemas import MessageData
 
 
 @pytest_asyncio.fixture
@@ -282,7 +285,8 @@ async def test_memory_tool_keeps_user_scope_sources_and_multiple_searches(runtim
             "text": "Alice likes photography",
             "metadata": {
                 "source_label": "来源群聊：other",
-                "evidence": [{"quote": "hidden quote"}],
+                "source_session_id": "other",
+                "evidence": [{"message_id": "original-message", "quote": "hidden quote"}],
             },
         }
     ]
@@ -290,6 +294,12 @@ async def test_memory_tool_keeps_user_scope_sources_and_multiple_searches(runtim
     second = json.loads(await rt.tools["search_memory"].call(rt.run, "camera", "carol"))
     assert first["status"] == second["status"] == "success"
     assert "来源群聊：other" in first["memory_context"]
+    for result in (first, second):
+        memory = fromstring(result["memory_context"])
+        assert memory.attrib["message_id"] == "original-message"
+        assert memory.attrib["source"] == "来源群聊：other"
+        assert "source_session_id" not in result["memory_context"]
+        assert set(result) == {"status", "count", "memory_context"}
     assert (
         "hidden quote" not in first["memory_context"]
         and "hidden-id" not in first["memory_context"]
@@ -343,6 +353,71 @@ def test_memory_and_scheduled_tool_switches_default_to_enabled():
     items = schema["tools_config"]["items"]
     for key in ("search_memory_enabled", "scheduled_tasks_enabled"):
         assert items[key]["type"] == "bool" and items[key]["default"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_tools,force_xml", [(False, False), (True, False), (False, True), (True, True)]
+)
+async def test_context_rules_stay_in_system_and_are_stable_across_recall_results(
+    runtime, source_tools, force_xml
+):
+    systems = []
+    for source_session in (None, "group", "other"):
+        memories = (
+            [
+                {
+                    "text": "本轮专属的记忆正文",
+                    "metadata": {"source_session_id": source_session},
+                }
+            ]
+            if source_session
+            else []
+        )
+        user_prompt = build_reply_prompt(
+            [],
+            [],
+            None,
+            reply_messages=[MessageData(user_id="alice", content="本轮专属的聊天正文")],
+            group_profile="本会话的自定义群规",
+            relevant_memories=memories,
+            current_session_id="group",
+        )
+        result = await runtime.caller.call_llm_reply(
+            runtime.event,
+            "group",
+            ["provider"],
+            "persona",
+            user_prompt,
+            use_source_tools=source_tools,
+            force_xml_tools=force_xml,
+        )
+        assert result is not None
+        call = runtime.context.tool_loop_agent.call_args.kwargs
+        system = call["system_prompt"]
+        systems.append(system)
+        assert call["prompt"] == user_prompt
+        context_start = system.index("# 上下文说明与使用规则")
+        output_start = system.index("# 交互规范与输出格式")
+        assert context_start < output_start
+        context = system[context_start:output_start]
+        for section in ("## 会话消息", "## 记忆", "## 成员画像与状态", "## 媒体转述说明"):
+            assert section in context
+        for rule in (
+            "get_message_context",
+            "带 source 属性的记忆来自其他会话；",
+            "这些记忆若可能涉及隐私",
+            "非本会话互动记录若可能涉及隐私",
+            "任务默认保持进行中",
+            "仅供理解对话",
+        ):
+            assert rule in context
+            assert rule not in user_prompt
+        assert "`<recent_messages>` 是" not in system[output_start:]
+        for data in ("本轮专属的记忆正文", "本轮专属的聊天正文", "本会话的自定义群规"):
+            assert data not in system
+        assert "本会话的自定义群规" in user_prompt
+    assert len(set(systems)) == 1
 
 
 @pytest.mark.asyncio

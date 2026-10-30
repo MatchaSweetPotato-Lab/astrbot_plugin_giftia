@@ -1,14 +1,18 @@
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from xml.etree.ElementTree import Element, tostring
+from xml.etree.ElementTree import Element, fromstring, tostring
 
 import pytest
 import pytest_asyncio
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.conversation.tool_executor import ToolExecutor
+from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.llm.llm_tools import GetMessageContextTool, SearchChatHistoryTool
+from core.llm.native_tools import SearchMemoryTool
+from core.llm.prompt import build_reply_prompt
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import SYSTEM_XML_TAGS, MessageData
 
@@ -122,8 +126,16 @@ async def test_query_scope_defaults_and_explicit_groups(
     if expected_group == "999":
         assert "未找到" in output
     else:
+        if expected_group != current_session:
+            assert f"group_id={expected_group}" in output.splitlines()[0]
+            assert output.count("group_id=") == 1
+        else:
+            assert "group_id=" not in output
         for label in ("before", "target", "after"):
             assert f"bot/{expected_group}/{label}" in output
+            assert f"[message_id=shared-{label}]" in output
+            user_id = "bob" if label == "target" else "alice"
+            assert f"Member({user_id})" in output
         if name == "get_message_context":
             assert "=> [" in output
     for session in ("100", "200", "300"):
@@ -131,6 +143,363 @@ async def test_query_scope_defaults_and_explicit_groups(
             assert f"bot/{session}/" not in output
     assert "other-bot/" not in output
     assert event.get_group_id() == ("" if private else "100")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("name", ["search_chat_history", "get_message_context"])
+@pytest.mark.parametrize("message_id", [None, "", " \t "])
+@pytest.mark.parametrize("group_id", [None, "200"])
+async def test_missing_message_ids_keep_content_without_exposing_followup_ids(
+    runtime, mode, name, message_id, group_id
+):
+    db = runtime.tools[name].plugin.db
+    session = group_id or "100"
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id=session,
+            message_id=message_id,
+            user_id="alice",
+            nickname="Member",
+            content="legacy record without a usable ID",
+            time="2026-10-28T12:00:30+08:00",
+        ),
+    )
+    arguments = (
+        {"keyword": "legacy record"}
+        if name == "search_chat_history"
+        else {"message_id": "shared-target", "limit": 1}
+    )
+    if group_id is not None:
+        arguments["group_id"] = group_id
+    if mode == "native":
+        output = await runtime.tools[name].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", name, arguments
+        )
+        output = result["results"]
+    [legacy_line] = [line for line in output.splitlines() if "legacy record" in line]
+    assert "缺少消息 ID，无法续查" in legacy_line
+    assert "message_id=" not in legacy_line
+    assert "=>" not in legacy_line
+    if name == "get_message_context":
+        assert "=> [" in output and "[message_id=shared-target]" in output
+    async with db.query(
+        "SELECT message_id FROM chat_history "
+        "WHERE bot_name='bot' AND group_or_user_id=? AND content=?",
+        (session, "legacy record without a usable ID"),
+    ) as cursor:
+        stored = await cursor.fetchone()
+    assert stored["message_id"] == message_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("message_id", [None, "", " \t\n ", False, [], {}])
+async def test_context_rejects_invalid_message_ids_before_querying(
+    runtime, monkeypatch, mode, message_id
+):
+    db = runtime.tools["get_message_context"].plugin.db
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id="100",
+            message_id="",
+            user_id="alice",
+            content="this empty-ID row must never be returned",
+            time="2026-10-28T12:00:30+08:00",
+        ),
+    )
+    query = AsyncMock(wraps=db.get_message_context)
+    monkeypatch.setattr(db, "get_message_context", query)
+    arguments = {"message_id": message_id, "limit": 0}
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    assert "非空消息 ID" in output
+    assert "this empty-ID row" not in output
+    query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("message_id", [0, -123, "local_opaque-id"])
+async def test_context_preserves_numeric_and_local_message_ids(runtime, mode, message_id):
+    db = runtime.tools["get_message_context"].plugin.db
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id="100",
+            message_id=str(message_id),
+            user_id="alice",
+            nickname="Member",
+            content="numeric or local ID target",
+            time="2026-10-28T12:01:30+08:00",
+        ),
+    )
+    arguments = {"message_id": message_id, "limit": 0}
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    assert f"[message_id={message_id}]" in output
+    assert "numeric or local ID target" in output
+    assert output.count("=>") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("name", ["search_chat_history", "get_message_context"])
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("group_id", [None, " 200 "])
+async def test_history_tools_use_names_from_the_queried_session(
+    runtime, mode, name, private, group_id
+):
+    if private:
+        runtime.event.get_group_id.return_value = ""
+    current_session = "300" if private else "100"
+    target_session = group_id.strip() if group_id else current_session
+    local_names = {"100": "本群称呼", "200": "目标群称呼", "300": "私聊称呼"}
+    db = runtime.tools[name].plugin.db
+    for bot, session, user_id, call_name in (
+        *[("bot", session, "alice", name) for session, name in local_names.items()],
+        ("bot", "400", "bob", "较旧称呼"),
+        ("bot", "500", "bob", "最新称呼"),
+        ("other-bot", target_session, "alice", "其他Bot称呼"),
+        ("other-bot", target_session, "charlie", "其他Bot成员称呼"),
+    ):
+        await db.upsert_user_profile(
+            bot, session, user_id, profile_fields={"call_name": call_name}
+        )
+    await db.conn.executemany(
+        "UPDATE user_call_names SET updated_at=? "
+        "WHERE bot_name='bot' AND group_or_user_id=? AND user_id='bob'",
+        [("2026-10-28T12:00:00", "400"), ("2026-10-29T12:00:00", "500")],
+    )
+    await db.conn.commit()
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id=target_session,
+            message_id="original-nickname",
+            user_id="charlie",
+            nickname="原始昵称",
+            content="needle original nickname",
+            time="2026-10-28T12:01:30+08:00",
+        ),
+    )
+    arguments = (
+        {"keyword": "needle", "limit": 4}
+        if name == "search_chat_history"
+        else {"message_id": "shared-target", "limit": 2}
+    )
+    if group_id is not None:
+        arguments["group_id"] = group_id
+    if mode == "native":
+        output = await runtime.tools[name].call(runtime.run, **arguments)
+    else:
+        tag = Element("tool_call", name=name)
+        tag.text = json.dumps(arguments)
+        parsed = await XmlParse(None, None).decode_llm_xml(
+            tostring(tag, encoding="unicode"), current_session
+        )
+        assert parsed is not None
+        [(tool_name, tool_args)] = parsed.tools_to_call
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", current_session, tool_name, tool_args
+        )
+        output = result["results"]
+
+    assert output.count(f"{local_names[target_session]}(alice)") == 2
+    assert "最新称呼(bob)" in output
+    assert "原始昵称(charlie)" in output
+    assert "较旧称呼" not in output
+    assert "其他Bot" not in output
+    assert "Member(" not in output
+    for session, call_name in local_names.items():
+        if session != target_session:
+            assert call_name not in output
+    stored = await db.get_message_by_id("shared-target", target_session, "bot")
+    assert stored is not None and stored.nickname == "Member"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("group_id", [None, "200"])
+async def test_search_result_message_id_fetches_context(runtime, mode, private, group_id):
+    if private:
+        runtime.event.get_group_id.return_value = ""
+    current_session = "300" if private else "100"
+    expected_session = group_id or current_session
+    arguments = {"keyword": "needle", "user_id": "bob", "limit": 1}
+    for name in ("search_chat_history", "get_message_context"):
+        if name == "search_chat_history" and group_id is not None:
+            arguments["group_id"] = group_id
+        if mode == "native":
+            output = await runtime.tools[name].call(runtime.run, **arguments)
+        else:
+            tag = Element("tool_call", name=name)
+            tag.text = json.dumps(arguments)
+            parsed = await XmlParse(None, None).decode_llm_xml(
+                tostring(tag, encoding="unicode"), current_session
+            )
+            assert parsed is not None
+            [(tool_name, tool_args)] = parsed.tools_to_call
+            result = await runtime.executor.execute_tool(
+                runtime.event, "bot", "Giftia", current_session, tool_name, tool_args
+            )
+            output = result["results"]
+
+        if name == "search_chat_history":
+            assert f"bot/{expected_session}/target" in output
+            assert "before" not in output and "after" not in output
+            match = re.search(r"\[message_id=([^\]]+)\]", output)
+            assert match is not None, "Search results must expose a message ID"
+            arguments = {"message_id": match.group(1), "limit": 1}
+            scope = re.search(r"group_id=([^）\s]+)", output.splitlines()[0])
+            if scope is not None:
+                arguments["group_id"] = scope.group(1)
+        else:
+            for label in ("before", "target", "after"):
+                assert f"bot/{expected_session}/{label}" in output
+                assert f"[message_id=shared-{label}]" in output
+            assert "=> [" in output
+            assert "other-bot/" not in output
+            for session in ("100", "200", "300"):
+                if session != expected_session:
+                    assert f"bot/{session}/" not in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["native", "tool_call"])
+@pytest.mark.parametrize("source_session", ["100", "200", "300"])
+async def test_memory_tool_and_automatic_recall_locate_the_same_original_context(
+    runtime, monkeypatch, mode, source_session
+):
+    plugin = runtime.tools["get_message_context"].plugin
+    plugin.bot_map = {"bot": {}}
+    plugin.embedding_conf = {"enabled": True}
+    source_messages = await plugin.db.get_message_context(
+        "shared-target", source_session, "bot", limit=1
+    )
+    record = {
+        "id": "internal-memory",
+        "text": "我记得成员在这个会话说过的话。",
+        "metadata": {
+            "source_session_id": source_session,
+            "associated_user_ids": ["300"] if source_session == "300" else ["bob"],
+            "evidence": [
+                {"message_id": message.message_id, "time": message.time}
+                for message in reversed(source_messages)
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        "core.llm.native_tools.search_memories_with_rerank",
+        AsyncMock(return_value=[record]),
+    )
+    runtime.tools["search_memory"] = SearchMemoryTool(plugin=plugin)
+    if mode == "native":
+        output = await runtime.tools["search_memory"].call(runtime.run, query="以前的话")
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "search_memory", {"query": "以前的话"}
+        )
+        output = result["results"]
+    tool_memory = fromstring(json.loads(output)["memory_context"])
+    expected = {"message_id": "shared-target"}
+    if source_session != "100":
+        kind = "私聊" if source_session == "300" else "群聊"
+        expected["source"] = f"来源{kind}：{source_session}"
+    assert tool_memory.attrib == expected
+    assert "source_session_id" not in output
+
+    cache = DataCache(plugin.db, None, None)
+    pooled = cache.merge_session_recalled_memories("bot", "100", [record])
+    for recalled in (
+        {"relevant_memories": [record]},
+        {"session_recalled_memories": pooled},
+    ):
+        prompt = build_reply_prompt(
+            recent_messages=[],
+            media_captions=[],
+            bot_status=None,
+            current_session_id="100",
+            **recalled,
+        )
+        root = fromstring("<context>" + prompt + "</context>")
+        [memory] = root.findall(".//memory")
+        assert memory.attrib == expected
+
+    arguments = {
+        "message_id": tool_memory.attrib["message_id"],
+        "limit": 1,
+    }
+    if "source" in tool_memory.attrib:
+        arguments["group_id"] = tool_memory.attrib["source"].partition("：")[2]
+    if mode == "native":
+        output = await runtime.tools["get_message_context"].call(runtime.run, **arguments)
+    else:
+        result = await runtime.executor.execute_tool(
+            runtime.event, "bot", "Giftia", "100", "get_message_context", arguments
+        )
+        output = result["results"]
+    for label in ("before", "target", "after"):
+        assert f"bot/{source_session}/{label}" in output
+    assert "other-bot/" not in output
+    for session in ("100", "200", "300"):
+        if session != source_session:
+            assert f"bot/{session}/" not in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["search_chat_history", "get_message_context"])
+@pytest.mark.parametrize(
+    "timestamp,display_time",
+    [
+        ("2026-10-28T12:01:00.123456+08:00", "2026-10-28T12:01:00+08:00"),
+        ("2026-10-28T12:01:00.987654Z", "2026-10-28T12:01:00Z"),
+        ("2026-10-28T12:01:00.123456", "2026-10-28T12:01:00"),
+        ("2026-10-28 12:01:00.123", "2026-10-28 12:01:00"),
+        ("2026-10-28T12:01:00,123456-04:00", "2026-10-28T12:01:00-04:00"),
+        ("2026-10-28T12:01:00+08:00", "2026-10-28T12:01:00+08:00"),
+        ("", ""),
+    ],
+)
+async def test_history_tools_display_seconds_without_changing_stored_time(
+    runtime, name, timestamp, display_time
+):
+    db = runtime.tools[name].plugin.db
+    await db.insert_message(
+        "bot",
+        MessageData(
+            group_or_user_id="100",
+            message_id="precise-timestamp",
+            user_id="alice",
+            nickname="Member",
+            content="timestamp precision",
+            time=timestamp,
+        ),
+    )
+    arguments = (
+        {"keyword": "timestamp precision"}
+        if name == "search_chat_history"
+        else {"message_id": "precise-timestamp", "limit": 0}
+    )
+    output = await runtime.tools[name].call(runtime.run, **arguments)
+    assert f"[{display_time}] [message_id=precise-timestamp]" in output
+    stored = await db.get_message_by_id("precise-timestamp", "100", "bot")
+    assert stored is not None and stored.time == timestamp
 
 
 @pytest.mark.asyncio
