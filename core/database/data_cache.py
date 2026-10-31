@@ -10,6 +10,7 @@ from datetime import datetime
 from cachetools import LRUCache
 
 from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
 
 from ..memory.atomic import memory_metadata
 from ..memory.memory import LTM
@@ -27,6 +28,8 @@ from ..utils.schemas import (
 from .database import Database
 
 MAX_CAPTION_CACHE_SIZE = 500
+ACCOUNT_TYPE_QUERY_TIMEOUT = 2.0
+ACCOUNT_TYPE_RETRY_INTERVAL = 60.0
 
 
 class DataCache:
@@ -65,6 +68,10 @@ class DataCache:
         # 用户画像缓存
         self.user_profiles: dict[str, str] = {}
         self.user_profile_records: dict[str, dict] = {}
+        self._profile_initialization_locks: defaultdict[
+            tuple[str, str], asyncio.Lock
+        ] = defaultdict(asyncio.Lock)
+        self._account_type_retry_at: dict[tuple[str, str], float] = {}
         # Manually maintained group rules, using the legacy storage name.
         self.group_profiles: dict[str, str] = {}
         self.bot_status: dict[str, Status] = {}
@@ -482,6 +489,80 @@ class DataCache:
         self.caption.clear()
         self.filename_to_hash.clear()
         await self.db.clear_media_caption()
+
+    async def initialize_user_profile(
+        self, bot_name: str, group_or_user_id: str, event: AstrMessageEvent
+    ) -> None:
+        """Create a sender's profile and confirm its shared category at most once.
+
+        Args:
+            bot_name: Bot owning the shared member profile.
+            group_or_user_id: Conversation where a real user message was received.
+            event: Incoming event supplying the group API client and account routing.
+        """
+        user_id = str(event.get_sender_id() or "").strip()
+        self_id = str(event.get_self_id() or "").strip()
+        if not user_id or user_id == self_id:
+            return
+        key = (bot_name, user_id)
+        async with self._profile_initialization_locks[key]:
+            account_type, changed = await self.db.initialize_user_profile(
+                bot_name, group_or_user_id, user_id
+            )
+            if changed:
+                self.invalidate_user_profile(bot_name, user_id)
+            if account_type != "unknown":
+                self._account_type_retry_at.pop(key, None)
+                return
+
+            group_id = str(event.get_group_id() or "").strip()
+            bot = getattr(event, "bot", None)
+            if not group_id or not callable(getattr(bot, "call_action", None)):
+                return
+            if time.monotonic() < self._account_type_retry_at.get(key, 0.0):
+                return
+
+            routing_params = {"self_id": self_id} if self_id else {}
+            try:
+                info = await asyncio.wait_for(
+                    bot.call_action(
+                        action="get_group_member_info",
+                        group_id=int(group_id) if group_id.isdigit() else group_id,
+                        user_id=int(user_id) if user_id.isdigit() else user_id,
+                        no_cache=False,
+                        **routing_params,
+                    ),
+                    timeout=ACCOUNT_TYPE_QUERY_TIMEOUT,
+                )
+                if isinstance(info, dict) and "data" in info:
+                    if info.get("status") != "ok" or info.get("retcode") != 0:
+                        raise ValueError("Group member lookup did not succeed")
+                    info = info["data"]
+                if not isinstance(info, dict) or type(info.get("is_robot")) is not bool:
+                    raise ValueError("Group member lookup omitted a boolean is_robot")
+                if "user_id" in info and str(info["user_id"]) != user_id:
+                    raise ValueError("Group member lookup returned a different user")
+                if "group_id" in info and str(info["group_id"]) != group_id:
+                    raise ValueError("Group member lookup returned a different group")
+                account_type = "official_bot" if info["is_robot"] else "qq_account"
+            except Exception as exc:
+                self._account_type_retry_at[key] = (
+                    time.monotonic() + ACCOUNT_TYPE_RETRY_INTERVAL
+                )
+                logger.debug(
+                    "[Giftia] Account category lookup failed for bot %s, user %s: %s",
+                    bot_name,
+                    user_id,
+                    exc,
+                )
+                return
+
+            _, changed = await self.db.initialize_user_profile(
+                bot_name, group_or_user_id, user_id, account_type=account_type
+            )
+            if changed:
+                self.invalidate_user_profile(bot_name, user_id)
+            self._account_type_retry_at.pop(key, None)
 
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str

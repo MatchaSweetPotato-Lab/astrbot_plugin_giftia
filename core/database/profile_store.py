@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from ..utils.schemas import ACCOUNT_TYPE_LABELS
 from .operations import serialized_operation
 from .relation_history_store import RelationHistoryStoreMixin
 from .utils import parse_aliases
@@ -28,6 +29,62 @@ PROFILE_NAMES_CTE = """
 
 
 class ProfileStoreMixin(RelationHistoryStoreMixin):
+    @serialized_operation
+    async def initialize_user_profile(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        account_type: str | None = None,
+    ) -> tuple[str, bool]:
+        """Ensure membership and fill an unconfirmed shared account category.
+
+        Args:
+            bot_name: Bot owning the shared profile.
+            group_or_user_id: Conversation where the member has just spoken.
+            user_id: Actual sender whose profile should exist.
+            account_type: Optional category obtained from the platform API.
+
+        Returns:
+            The stored category and whether the shared profile was created or
+            its category changed. Existing categories and profile fields survive.
+
+        Raises:
+            ValueError: The supplied category is not a confirmed account type.
+        """
+        if account_type is not None and account_type not in (
+            "official_bot",
+            "qq_account",
+        ):
+            raise ValueError("Invalid confirmed account type")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self.conn.execute(
+            "INSERT INTO user_profiles (bot_name, user_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot_name) DO NOTHING",
+            (bot_name, user_id, now, now),
+        )
+        changed = cursor.rowcount > 0
+        if group_or_user_id:
+            await self.conn.execute(
+                "INSERT OR IGNORE INTO user_profile_sessions "
+                "(bot_name, group_or_user_id, user_id) VALUES (?, ?, ?)",
+                (bot_name, group_or_user_id, user_id),
+            )
+        if account_type is not None:
+            cursor = await self.conn.execute(
+                "UPDATE user_profiles SET account_type=?, updated_at=? "
+                "WHERE bot_name=? AND user_id=? AND account_type='unknown'",
+                (account_type, now, bot_name, user_id),
+            )
+            changed = changed or cursor.rowcount > 0
+        async with self.conn.execute(
+            "SELECT account_type FROM user_profiles WHERE bot_name=? AND user_id=?",
+            (bot_name, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await self.conn.commit()
+        return row[0], changed
+
     @serialized_operation
     async def get_user_common_groups(
         self, bot_name: str, group_or_user_id: str, user_ids: list[str]
@@ -361,6 +418,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             SELECT
                 up.resolved_call_name AS call_name,
                 up.local_call_name,
+                up.account_type,
                 up.aliases,
                 up.personality,
                 up.interests,
@@ -548,8 +606,15 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
     ):
+        profile_fields = profile_fields or {}
+        if "account_type" in profile_fields and (
+            not isinstance(profile_fields["account_type"], str)
+            or profile_fields["account_type"] not in ACCOUNT_TYPE_LABELS
+        ):
+            raise ValueError("Invalid account type")
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         profile_columns = [
+            "account_type",
             "personality",
             "interests",
             "attitude",
@@ -557,7 +622,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             "extra",
             "avatar_description",
         ]
-        profile_fields = profile_fields or {}
         update_fields = ["updated_at=excluded.updated_at"]
         for column in profile_columns:
             if column in profile_fields:
@@ -574,6 +638,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             INSERT INTO user_profiles (
                 user_id,
                 bot_name,
+                account_type,
                 call_name,
                 aliases,
                 personality,
@@ -587,13 +652,14 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, bot_name) DO UPDATE SET
                 {update_clause}
             """,
             (
                 user_id,
                 bot_name,
+                profile_fields.get("account_type", "unknown"),
                 None,
                 None,
                 profile_fields.get("personality"),

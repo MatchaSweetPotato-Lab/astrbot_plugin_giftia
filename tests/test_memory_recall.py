@@ -123,6 +123,10 @@ def runtime():
 async def test_reply_injects_common_groups_only_into_each_speakers_full_profile(
     runtime,
 ):
+    runtime.cache.get_user_profile_record.side_effect = lambda **kwargs: {
+        "alice": {"account_type": "official_bot"},
+        "bob": {"account_type": "qq_account"},
+    }.get(kwargs["user_id"])
     runtime.plugin.db.get_user_common_groups.return_value = {
         "alice": [
             {"group_id": "123456", "recently_active": True},
@@ -148,7 +152,10 @@ async def test_reply_injects_common_groups_only_into_each_speakers_full_profile(
     assert "已知共同群聊：123456（近期活跃）、789012" in profiles["alice"]
     assert "已知共同群聊：345678" in profiles["carol"]
     assert "近期活跃" not in profiles["carol"]
-    assert "bob" not in profiles
+    assert list(profiles) == ["alice", "bob", "carol"]
+    assert "账号类型：QQ 官方机器人" in profiles["alice"]
+    assert profiles["bob"].strip() == "账号类型：普通 QQ 账号"
+    assert "账号类型：未知" in profiles["carol"]
     assert prompt.count("已知共同群聊：") == 2
 
     runtime.plugin.db.get_user_common_groups.return_value = {}

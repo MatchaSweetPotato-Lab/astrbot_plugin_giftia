@@ -110,6 +110,68 @@ async def test_inactive_media_is_always_deferred(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", [False, True])
+async def test_user_profile_initialization_precedes_admission_without_passive_maintenance(
+    runtime, command
+):
+    plugin, manager, event = runtime
+    plugin.data_cache.initialize_user_profile = AsyncMock()
+    plugin.message_parser.parse_user_message.return_value = (
+        MessageData(message_id="first", user_id="200", content="hello"),
+        [],
+        [],
+    )
+    manager._check_command_info = Mock(return_value=(command, False))
+    manager._enqueue_message = AsyncMock()
+    calls = Mock()
+    calls.attach_mock(plugin.data_cache.initialize_user_profile, "initialize")
+    calls.attach_mock(manager._enqueue_message, "enqueue")
+
+    await manager.job(event)
+
+    plugin.data_cache.initialize_user_profile.assert_awaited_once_with(
+        "bot", "100", event
+    )
+    assert calls.mock_calls[0].args == ("bot", "100", event)
+    if command:
+        manager._enqueue_message.assert_not_awaited()
+    else:
+        assert [call[0] for call in calls.mock_calls] == ["initialize", "enqueue"]
+    assert not plugin.passive_memory_enabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role,recalled,notice",
+    [
+        ("system", False, False),
+        ("operation_log", False, False),
+        ("message", True, False),
+        ("message", False, True),
+    ],
+)
+async def test_non_user_messages_do_not_initialize_profiles(
+    runtime, role, recalled, notice
+):
+    plugin, manager, event = runtime
+    plugin.data_cache.initialize_user_profile = AsyncMock()
+    plugin.message_parser.parse_user_message.return_value = (
+        MessageData(
+            message_id="background", user_id="200", role=role, is_recalled=int(recalled)
+        ),
+        [],
+        [],
+    )
+    if notice:
+        from core.utils.notice_parse import NoticeParseResult
+
+        event._notice_result = NoticeParseResult(is_notice=True)
+    manager._enqueue_message = AsyncMock()
+    await manager.job(event)
+    plugin.data_cache.initialize_user_profile.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["parse", "decision", "reply"])
 async def test_later_handler_runs_while_message_processing_is_pending(runtime, phase):
     plugin, manager, event = runtime

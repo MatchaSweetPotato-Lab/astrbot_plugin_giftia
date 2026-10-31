@@ -7,6 +7,11 @@ from astrbot.core.message.components import BaseMessageComponent
 
 FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音|视频):([^\]\s]+)\]")
 FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+ACCOUNT_TYPE_LABELS = {
+    "unknown": "未知",
+    "official_bot": "QQ 官方机器人",
+    "qq_account": "普通 QQ 账号",
+}
 
 
 class ImageSendType(int, Enum):

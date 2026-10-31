@@ -1,3 +1,4 @@
+import asyncio
 import random
 import re
 
@@ -309,21 +310,48 @@ class DecisionEngine:
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
-        user_profile = await self.plugin.data_cache.get_user_profile_record(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=event.get_sender_id(),
-        )
-        user_relation = await self.plugin.data_cache.get_user_relation(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            user_id=event.get_sender_id(),
-        )
+        decision_users = {}
+        self_id = str(event.get_self_id())
+        sender_id = str(event.get_sender_id() or "")
+        for msg in pending_messages:
+            uid = str(msg.user_id or "")
+            if uid and uid != self_id and not msg.is_recalled and msg.role == "message":
+                decision_users[uid] = msg.nickname or decision_users.get(uid, "")
+        if not pending_messages and sender_id and sender_id != self_id:
+            decision_users[sender_id] = ""
+        user_profiles = []
+        for uid, nickname in decision_users.items():
+            user_profile, user_relation = await asyncio.gather(
+                self.plugin.data_cache.get_user_profile_record(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                ),
+                self.plugin.data_cache.get_user_relation(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=uid,
+                ),
+            )
+            user_profiles.append(
+                {
+                    "user_id": uid,
+                    "nickname": nickname,
+                    "user_profile": user_profile,
+                    "user_relation": user_relation,
+                }
+            )
         active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
-            recent_messages=[*recent_messages, *pending_messages],
-            current_user_id=event.get_sender_id(),
+            recent_messages=[
+                msg
+                for msg in [*recent_messages, *pending_messages]
+                if str(msg.user_id) not in decision_users
+                and not msg.is_recalled
+                and msg.role == "message"
+            ],
+            current_user_id="",
             self_id=event.get_self_id(),
             limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
         )
@@ -358,8 +386,7 @@ class DecisionEngine:
             pending_messages=pending_messages,
             bot_status=bot_status,
             group_profile=group_profile,
-            user_profile=user_profile,
-            user_relation=user_relation,
+            user_profiles=user_profiles,
             active_user_briefs=active_user_briefs,
             short_tasks=short_tasks,
             short_task_limit=short_task_limit,

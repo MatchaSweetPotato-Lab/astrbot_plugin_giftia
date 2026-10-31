@@ -212,6 +212,28 @@ test('fallback names are placeholders and are not copied into a local profile on
     assert.doesNotMatch(field.placeholder, /local name/);
 });
 
+test('account types are displayed and edited without guessing an unknown category', async () => {
+    for (const [account_type, label] of [
+        ['official_bot', 'QQ 官方机器人'], ['qq_account', '普通 QQ 账号'], ['unknown', '未知'],
+        [undefined, '未知'], ['<script>guess</script>', '未知']
+    ]) {
+        const profile = { bot_name: 'bot', group_or_user_id: 'group', user_id: 'A', account_type };
+        const html = window.renderProfileCard(profile);
+        assert.match(html, /账号类型/);
+        assert.ok(html.includes(label));
+        assert.doesNotMatch(html, /<script>/);
+        renderUserProfiles([profile]);
+        assert.ok(get('user-profile-list').innerHTML.includes(label));
+        window.openEditUserProfileModal(profile);
+        const expected = ['official_bot', 'qq_account'].includes(account_type) ? account_type : 'unknown';
+        assert.equal(get('edit-user-prof-account-type').value, expected);
+        let body;
+        window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
+        await window.submitEditUserProfile();
+        assert.equal(body.account_type, expected);
+    }
+});
+
 test('profile cards show three newest changes and open history with the exact scoped object', () => {
     const item = {
         bot_name: "bot'quoted", group_or_user_id: 'group', user_id: '<user>', relation: -1,

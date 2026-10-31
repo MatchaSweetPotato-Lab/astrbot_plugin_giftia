@@ -101,6 +101,8 @@ TABLE_DEFINITIONS = (
     CREATE TABLE IF NOT EXISTS user_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL,
+        account_type TEXT NOT NULL DEFAULT 'unknown'
+            CHECK(account_type IN ('unknown', 'official_bot', 'qq_account')),
         call_name TEXT,
         aliases TEXT,
         personality TEXT,

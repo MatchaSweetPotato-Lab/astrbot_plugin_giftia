@@ -7,6 +7,7 @@ from astrbot.api.message_components import At, Plain, Reply
 
 from ..memory.atomic import memory_metadata
 from ..utils.schemas import (
+    ACCOUNT_TYPE_LABELS,
     MediaCaption,
     MessageData,
     SessionRecallMemory,
@@ -93,6 +94,7 @@ def build_decision_prompt(
     message_truncate_limit: int = 1500,
     media_captions: list[MediaCaption] | None = None,
     slang_entries: list[dict] | None = None,
+    user_profiles: list[dict] | None = None,
 ) -> str:
     pending_ids = {msg.message_id for msg in pending_messages if msg.message_id}
     recent_messages = [
@@ -114,6 +116,22 @@ def build_decision_prompt(
                 curr_nickname = msg.nickname
                 break
 
+    if user_profiles is None:
+        user_profiles = [
+            {
+                "user_id": user_id,
+                "nickname": curr_nickname,
+                "user_profile": user_profile,
+                "user_relation": user_relation,
+            }
+        ]
+    profile_ids = {str(profile["user_id"]) for profile in user_profiles}
+    active_user_briefs = [
+        brief
+        for brief in active_user_briefs or []
+        if str(brief.get("user_id")) not in profile_ids
+    ]
+
     # 合并近期消息与当前消息进行统一的频次与内联处理
     all_messages = []
     if recent_messages:
@@ -126,12 +144,16 @@ def build_decision_prompt(
         force_inline_all=True,
     )
 
-    # Apply call names using the helper
+    profile_call_names = [
+        {"user_id": profile["user_id"], "call_name": record.get("call_name")}
+        for profile in user_profiles
+        if isinstance(record := profile.get("user_profile"), dict)
+    ]
     processed_messages = _apply_call_names_to_messages(
         messages=processed_messages,
-        user_id=user_id,
-        user_profile=user_profile,
-        active_user_briefs=active_user_briefs,
+        user_id="",
+        user_profile=None,
+        active_user_briefs=[*active_user_briefs, *profile_call_names],
     )
 
     # 拆分回 recent_messages 和 current_message
@@ -174,22 +196,24 @@ def build_decision_prompt(
         )
 
     # 3. 动态触发区：当前发言人画像、机器人状态（常驻状态与即时心境）、当前消息与当前时间戳
-    user_profile_block = build_user_profile_block(
-        user_id=user_id,
-        user_profile=(
-            {
-                key: value
-                for key, value in user_profile.items()
-                if key != "avatar_description"
-            }
-            if isinstance(user_profile, dict)
-            else user_profile
-        ),
-        user_relation=user_relation,
-        nickname=curr_nickname,
-    )
-    if user_profile_block:
-        user_prompt.append(user_profile_block)
+    for profile in user_profiles:
+        record = profile.get("user_profile")
+        user_profile_block = build_user_profile_block(
+            user_id=profile["user_id"],
+            user_profile=(
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key != "avatar_description"
+                }
+                if isinstance(record, dict)
+                else record
+            ),
+            user_relation=profile.get("user_relation"),
+            nickname=profile.get("nickname"),
+        )
+        if user_profile_block:
+            user_prompt.append(user_profile_block)
     persistent_status_block = build_persistent_status_block(bot_status)
     if persistent_status_block:
         user_prompt.append(persistent_status_block)
@@ -1031,6 +1055,11 @@ def build_user_profile_block(
     common_groups: list[dict] | None = None,
 ) -> str:
     parts = []
+    if user_id:
+        account_type = (
+            user_profile.get("account_type") if isinstance(user_profile, dict) else None
+        )
+        parts.append(f"账号类型：{ACCOUNT_TYPE_LABELS.get(str(account_type), '未知')}")
 
     if isinstance(user_profile, dict):
         structured_lines = []

@@ -23,6 +23,7 @@ MEMORY_SOURCE_PRIVACY_GUIDE = (
 PROFILE_SOURCE_PRIVACY_GUIDE = (
     "非本会话互动记录若可能涉及隐私，则不能对外披露，除非取得同一用户明确许可。"
 )
+ACCOUNT_TYPE_GUIDE = "画像中的账号类型表示平台账号类别；普通 QQ 账号也可能是AI机器人在使用，未知表示尚未确认。"
 TASK_BOARD_USAGE_GUIDE = (
     "任务看板中的任务默认保持进行中；除非已实际完成任务要求，"
     "或用户明确确认完成，否则不要变更为完成。"
@@ -53,7 +54,7 @@ REPLY_CONTEXT_GUIDE = (
     f"{MEMORY_CONTEXT_LOOKUP_GUIDE}\n{MEMORY_SOURCE_PRIVACY_GUIDE}\n\n"
     "## 成员画像与状态\n"
     "输入 `<status>` 是已有状态，输出 `<status>` 反映本次状态。\n"
-    f"{RELATION_SCORE_GUIDE}\n{PROFILE_SOURCE_PRIVACY_GUIDE}\n\n"
+    f"{RELATION_SCORE_GUIDE}\n{ACCOUNT_TYPE_GUIDE}\n{PROFILE_SOURCE_PRIVACY_GUIDE}\n\n"
     "## 任务与黑话\n"
     f"{TASK_BOARD_USAGE_GUIDE}\n{SLANG_USAGE_GUIDE}\n\n"
     f"{REPLY_MEDIA_CAPTION_GUIDE}\n"
@@ -563,6 +564,7 @@ def get_decision_rules(use_meme_manager: bool = False) -> str:
 {RELATION_SCORE_GUIDE}
 
 ## 会话数据说明
+{ACCOUNT_TYPE_GUIDE}
 {PROFILE_SOURCE_PRIVACY_GUIDE}
 {TASK_BOARD_USAGE_GUIDE}
 {SLANG_USAGE_GUIDE}
