@@ -255,7 +255,6 @@ window.submitEditGroupProfile = async function() {
         if (res.status === "success") {
             window.showToast("保存成功！");
             window.closeModal("edit-group-profile-modal");
-            document.getElementById("profile-group-id-input").value = group;
             window.GiftiaApp.resetPagination("groupProfiles");
             await window.GiftiaApp.loadGroupProfiles();
         } else {
