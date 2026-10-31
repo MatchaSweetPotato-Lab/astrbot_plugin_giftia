@@ -2,7 +2,6 @@ import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
-from time import perf_counter
 from xml.etree.ElementTree import fromstring
 
 from xxhash import xxh3_64_hexdigest
@@ -206,14 +205,7 @@ class CallLLM:
         logger.debug(f"\n<system_prompt>{REPLY_REVIEW_PROMPT}</system_prompt>")
         logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
 
-        started_at = perf_counter()
-        logger.info(
-            f"[Giftia] Reply review started for {bot_name}:{group_or_user_id}: "
-            f"provider={provider_id}, timeout=10s, prompt_chars={len(user_prompt)}"
-        )
         response = None
-        raw_completion = ""
-        reasoning = ""
         passed = None
         extra_info = {"status": "api_failed"}
         try:
@@ -226,16 +218,7 @@ class CallLLM:
                 timeout=10,
             )
             extra_info["status"] = "parse_failed"
-            raw_completion = getattr(response, "completion_text", "") or ""
-            reasoning = getattr(response, "reasoning_content", "") or ""
-            logger.info(
-                f"[Giftia] Reply review response for {bot_name}:{group_or_user_id}: "
-                f"provider={provider_id}, elapsed={perf_counter() - started_at:.2f}s, "
-                f"response_received={response is not None}, "
-                f"completion_chars={len(raw_completion)}, reasoning_chars={len(reasoning)}\n"
-                f"completion={raw_completion!r}\nreasoning={reasoning!r}"
-            )
-            completion = raw_completion.strip()
+            completion = (getattr(response, "completion_text", "") or "").strip()
             if completion.startswith("```") and completion.endswith("```"):
                 completion = "\n".join(completion.splitlines()[1:-1]).strip()
             node = fromstring(completion)
@@ -260,21 +243,9 @@ class CallLLM:
             extra_info["error_type"] = type(error).__name__
             logger.warning(
                 f"[Giftia] Reply review unavailable for {bot_name}:{group_or_user_id}; "
-                f"sending draft: provider={provider_id}, "
-                f"elapsed={perf_counter() - started_at:.2f}s, "
-                f"status={extra_info['status']}, response_received={response is not None}, "
-                f"completion_chars={len(raw_completion)}, reasoning_chars={len(reasoning)}, "
+                f"sending draft: provider={provider_id}, status={extra_info['status']}, "
                 f"error_type={type(error).__name__}, error={str(error)!r}"
             )
-        extra_info.update(
-            {
-                "elapsed_seconds": round(perf_counter() - started_at, 3),
-                "prompt_chars": len(user_prompt),
-                "response_received": response is not None,
-                "completion_chars": len(raw_completion),
-                "reasoning_chars": len(reasoning),
-            }
-        )
         await self._log_token_usage_safely(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
