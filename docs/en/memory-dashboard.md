@@ -42,6 +42,8 @@ In **画像管理 → 编辑 → 账号类型 (Profile management → Edit → A
 
 Decision and formal reply prompts include the category as the first line of each detailed `<user_profile>`, displaying `账号类型：未知` even when no other profile information exists. Decisions load every speaker in `pending_messages`; formal replies retain their `reply_messages` speaker scope. Each user appears once, independently of the active-member brief limit, and is excluded from those briefs. The bot's own messages, system notices, operation logs and recalled messages do not add speaker profiles. Decision profiles still omit avatars, score breakdowns, rating reasons and common groups. Active-member briefs and public `/画像` reports omit account categories.
 
+The `search_user_profile` tool also displays each matched member's account category directly from the saved shared profile within the current bot, showing unknown when unconfirmed. Queries do not call the platform API or modify profiles.
+
 ![Editing the shared account category, using example data](../images/account-type-profile-edit.jpg)
 
 Click a card's affinity pill to open the interaction-rating history dialog for the bot and user across conversations. Its summary shows final affinity, the base and interaction components, recent and long-term scores and their evaluation counts. History appears below with ten entries per page, page numbers, previous/next controls, the current record range and total count. The final page contains the remaining entries. Members without history still have a score summary, followed by an empty state in the record area. Browsing history is independent of the fifty-entry context window used by background tone reviews. Failed requests offer a retry button.

@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import aiosqlite
 import pytest
@@ -77,6 +77,38 @@ async def test_search_matches_identifiers_names_aliases_and_avatar(runtime, quer
     )
     results = await runtime.db.search_user_profiles("bot", "group", query)
     assert [item["user_id"] for item in results] == ["123"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_id", ["group", "other-group", ""])
+@pytest.mark.parametrize(
+    "account_type,label",
+    [("official_bot", "QQ 官方机器人"), ("qq_account", "普通 QQ 账号"), (None, "未知")],
+)
+async def test_tool_reads_shared_account_type_without_platform_queries_or_writes(
+    runtime, group_id, account_type, label
+):
+    fields = {"account_type": account_type} if account_type is not None else {}
+    await runtime.db.upsert_user_profile("bot", "group", "123", profile_fields=fields)
+    await runtime.db.upsert_user_profile(
+        "other-bot", "group", "123", profile_fields={"account_type": "official_bot"}
+    )
+    runtime.event.get_group_id.return_value = group_id
+    runtime.event.bot = SimpleNamespace(
+        call_action=AsyncMock(
+            side_effect=AssertionError("Profile lookup queried the platform")
+        )
+    )
+    writes = runtime.db.conn.total_changes
+
+    results = await runtime.db.search_user_profiles("bot", group_id or "sender", "123")
+    assert results[0]["account_type"] == (account_type or "unknown")
+    result = await runtime.tool.call(runtime.context, "123")
+
+    assert f"账号类型：{label}" in result
+    assert result.count("账号类型：") == 1
+    assert runtime.db.conn.total_changes == writes
+    runtime.event.bot.call_action.assert_not_awaited()
 
 
 @pytest.mark.asyncio

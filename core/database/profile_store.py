@@ -483,6 +483,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.bot_name,
                 up.resolved_call_name AS call_name,
                 up.local_call_name,
+                up.account_type,
                 up.attitude,
                 up.avatar_description,
                 (
