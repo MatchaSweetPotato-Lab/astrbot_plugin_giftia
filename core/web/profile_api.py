@@ -720,6 +720,8 @@ class ProfileApi:
                 rows = await cursor.fetchall()
                 bots = [row["bot_name"] for row in rows if row["bot_name"]]
 
+            # Include active bots so their first group rule can be created.
+            bots = sorted(set(bots) | set(getattr(self.giftia, "bot_map", {})))
             selected_bot_name = (
                 bot_name if bot_name in bots else (bots[0] if bots else "")
             )

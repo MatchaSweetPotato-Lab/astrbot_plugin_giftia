@@ -207,6 +207,13 @@ def build_xml_instructions(
             '- **撤回消息**: `<delete message_id="消息ID"/>`。撤回发送过的那条消息（非管理员仅能撤回 2 分钟内自身的消息）。'
         )
 
+    if is_enabled(FeatureKey.BLOCK_USER):
+        interactive_lines.append(
+            "- **屏蔽/取消屏蔽用户**:\n"
+            '  * **屏蔽**: `<block_user user_id="用户ID"/>`。当你不愿再与某人互动时，可自行屏蔽；后续不会再接收到该用户的新消息。\n'
+            '  * **取消屏蔽**: `<unblock_user user_id="用户ID"/>`。恢复接收被屏蔽用户在当前会话的后续发言。'
+        )
+
     if is_enabled(FeatureKey.SET_CALL_NAME):
         interactive_lines.append(
             '- **设置/修改用户称呼**: `<set_call_name user_id="目标用户ID" name="新称呼"/>`。为指定用户设置特定称呼；必须显式填入 `user_id`（目标用户的数字 ID），`name` 留空表示清空称呼。'

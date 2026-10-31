@@ -845,19 +845,16 @@ caption: {media_caption.caption}"""
         if not bot_name:
             yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
             return
-        manager = self.plugin.bot_config_manager
-        bots = deepcopy(manager.load_bots())
-        bot = next((b for b in bots if b["name"] == bot_name), None)
-        if bot is None:
-            yield await event.send(MessageChain([Plain("未找到对应的 Bot 配置。")]))
+        try:
+            saved = self.plugin.bot_config_manager.set_user_blocked(
+                bot_name, event.unified_msg_origin, user_id, blocked=True
+            )
+        except ValueError as exc:
+            yield await event.send(MessageChain([Plain(str(exc))]))
             return
-        users = bot["blocked_users"].setdefault(event.unified_msg_origin, [])
-        if user_id not in users:
-            users.append(user_id)
-        if not manager.save_bots(bots):
+        if not saved:
             yield await event.send(MessageChain([Plain("保存配置失败，屏蔽未生效。")]))
             return
-        self.plugin.sync_bot_maps()
         yield await event.send(
             MessageChain(
                 [Plain(f"已在当前会话屏蔽用户 {user_id}，后续发言不入库、不触发回复。")]
@@ -888,25 +885,18 @@ caption: {media_caption.caption}"""
         if not bot_name:
             yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
             return
-        manager = self.plugin.bot_config_manager
-        bots = deepcopy(manager.load_bots())
-        bot = next((b for b in bots if b["name"] == bot_name), None)
-        if bot is None:
-            yield await event.send(MessageChain([Plain("未找到对应的 Bot 配置。")]))
+        try:
+            saved = self.plugin.bot_config_manager.set_user_blocked(
+                bot_name, event.unified_msg_origin, user_id, blocked=False
+            )
+        except ValueError as exc:
+            yield await event.send(MessageChain([Plain(str(exc))]))
             return
-        blocked_users = bot["blocked_users"].get(event.unified_msg_origin, [])
-        if user_id in blocked_users:
-            blocked_users.remove(user_id)
-        if blocked_users:
-            bot["blocked_users"][event.unified_msg_origin] = blocked_users
-        else:
-            bot["blocked_users"].pop(event.unified_msg_origin, None)
-        if not manager.save_bots(bots):
+        if not saved:
             yield await event.send(
                 MessageChain([Plain("保存配置失败，取消屏蔽未生效。")])
             )
             return
-        self.plugin.sync_bot_maps()
         yield await event.send(
             MessageChain([Plain(f"已在当前会话取消屏蔽用户 {user_id}。")])
         )

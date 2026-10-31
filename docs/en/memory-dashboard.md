@@ -1,5 +1,9 @@
 # Atomic memory management
 
+In **画像管理 (Profile management)**, switch **内容类型 (Content type)** to **群规 (Group rules)**, select a bot, and click **新建群规 (New group rules)**. Enter the group ID and rule content, then save. Bots without existing rules can create their first entry directly. Saving selects the target group; existing entries can still be changed through **编辑 (Edit)** on their cards. Each bot and group ID has one rule entry, so saving replaces existing content for that pair.
+
+![New group rules dialog, using example data](../images/group-rules-create.jpg)
+
 Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-term memory)**. Each record stores one fact, without memory categories or lifecycle states.
 
 1. Select a bot and conversation, then filter by an associated member or text. Member filters match complete account IDs; member chips on a card apply the same filter.

@@ -215,7 +215,7 @@ class CallLLM:
                     system_prompt=REPLY_REVIEW_PROMPT,
                     prompt=user_prompt,
                 ),
-                timeout=5,
+                timeout=10,
             )
             extra_info["status"] = "parse_failed"
             completion = (getattr(response, "completion_text", "") or "").strip()
@@ -240,11 +240,11 @@ class CallLLM:
             )
         except Exception as error:
             extra_info["error"] = str(error)
+            extra_info["error_type"] = type(error).__name__
             logger.warning(
-                "[Giftia] Reply review unavailable for %s:%s; sending draft: %s",
-                bot_name,
-                group_or_user_id,
-                error,
+                f"[Giftia] Reply review unavailable for {bot_name}:{group_or_user_id}; "
+                f"sending draft: provider={provider_id}, status={extra_info['status']}, "
+                f"error_type={type(error).__name__}, error={str(error)!r}"
             )
         await self._log_token_usage_safely(
             bot_name=bot_name,

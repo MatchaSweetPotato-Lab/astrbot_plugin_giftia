@@ -947,6 +947,36 @@ class ActionDispatcher:
         )
         common_logs.extend(task_board_logs + set_call_name_logs + set_status_logs)
 
+        for action, user_id in llm_result.user_block_actions:
+            try:
+                if not self._interactive_feature_enabled(
+                    FeatureKey.BLOCK_USER, bot_name
+                ):
+                    raise ValueError("用户屏蔽工具未启用")
+                if action not in ("block_user", "unblock_user"):
+                    raise ValueError("不支持的用户屏蔽操作")
+                saved = self.plugin.bot_config_manager.set_user_blocked(
+                    bot_name,
+                    event.unified_msg_origin,
+                    user_id,
+                    blocked=action == "block_user",
+                )
+                if not saved:
+                    raise RuntimeError("保存配置失败，用户屏蔽操作未生效。")
+                common_logs.append(
+                    f"<{action} user_id={quoteattr(user_id)} result='success'/>"
+                )
+                logger.info(
+                    f"[Giftia] Bot {bot_name} executed {action} for user {user_id} "
+                    f"in {event.unified_msg_origin}"
+                )
+            except Exception as exc:
+                logger.warning(f"[Giftia] User block action failed: {exc}")
+                common_logs.append(
+                    f"<{action} user_id={quoteattr(user_id)} "
+                    f"result='failed' reason={quoteattr(str(exc))}/>"
+                )
+
         for user_id, avatar_description in llm_result.set_avatars:
             user_id = user_id.strip()
             avatar_description = avatar_description.strip()

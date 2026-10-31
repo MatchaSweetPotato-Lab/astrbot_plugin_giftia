@@ -4,18 +4,24 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from core.bot.bot_config_manager import BotConfigManager
 from core.conversation import chat_manager as chat_module
 from core.conversation.chat_manager import ChatManager
+from core.conversation.reply_pipeline import ReplyPipeline
 from core.handlers.commands import CommandHandler
-from core.utils.schemas import MessageData, XmlLlmResult
+from core.llm.preset_prompts import build_xml_instructions
+from core.llm.xml_parse import XmlParse
+from core.utils.schemas import FeatureKey, MessageData, Status, XmlLlmResult
 from core.web.bot_api import BotApi
 
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, Plain
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
 from astrbot.core.star.filter.command import CommandFilter, GreedyStr
 from astrbot.core.star.filter.permission import PermissionType, PermissionTypeFilter
 
@@ -553,6 +559,36 @@ async def test_save_failure_preserves_persisted_and_live_access(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["write", "fsync", "replace"])
+async def test_failed_config_write_keeps_all_bots_and_live_access(
+    runtime, event, monkeypatch, stage
+):
+    manager = runtime.bot_config_manager
+    before = manager.config_file.read_bytes()
+    before_bots = json.loads(before)
+    if stage == "write":
+
+        def interrupted_write(value, destination, **kwargs):
+            destination.write('[{"name":')
+            raise OSError("simulated disk full")
+
+        monkeypatch.setattr("core.bot.bot_config_manager.json.dump", interrupted_write)
+    else:
+        monkeypatch.setattr(
+            f"core.bot.bot_config_manager.os.{stage}",
+            Mock(side_effect=OSError("simulated filesystem failure")),
+        )
+    assert not manager.set_user_blocked(
+        "bot", event.unified_msg_origin, "200", blocked=True
+    )
+    assert manager.config_file.read_bytes() == before
+    assert manager.bots == before_bots
+    assert runtime.chat_manager.decision_engine.check_whitelists(event)
+    assert manager.load_bots() == before_bots
+    assert set(manager.config_file.parent.iterdir()) == {manager.config_file}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("block", [False, True])
 @pytest.mark.parametrize("private", [False, True])
 async def test_inflight_reply_is_discarded_after_access_changes(
@@ -614,3 +650,248 @@ async def test_invalid_block_target_does_not_write(runtime, event, user_id):
     _ = [c async for c in runtime.cmd_handler.block_user(event, user_id)]
     assert "用法" in event.send.call_args.args[0].chain[0].text
     assert runtime.bot_config_manager.config_file.read_bytes() == before
+
+
+@pytest.fixture
+def interactive_runtime(runtime, event):
+    runtime.get_bot_config = lambda name: runtime.bot_map[name]
+    runtime.data_cache.is_bot_muted = Mock(return_value=False)
+    runtime.min_reply_interval = runtime.max_reply_interval = 0
+    routed_event = MagicMock(spec=AiocqhttpMessageEvent)
+    for name, value in vars(event).items():
+        setattr(routed_event, name, value)
+    routed_event.is_admin.return_value = False
+    return runtime, routed_event
+
+
+@pytest.mark.parametrize("official", [False, True])
+def test_user_block_tool_prompt_respects_feature_selection(runtime, official):
+    manager = runtime.bot_config_manager
+    new_bot = manager.normalize_bot_config({"name": "new"})
+    prompt = build_xml_instructions(
+        new_bot["enabled_interactive_features"], is_qq_official=official
+    )
+    assert '<block_user user_id="用户ID"/>' in prompt
+    assert '<unblock_user user_id="用户ID"/>' in prompt
+    existing_bot = manager.normalize_bot_config(
+        {"name": "existing", "enabled_interactive_features": [FeatureKey.POKE]}
+    )
+    prompt = build_xml_instructions(
+        existing_bot["enabled_interactive_features"], is_qq_official=official
+    )
+    assert "block_user" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("platform", ["aiocqhttp", "qq_official_webhook", "generic"])
+async def test_user_block_tool_persists_and_skips_future_messages(
+    interactive_runtime, private, platform
+):
+    runtime, event = interactive_runtime
+    event.get_platform_name.return_value = platform
+    if private:
+        event.get_group_id.return_value = ""
+        event.unified_msg_origin = "adapter:FriendMessage:200"
+    result = await XmlParse(None, None).decode_llm_xml(
+        '<block_user user_id="200" group_id="101" bot_name="other"/>',
+        event.get_group_id() or "200",
+    )
+    assert result is not None
+    assert not result.msg_chains
+    assert ReplyPipeline._has_non_message_work(result)
+    await runtime.chat_manager.action_dispatcher.dispatch_actions(
+        event, "bot", "Bot", event.get_group_id() or "200", result
+    )
+    assert runtime.bot_map["bot"]["blocked_users"] == {
+        event.unified_msg_origin: ["200"]
+    }
+    assert runtime.bot_map["other"]["blocked_users"] == {}
+    assert runtime.bot_config_manager.load_bots()[0]["blocked_users"] == {
+        event.unified_msg_origin: ["200"]
+    }
+    rows = [entry.args[2] for entry in runtime.data_cache.add_message.await_args_list]
+    assert len(rows) == 1
+    assert rows[0].role == "operation_log"
+    assert "<block_user user_id=\"200\" result='success'/>" in rows[0].content
+    runtime.data_cache.add_message.reset_mock()
+    runtime.chat_manager.job = AsyncMock()
+    await runtime.chat_manager.handle_message(event)
+    runtime.chat_manager.job.assert_not_awaited()
+    runtime.message_parser.parse_user_message.assert_not_awaited()
+    runtime.data_cache.add_message.assert_not_awaited()
+    event.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_blocks", [False, True])
+async def test_user_block_tools_and_commands_share_the_same_list(
+    interactive_runtime, tool_blocks
+):
+    runtime, event = interactive_runtime
+    if not tool_blocks:
+        _ = [c async for c in runtime.cmd_handler.block_user(event, "200")]
+    action = "block_user" if tool_blocks else "unblock_user"
+    result = await XmlParse(None, None).decode_llm_xml(
+        f'<{action} user_id="200"/>', "100"
+    )
+    await runtime.chat_manager.action_dispatcher.dispatch_actions(
+        event, "bot", "Bot", "100", result
+    )
+    if tool_blocks:
+        assert not runtime.chat_manager.decision_engine.check_whitelists(event)
+        _ = [c async for c in runtime.cmd_handler.unblock_user(event, "200")]
+    assert runtime.bot_map["bot"]["blocked_users"] == {}
+    assert runtime.chat_manager.decision_engine.check_whitelists(event)
+
+
+@pytest.mark.asyncio
+async def test_new_block_rejects_a_scheduled_message_before_parsing(
+    interactive_runtime,
+):
+    runtime, event = interactive_runtime
+    manager = runtime.chat_manager
+    manager.decision_engine.evaluate_decision = AsyncMock()
+    await manager.handle_message(event)
+    assert runtime.running_tasks
+    assert runtime.bot_config_manager.set_user_blocked(
+        "bot", event.unified_msg_origin, "200", blocked=True
+    )
+    while runtime.running_tasks:
+        await asyncio.gather(*list(runtime.running_tasks.values()))
+        await asyncio.sleep(0)
+    runtime.message_parser.parse_user_message.assert_not_awaited()
+    manager.decision_engine.evaluate_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_block_applied_during_parsing_prevents_queued_decision(
+    interactive_runtime,
+):
+    runtime, event = interactive_runtime
+    manager = runtime.chat_manager
+    runtime.db.chat_history_repo = SimpleNamespace(update_processing_status=AsyncMock())
+    runtime.data_cache.get_recent_message = AsyncMock(return_value=[])
+    manager.decision_engine.get_trigger = Mock(return_value=False)
+    manager.decision_engine.evaluate_decision = AsyncMock()
+    manager.action_dispatcher.dispatch_actions = AsyncMock()
+
+    async def parse_and_block(*args, **kwargs):
+        assert runtime.bot_config_manager.set_user_blocked(
+            "bot", event.unified_msg_origin, "200", blocked=True
+        )
+        return MessageData(message_id="pending", user_id="200", content="hello"), [], []
+
+    runtime.message_parser.parse_user_message.side_effect = parse_and_block
+    await manager.job(event)
+    while runtime.running_tasks:
+        await asyncio.gather(*list(runtime.running_tasks.values()))
+        await asyncio.sleep(0)
+    runtime.message_parser.parse_user_message.assert_awaited_once()
+    manager.decision_engine.evaluate_decision.assert_not_awaited()
+    manager.action_dispatcher.dispatch_actions.assert_not_awaited()
+    runtime.db.chat_history_repo.update_processing_status.assert_any_await(
+        "bot", "100", ["pending"], "skipped"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_positional_tool_calls_are_still_dispatched(interactive_runtime):
+    runtime, event = interactive_runtime
+    dispatcher = runtime.chat_manager.action_dispatcher
+    dispatcher.tool_executor.execute_tool = AsyncMock(
+        return_value={"name": "legacy_tool", "results": "done"}
+    )
+    # Legacy callers supplied twelve positional fields before tools_to_call.
+    result = XmlLlmResult(
+        Status(), *([] for _ in range(11)), [("legacy_tool", {"query": "hello"})]
+    )
+    await dispatcher.dispatch_actions(event, "bot", "Bot", "100", result)
+    dispatcher.tool_executor.execute_tool.assert_awaited_once_with(
+        event, "bot", "Bot", "100", "legacy_tool", {"query": "hello"}, tool_context=None
+    )
+    assert result.user_block_actions == []
+    assert result.xml_tool_results == [{"name": "legacy_tool", "results": "done"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first_tag",
+    ['<block_user user_id="200"/>', '<block_user user_id="200">'],
+    ids=["siblings", "missing-close-repaired"],
+)
+async def test_user_block_tool_preserves_action_order_and_other_blocks(
+    interactive_runtime, first_tag
+):
+    runtime, event = interactive_runtime
+    runtime.bot_config_manager.set_user_blocked(
+        "bot", "adapter:GroupMessage:101", "200", blocked=True
+    )
+    result = await XmlParse(None, None).decode_llm_xml(
+        first_tag + '<block_user user_id="opaque-USER_ID"/>'
+        '<unblock_user user_id="200"/>',
+        "100",
+    )
+    await runtime.chat_manager.action_dispatcher.dispatch_actions(
+        event, "bot", "Bot", "100", result
+    )
+    assert runtime.bot_map["bot"]["blocked_users"] == {
+        "adapter:GroupMessage:101": ["200"],
+        event.unified_msg_origin: ["opaque-USER_ID"],
+    }
+    assert runtime.chat_manager.decision_engine.check_whitelists(event)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["block_user", "unblock_user"])
+@pytest.mark.parametrize("failure", ["disabled", "save_failed"])
+async def test_user_block_tool_failure_preserves_live_and_persisted_access(
+    interactive_runtime, monkeypatch, action, failure
+):
+    runtime, event = interactive_runtime
+    manager = runtime.bot_config_manager
+    if action == "unblock_user":
+        manager.set_user_blocked("bot", event.unified_msg_origin, "200", blocked=True)
+    if failure == "disabled":
+        bots = manager.load_bots()
+        bots[0]["enabled_interactive_features"] = []
+        assert manager.save_bots(bots)
+        runtime.sync_bot_maps()
+    else:
+        monkeypatch.setattr(manager, "save_bots", Mock(return_value=False))
+    before = manager.config_file.read_bytes()
+    result = await XmlParse(None, None).decode_llm_xml(
+        f'<{action} user_id="200"/>', "100"
+    )
+    await runtime.chat_manager.action_dispatcher.dispatch_actions(
+        event, "bot", "Bot", "100", result
+    )
+    assert manager.config_file.read_bytes() == before
+    assert runtime.chat_manager.decision_engine.check_whitelists(event) is (
+        action == "block_user"
+    )
+    log = runtime.data_cache.add_message.await_args.args[2]
+    assert "result='failed'" in log.content
+    assert "result='success'" not in log.content
+    event.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["block_user", "unblock_user"])
+@pytest.mark.parametrize("user_id", ["", "  ", "200 201", "@200", "all"])
+async def test_user_block_tool_requires_one_explicit_target(
+    interactive_runtime, action, user_id
+):
+    runtime, event = interactive_runtime
+    before = runtime.bot_config_manager.config_file.read_bytes()
+    result = await XmlParse(None, None).decode_llm_xml(
+        f'<{action} user_id="{user_id}"/>', "100"
+    )
+    await runtime.chat_manager.action_dispatcher.dispatch_actions(
+        event, "bot", "Bot", "100", result
+    )
+    assert runtime.bot_config_manager.config_file.read_bytes() == before
+    assert runtime.chat_manager.decision_engine.check_whitelists(event)
+    assert (
+        "result='failed'" in runtime.data_cache.add_message.await_args.args[2].content
+    )

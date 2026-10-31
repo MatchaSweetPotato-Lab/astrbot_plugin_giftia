@@ -360,6 +360,11 @@ class XmlParse:
                             f"踢人标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
+                elif tag_name in ("block_user", "unblock_user"):
+                    result.user_block_actions.append(
+                        (tag_name, self._attr_str(child, "user_id", "").strip())
+                    )
+
                 elif tag_name == "leave":
                     result.leave.append(group_or_user_id)
 

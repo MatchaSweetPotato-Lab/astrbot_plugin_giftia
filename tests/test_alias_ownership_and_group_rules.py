@@ -365,6 +365,41 @@ def test_group_rules_are_injected_verbatim_into_both_prompts():
 
 
 @pytest.mark.asyncio
+async def test_group_rules_can_be_created_for_an_active_bot_without_existing_rules(
+    runtime, monkeypatch
+):
+    runtime.bot_map = {"new-bot": {"name": "new-bot"}}
+    runtime.db.query = runtime.db.conn.execute
+    await runtime.data_cache.set_group_profile("other-bot", "123456", "其他 Bot 群规")
+    api = ProfileApi()
+    api.giftia = runtime
+    request = SimpleNamespace(
+        query={"bot_name": "new-bot"},
+        json=AsyncMock(
+            return_value={
+                "bot_name": "new-bot",
+                "group_or_user_id": "123456",
+                "profile": "禁止刷屏\n尊重他人",
+            }
+        ),
+    )
+    monkeypatch.setattr("core.web.profile_api.request", request)
+    options = json.loads((await api.get_group_profile_filter_options()).body)["data"]
+    assert options["bots"] == ["new-bot", "other-bot"]
+    assert options["selected_bot_name"] == "new-bot"
+    assert options["sessions"] == []
+    assert json.loads((await api.update_group_profile()).body)["status"] == "success"
+    request.query["group_or_user_id"] = "123456"
+    saved = json.loads((await api.get_group_profiles()).body)["data"]
+    assert saved["total"] == 1
+    assert saved["items"][0]["profile"] == "禁止刷屏\n尊重他人"
+    assert await runtime.data_cache.get_group_profile("new-bot", "123456") == (
+        "禁止刷屏\n尊重他人"
+    )
+    assert await runtime.db.get_group_profile("123456", "other-bot") == "其他 Bot 群规"
+
+
+@pytest.mark.asyncio
 async def test_manual_rules_api_refreshes_cache_and_reports_alias_conflicts(
     runtime, monkeypatch
 ):

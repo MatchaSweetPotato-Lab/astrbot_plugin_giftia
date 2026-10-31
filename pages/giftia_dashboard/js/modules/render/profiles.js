@@ -18,6 +18,7 @@ export function updateProfileFilterVisibility() {
     const groupInputGroup = document.getElementById("profile-group-input-group");
     const userPanel = document.getElementById("subpanel-user-profiles");
     const groupPanel = document.getElementById("subpanel-group-profiles");
+    const addGroupButton = document.getElementById("add-group-profile-btn");
     const isUserProfiles = state.activeSubTab === "user-profiles";
     if (userFilterGroup) {
         userFilterGroup.style.display = isUserProfiles ? "" : "none";
@@ -27,6 +28,9 @@ export function updateProfileFilterVisibility() {
     }
     if (groupInputGroup) {
         groupInputGroup.style.display = isUserProfiles ? "none" : "";
+    }
+    if (addGroupButton) {
+        addGroupButton.style.display = isUserProfiles ? "none" : "";
     }
     if (userPanel) {
         userPanel.classList.toggle("active", isUserProfiles);
@@ -180,16 +184,15 @@ export function renderGroupProfiles(items) {
         return;
     }
 
-    container.innerHTML = items.map(item => {
-        const encodedProfile = encodeURIComponent(item.profile || "");
+    container.innerHTML = items.map((item, index) => {
         const profileHtml = `<div class="profile-raw-content"><span class="text-content" style="white-space: pre-wrap;">${window.escapeHtml(item.profile || "")}</span></div>`;
 
         return `
-            <div class="profile-item-card card">
+            <div class="profile-item-card card" data-group-profile-index="${index}">
                 <div class="profile-card-header">
                     <div class="profile-card-id-section">
                         <span class="profile-card-id-label">群聊:</span>
-                        <span class="profile-card-id-value">${item.group_or_user_id}</span>
+                        <span class="profile-card-id-value">${window.escapeHtml(String(item.group_or_user_id))}</span>
                     </div>
                 </div>
                 <div class="profile-card-body">
@@ -200,11 +203,23 @@ export function renderGroupProfiles(items) {
                         更新时间: ${window.formatDate(item.updated_at || item.created_at)}
                     </div>
                     <div class="profile-card-actions">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditGroupProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${encodedProfile}')">编辑</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteGroupProfile('${item.bot_name}', '${item.group_or_user_id}')">删除</button>
+                        <button type="button" class="btn btn-secondary btn-small" data-group-profile-action="edit">编辑</button>
+                        <button type="button" class="btn btn-danger btn-small" data-group-profile-action="delete">删除</button>
                     </div>
                 </div>
             </div>
         `;
     }).join("");
+    container.onclick = event => {
+        const button = event.target.closest('[data-group-profile-action]');
+        const card = button?.closest('[data-group-profile-index]');
+        if (!card) return;
+        const item = items[Number(card.dataset.groupProfileIndex)];
+        if (button.dataset.groupProfileAction === 'edit') {
+            window.openEditGroupProfileModal(item.bot_name, item.group_or_user_id, encodeURIComponent(item.profile || ""));
+        }
+        if (button.dataset.groupProfileAction === 'delete') {
+            window.deleteGroupProfile(item.bot_name, item.group_or_user_id);
+        }
+    };
 }

@@ -22,6 +22,7 @@ class FeatureKey:
     REPEAT = "repeat"
     LIKE = "like"
     DELETE = "delete"
+    BLOCK_USER = "block_user"
     GROUP_ADMIN = "group_admin"
     TASK_BOARD = "task_board"
     SLANG = "slang"
@@ -205,6 +206,8 @@ FLAT_CLOSABLE_TAGS = [
     "poke",
     "ban",
     "kick",
+    "block_user",
+    "unblock_user",
     "leave",
     "summary_user_profile",
     "update_relation",
@@ -294,3 +297,5 @@ class XmlLlmResult:
     set_custom_status: dict[str, str] = field(default_factory=dict)
     # 保留可见输出与工具在 XML 中的出现顺序；退群操作始终在最后
     output_order: list[tuple[str, int]] = field(default_factory=list)
+    # Append new fields to preserve existing positional constructor arguments.
+    user_block_actions: list[tuple[str, str]] = field(default_factory=list)

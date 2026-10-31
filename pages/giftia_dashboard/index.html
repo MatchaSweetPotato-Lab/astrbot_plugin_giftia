@@ -439,6 +439,7 @@
                             <label>用户ID</label>
                             <input type="text" id="profile-user-id" placeholder="筛选用户">
                         </div>
+                        <button type="button" class="btn btn-primary" id="add-group-profile-btn" style="display: none;" onclick="openAddGroupProfileModal()">+ 新建群规</button>
                     </div>
                 </div>
 
@@ -1112,23 +1113,27 @@
         </div>
     </div>
 
-    <!-- MODAL: Edit Group Rules -->
+    <!-- MODAL: Create or Edit Group Rules -->
     <div id="edit-group-profile-modal" class="modal-overlay">
         <div class="modal-card card">
             <div class="modal-header">
-                <h2>修改群规</h2>
-                <button class="modal-close-btn" onclick="closeModal('edit-group-profile-modal')">&times;</button>
+                <h2 id="edit-group-profile-title" class="text-h3 pa-4 pb-0 pl-6">修改群规</h2>
+                <button type="button" class="modal-close-btn" variant="text" aria-label="关闭群规编辑" onclick="closeModal('edit-group-profile-modal')">&times;</button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="edit-group-prof-bot">
-                <input type="hidden" id="edit-group-prof-group">
                 <div class="form-group">
-                    <label>群规内容 <span class="required">*</span></label>
+                    <label for="edit-group-prof-group">群号 <span class="required">*</span></label>
+                    <input type="text" id="edit-group-prof-group" placeholder="输入群号" inputmode="numeric" autocomplete="off" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-group-prof-text">群规内容 <span class="required">*</span></label>
                     <textarea id="edit-group-prof-text" rows="8" placeholder="输入当前会话需要遵守的具体规则；保存后覆写原有群规，不会被动更新。"></textarea>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="submitEditGroupProfile()">确认保存</button>
+                <button type="button" class="btn btn-secondary" variant="text" onclick="closeModal('edit-group-profile-modal')">取消</button>
+                <button type="button" class="btn btn-primary" variant="tonal" id="save-group-profile-btn" onclick="submitEditGroupProfile()">确认保存</button>
             </div>
         </div>
     </div>
