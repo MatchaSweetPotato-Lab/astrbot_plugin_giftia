@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from copy import deepcopy
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from astrbot.api import logger
 from astrbot.api.star import StarTools
@@ -130,14 +132,35 @@ class BotConfigManager:
         return self.bots
 
     def save_bots(self, bots: list[dict]) -> bool:
-        """保存机器人配置列表到 data/bots_config.json。"""
+        """Atomically persist bot configurations before publishing them in memory.
+
+        Args:
+            bots: Bot configurations to normalize and save.
+
+        Returns:
+            Whether the complete configuration replaced the previous file.
+        """
         normalized_bots = [
             self.normalize_bot_config(b) for b in bots if isinstance(b, dict)
         ]
+        temporary_path = None
         try:
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            with open(self.config_file, "w", encoding="utf-8") as f:
+            config_path = Path(self.config_file)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=config_path.parent,
+                prefix=f".{config_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                temporary_path = Path(f.name)
                 json.dump(normalized_bots, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary_path, config_path)
+            temporary_path = None
             self.bots = normalized_bots
             logger.info(
                 f"[Giftia BotConfigManager] 已保存 {len(normalized_bots)} 个机器人配置到 {self.config_file}"
@@ -146,6 +169,15 @@ class BotConfigManager:
         except Exception as e:
             logger.error(f"[Giftia BotConfigManager] 保存 {self.config_file} 失败: {e}")
             return False
+        finally:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError as error:
+                    logger.warning(
+                        f"[Giftia BotConfigManager] Failed to remove temporary config "
+                        f"{temporary_path}: {error}"
+                    )
 
     def set_user_blocked(
         self,

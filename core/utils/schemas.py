@@ -269,8 +269,6 @@ class XmlLlmResult:
     kick: list[tuple[str, str]] = field(default_factory=list)
     # 退群，同上。群号
     leave: list[str] = field(default_factory=list)
-    # Ordered block-list changes scoped to the current bot and platform session.
-    user_block_actions: list[tuple[str, str]] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
@@ -299,3 +297,5 @@ class XmlLlmResult:
     set_custom_status: dict[str, str] = field(default_factory=dict)
     # 保留可见输出与工具在 XML 中的出现顺序；退群操作始终在最后
     output_order: list[tuple[str, int]] = field(default_factory=list)
+    # Append new fields to preserve existing positional constructor arguments.
+    user_block_actions: list[tuple[str, str]] = field(default_factory=list)
