@@ -199,25 +199,53 @@ window.deleteUserProfile = function(bot, group, user) {
     });
 };
 
-// 2. Edit Group Rules
+// 2. Create or Edit Group Rules
+window.openAddGroupProfileModal = function() {
+    const bot = document.getElementById("profile-bot-name").value;
+    if (!bot) {
+        window.showToast("请先选择 Bot！");
+        return;
+    }
+    document.getElementById("edit-group-profile-title").textContent = "新建群规";
+    document.getElementById("edit-group-prof-bot").value = bot;
+    const groupInput = document.getElementById("edit-group-prof-group");
+    groupInput.value = document.getElementById("profile-group-id-input").value.trim();
+    groupInput.readOnly = false;
+    document.getElementById("edit-group-prof-text").value = "";
+    window.openModal("edit-group-profile-modal");
+    groupInput.focus();
+};
+
 window.openEditGroupProfileModal = function(bot, group, profileEncoded) {
     const profile = decodeURIComponent(profileEncoded);
+    document.getElementById("edit-group-profile-title").textContent = "修改群规";
     document.getElementById("edit-group-prof-bot").value = bot;
     document.getElementById("edit-group-prof-group").value = group;
+    document.getElementById("edit-group-prof-group").readOnly = true;
     document.getElementById("edit-group-prof-text").value = profile;
     window.openModal("edit-group-profile-modal");
 };
 
 window.submitEditGroupProfile = async function() {
     const bot = document.getElementById("edit-group-prof-bot").value;
-    const group = document.getElementById("edit-group-prof-group").value;
+    const group = document.getElementById("edit-group-prof-group").value.trim();
     const profile = document.getElementById("edit-group-prof-text").value.trim();
 
+    if (!bot) {
+        window.showToast("请先选择 Bot！");
+        return;
+    }
+    if (!group) {
+        window.showToast("群号不能为空！");
+        return;
+    }
     if (!profile) {
         window.showToast("群规内容不能为空！");
         return;
     }
 
+    const saveButton = document.getElementById("save-group-profile-btn");
+    saveButton.disabled = true;
     try {
         const res = await window.apiPost("/profiles/group/update", {
             bot_name: bot,
@@ -227,12 +255,16 @@ window.submitEditGroupProfile = async function() {
         if (res.status === "success") {
             window.showToast("保存成功！");
             window.closeModal("edit-group-profile-modal");
-            window.GiftiaApp.loadGroupProfiles();
+            document.getElementById("profile-group-id-input").value = group;
+            window.GiftiaApp.resetPagination("groupProfiles");
+            await window.GiftiaApp.loadGroupProfiles();
         } else {
-            window.showToast(`更新失败: ${res.message}`);
+            window.showToast(`保存失败: ${res.message}`);
         }
     } catch (e) {
         window.showToast(`发生错误: ${e.message}`);
+    } finally {
+        saveButton.disabled = false;
     }
 };
 
