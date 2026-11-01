@@ -321,6 +321,9 @@ def test_review_message_names_match_decision_and_preserve_nickname_fallback():
 
 @pytest.mark.asyncio
 async def test_reply_profiles_include_known_groups_from_stored_speech(runtime):
+    runtime.plugin.data_cache.get_user_profile_record.return_value = {
+        "account_type": "official_bot"
+    }
     now = datetime.now()
     for bot, session, age in (
         ("bot", "123456", timedelta(hours=1)),
@@ -342,6 +345,7 @@ async def test_reply_profiles_include_known_groups_from_stored_speech(runtime):
     prompt = runtime.plugin.call_llm.call_llm_reply.await_args.kwargs["user_prompt"]
     profile = fromstring(f"<root>{prompt}</root>").find("user_profile")
     assert profile.get("user_id") == "user"
+    assert "账号类型：QQ 官方机器人" in profile.text
     assert "已知共同群聊：123456（近期活跃）、789012" in profile.text
     assert "已知共同群聊：user" not in profile.text
     assert "foreign" not in profile.text

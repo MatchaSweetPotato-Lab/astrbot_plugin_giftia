@@ -12,6 +12,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from ..conversation.media_captioner import MediaCaptioner
 from ..utils.event_utils import resolve_bot_name
 from ..utils.schemas import (
+    ACCOUNT_TYPE_LABELS,
     FORWARD_MEDIA_PATTERN,
     FORWARD_NESTED_PATTERN,
     MediaCaption,
@@ -246,7 +247,7 @@ class GetMessageContextTool(FunctionTool):
 class SearchUserProfileTool(FunctionTool):
     plugin: Any = None
     name: str = "search_user_profile"
-    description: str = "按用户ID、任一会话称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；展示各会话全部称呼并标注非本会话来源，分页查看跨群共享的互动评价历史，非本群记录标注来源。"
+    description: str = "按用户ID、任一会话称呼或头像描述搜索当前机器人的成员画像，也可通过当前会话昵称和外号定位；展示账号类型及各会话全部称呼并标注非本会话来源，分页查看跨群共享的互动评价历史，非本群记录标注来源。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -275,7 +276,10 @@ class SearchUserProfileTool(FunctionTool):
         if nickname:
             header += f" ({nickname})"
 
-        lines = [header]
+        lines = [
+            header,
+            f"账号类型：{ACCOUNT_TYPE_LABELS.get(str(item.get('account_type')), '未知')}",
+        ]
         relation = item.get("relation")
         if relation not in (None, ""):
             lines.append(build_user_relation((relation, "")))

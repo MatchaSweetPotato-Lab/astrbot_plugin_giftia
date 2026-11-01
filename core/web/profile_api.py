@@ -6,6 +6,7 @@ from astrbot.api.web import error_response, json_response, request
 
 from ..database.profile_store import PROFILE_NAMES_CTE
 from ..database.relation_history_store import RelationHistoryConflictError
+from ..utils.schemas import ACCOUNT_TYPE_LABELS
 from .web_helpers import USER_PROFILE_FIELD_KEYS
 
 
@@ -97,7 +98,7 @@ class ProfileApi:
                        ? AS group_or_user_id,
                        up.resolved_call_name AS call_name, up.local_call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
-                       up.avatar_description,
+                       up.avatar_description, up.account_type,
                        up.created_at, up.updated_at,
                        up.title
                 FROM profiles up
@@ -117,6 +118,7 @@ class ProfileApi:
                             "bot_name": r["bot_name"],
                             "group_or_user_id": r["group_or_user_id"],
                             "user_id": r["user_id"],
+                            "account_type": r["account_type"],
                             "call_name": r["call_name"] or "",
                             "local_call_name": r["local_call_name"] or "",
                             "aliases": await self.giftia.db.get_user_aliases_text(
@@ -396,6 +398,17 @@ class ProfileApi:
 
             if not bot_name or not user_id:
                 return error_response("缺少必要参数 (bot_name, user_id)")
+
+            if "account_type" in body:
+                account_type = body["account_type"]
+                if (
+                    not isinstance(account_type, str)
+                    or account_type not in ACCOUNT_TYPE_LABELS
+                ):
+                    return error_response(
+                        "账号类型必须为未知、QQ 官方机器人或普通 QQ 账号"
+                    )
+                profile_fields["account_type"] = account_type
 
             if base_relation is not None and (
                 isinstance(base_relation, bool)

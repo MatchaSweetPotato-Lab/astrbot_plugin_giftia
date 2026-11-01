@@ -153,6 +153,13 @@ def test_profile_formats_group_ids_safely_and_omits_empty_groups():
     )
     root = fromstring(block)
     assert root.get("user_id") == "alice"
-    assert root.text.strip() == "已知共同群聊：recent<&>（近期活跃）、old"
-    assert build_user_profile_block("alice", None, None, common_groups=[]) == ""
+    assert (
+        root.text.strip() == "账号类型：未知\n已知共同群聊：recent<&>（近期活跃）、old"
+    )
+    assert (
+        fromstring(
+            build_user_profile_block("alice", None, None, common_groups=[])
+        ).text.strip()
+        == "账号类型：未知"
+    )
     assert "已知共同群聊" not in build_user_profile_block("alice", {}, (50, ""))

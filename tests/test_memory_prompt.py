@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 from xml.etree.ElementTree import fromstring
 
 import pytest
-
 from core.bot.bot_config_manager import (
     DEFAULT_INTERACTIVE_FEATURES,
     INTERACTIVE_FEATURES_METADATA,
@@ -15,7 +14,12 @@ from core.bot.bot_config_manager import (
 from core.conversation.decision_engine import DecisionEngine
 from core.llm.native_tools import SearchMemoryTool
 from core.llm.preset_prompts import build_xml_instructions
-from core.llm.prompt import build_decision_prompt, build_memory_items, build_reply_prompt
+from core.llm.prompt import (
+    build_decision_prompt,
+    build_memory_items,
+    build_reply_prompt,
+    build_user_profile_block,
+)
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     Decision,
@@ -139,7 +143,9 @@ def test_memory_context_keeps_one_chronological_source_locator(cached):
     if cached:
         memories = [
             SessionRecallMemory(
-                memory_id=record["id"], text=record["text"], metadata=json.dumps(metadata)
+                memory_id=record["id"],
+                text=record["text"],
+                metadata=json.dumps(metadata),
             )
         ]
     else:
@@ -149,9 +155,7 @@ def test_memory_context_keeps_one_chronological_source_locator(cached):
         media_captions=[],
         bot_status=None,
         current_session_id="current",
-        **{
-            "session_recalled_memories" if cached else "relevant_memories": memories
-        },
+        **{"session_recalled_memories" if cached else "relevant_memories": memories},
     )
     root = fromstring("<context>" + prompt + "</context>")
     [rendered] = root.findall(".//memory")
@@ -339,7 +343,7 @@ async def test_tool_search_keeps_structured_records_and_deduplicates_by_internal
 
 
 @pytest.mark.asyncio
-async def test_decision_passes_records_without_aliasing_pending_cache(monkeypatch):
+async def test_decision_passes_memories_and_all_pending_speaker_profiles(monkeypatch):
     record = {"id": "m1", "text": "甲曾经约我观星。", "metadata": {"topic": "观星"}}
     monkeypatch.setattr(
         "core.conversation.decision_engine.search_memories_with_rerank",
@@ -382,17 +386,83 @@ async def test_decision_passes_records_without_aliasing_pending_cache(monkeypatc
     )
     engine = DecisionEngine(plugin)
     engine.media_captioner.get_cached_media_captions = AsyncMock(return_value=[])
+    plugin.tools_config["active_user_brief_limit"] = 1
+    plugin.data_cache.get_user_profile_record.side_effect = lambda **kwargs: {
+        "A": {"account_type": "qq_account", "call_name": "小甲"},
+        "B": {"account_type": "official_bot", "avatar_description": "不进入决策"},
+    }.get(kwargs["user_id"])
+    plugin.data_cache.build_active_user_briefs.return_value = [
+        {"user_id": "B", "call_name": "不能重复"},
+        {"user_id": "history", "call_name": "历史成员"},
+    ]
+    messages = [
+        MessageData(user_id=uid, content="还记得观星吗", message_id=str(index), **extra)
+        for index, (uid, extra) in enumerate(
+            [
+                ("A", {}),
+                ("B", {}),
+                ("A", {}),
+                ("C", {}),
+                ("self", {}),
+                ("notice", {"role": "system"}),
+                ("operation", {"role": "operation_log"}),
+                ("recalled", {"is_recalled": 1}),
+            ]
+        )
+    ]
     reply, relevant, pending, _ = await engine.evaluate_decision(
         event,
         "bot",
         "Giftia",
         "group",
-        [MessageData(user_id="A", content="还记得观星吗")],
-        [],
+        messages,
+        [MessageData(user_id="history", content="历史背景")],
     )
     assert reply and relevant == pending == [record]
     pending.clear()
     assert relevant == [record]
+    profiles = fromstring(
+        "<root>"
+        + plugin.call_llm.call_llm_decision.await_args.kwargs["user_prompt"]
+        + "</root>"
+    )
+    assert [node.get("user_id") for node in profiles.findall("user_profile")] == [
+        "A",
+        "B",
+        "C",
+    ]
+    assert "账号类型：普通 QQ 账号" in profiles.find("user_profile[@user_id='A']").text
+    assert "账号类型：QQ 官方机器人" in profiles.find("user_profile[@user_id='B']").text
+    assert "账号类型：未知" in profiles.find("user_profile[@user_id='C']").text
+    assert "不进入决策" not in profiles.find("user_profile[@user_id='B']").text
+    assert [
+        node.get("user_id") for node in profiles.findall("active_user_briefs/user")
+    ] == ["history"]
+    assert (
+        profiles.find("pending_messages/message[@message_id='0']").get("nickname")
+        == "小甲"
+    )
+    assert all(not message.nickname for message in messages)
+    assert [
+        call.kwargs["user_id"]
+        for call in plugin.data_cache.get_user_profile_record.await_args_list
+    ] == ["A", "B", "C"]
+
+
+@pytest.mark.parametrize(
+    "profile,label",
+    [
+        (None, "未知"),
+        ({}, "未知"),
+        ({"account_type": "unknown"}, "未知"),
+        ({"account_type": "official_bot"}, "QQ 官方机器人"),
+        ({"account_type": "qq_account"}, "普通 QQ 账号"),
+    ],
+)
+def test_account_type_alone_is_a_complete_profile(profile, label):
+    block = build_user_profile_block("user", profile, None)
+    assert fromstring(block).text.strip() == f"账号类型：{label}"
+    assert not build_user_profile_block("", None, None)
 
 
 @pytest.mark.asyncio

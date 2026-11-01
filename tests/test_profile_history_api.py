@@ -81,6 +81,56 @@ async def seed_changes(plugin, count, scope=("bot", "group", "user")):
 
 
 @pytest.mark.asyncio
+async def test_account_type_edits_are_shared_cached_and_preserved_by_other_updates(
+    profile_api,
+):
+    client, plugin = profile_api
+    for bot, group in (("bot", "group-a"), ("bot", "group-b"), ("other", "group-a")):
+        await plugin.db.upsert_user_profile(bot, group, "user")
+        assert (await plugin.data_cache.get_user_profile_record(bot, group, "user"))[
+            "account_type"
+        ] == "unknown"
+    scope = {"bot_name": "bot", "group_or_user_id": "group-a", "user_id": "user"}
+    for account_type in ("official_bot", "qq_account", "unknown"):
+        result = await client.post(
+            "/profiles/user/update", json={**scope, "account_type": account_type}
+        )
+        assert result.json()["status"] == "success"
+        await client.post("/profiles/user/update", json={**scope, "attitude": "熟络"})
+        for group in ("group-a", "group-b", "user"):
+            assert (
+                await plugin.data_cache.get_user_profile_record("bot", group, "user")
+            )["account_type"] == account_type
+        items = (await client.get("/profiles/user", params=scope)).json()["data"][
+            "items"
+        ]
+        assert items[0]["account_type"] == account_type
+        assert (
+            await plugin.data_cache.get_user_profile_record("other", "group-a", "user")
+        )["account_type"] == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "account_type", [None, "", "human", True, {}, "official_bot\n"]
+)
+async def test_invalid_account_types_cannot_create_or_change_profiles(
+    profile_api, account_type
+):
+    client, plugin = profile_api
+    scope = {"bot_name": "bot", "group_or_user_id": "group", "user_id": "user"}
+    result = await client.post(
+        "/profiles/user/update", json={**scope, "account_type": account_type}
+    )
+    assert result.json()["status"] == "error"
+    with pytest.raises(ValueError, match="Invalid account type"):
+        await plugin.db.upsert_user_profile(
+            "bot", "group", "user", profile_fields={"account_type": account_type}
+        )
+    assert await plugin.db.get_user_profile_record("bot", "group", "user") is None
+
+
+@pytest.mark.asyncio
 async def test_profile_cards_receive_latest_three_changes_across_groups(
     profile_api,
 ):

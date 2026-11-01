@@ -1,5 +1,11 @@
 // Giftia Dashboard Utilities
 
+window.ACCOUNT_TYPE_LABELS = Object.freeze({
+    unknown: "未知",
+    official_bot: "QQ 官方机器人",
+    qq_account: "普通 QQ 账号"
+});
+
 window.formatDate = function(isoString) {
     if (!isoString) return "-";
     try {
@@ -238,6 +244,7 @@ window.renderProfileCard = function(profile) {
     }
 
     const detailFields = [
+        { label: "账号类型", val: Object.hasOwn(window.ACCOUNT_TYPE_LABELS, profile.account_type) ? window.ACCOUNT_TYPE_LABELS[profile.account_type] : window.ACCOUNT_TYPE_LABELS.unknown, class: "prop-account-type", color: "var(--primary)" },
         { label: "互动态度", val: profile.attitude, class: "prop-attitude", color: "var(--success)" },
         { label: "头像描述", val: profile.avatar_description, class: "prop-avatar", color: "var(--accent, #ec4899)" }
     ].filter(field => field.val && String(field.val).trim());

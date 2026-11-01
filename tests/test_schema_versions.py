@@ -60,6 +60,36 @@ async def test_fresh_database_has_latest_schema_without_running_migrations(
 
 
 @pytest.mark.asyncio
+async def test_account_type_upgrade_defaults_to_unknown_and_preserves_manual_edits(
+    database,
+):
+    await database.execute("BEGIN")
+    for version, migration in migrations.MIGRATIONS:
+        if version >= 4:
+            break
+        await migration(database)
+        await database.execute(f"PRAGMA user_version={version}")
+    await database.execute(
+        "INSERT INTO user_profiles (bot_name, user_id, attitude, base_relation) "
+        "VALUES ('bot', 'user', '已有态度', 7)"
+    )
+    await database.commit()
+
+    await schema.initialize_database(database)
+    async with database.execute(
+        "SELECT account_type, attitude, base_relation FROM user_profiles"
+    ) as cursor:
+        assert await cursor.fetchone() == ("unknown", "已有态度", 7)
+    await database.execute("UPDATE user_profiles SET account_type='official_bot'")
+    await database.commit()
+    await schema.initialize_database(database)
+    async with database.execute("SELECT account_type FROM user_profiles") as cursor:
+        assert await cursor.fetchone() == ("official_bot",)
+    with pytest.raises(aiosqlite.IntegrityError):
+        await database.execute("UPDATE user_profiles SET account_type='human'")
+
+
+@pytest.mark.asyncio
 async def test_unversioned_current_database_adopts_baseline_only_once(
     database, monkeypatch
 ):

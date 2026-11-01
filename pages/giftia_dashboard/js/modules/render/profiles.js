@@ -84,6 +84,7 @@ export function renderUserProfiles(items) {
 
     container.innerHTML = items.map((item, index) => {
         const profileHtml = window.renderProfileCard({
+            account_type: item.account_type,
             call_name: item.call_name,
             aliases: item.aliases,
             attitude: item.attitude,

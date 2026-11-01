@@ -462,12 +462,6 @@ class ChatManager:
                 event, bot_name, defer_caption=should_defer
             )
 
-            if is_command:
-                logger.debug(
-                    f"{bot_name} command message detected, logged to database, skipping LLM reply"
-                )
-                return
-
             # 检查是否为系统通知类事件，若是则统一在此处更新禁言状态，并跳过 LLM 回复（贴表情除外）
             notice_result: NoticeParseResult | None = getattr(
                 event, "_notice_result", None
@@ -533,6 +527,25 @@ class ChatManager:
                         f"{bot_name} 系统通知事件({notice_result.notice_type or notice_result.sub_type})已记录入库，跳过 LLM 自动回复"
                     )
                     return
+
+            if (
+                current_message.role == "message"
+                and not current_message.is_recalled
+                and current_message.user_id
+                and str(current_message.user_id) == str(event.get_sender_id())
+                and not (notice_result and notice_result.is_notice)
+                and self.decision_engine.check_whitelists(event)
+            ):
+                await self.plugin.data_cache.initialize_user_profile(
+                    bot_name, group_or_user_id, event
+                )
+
+            if is_command:
+                logger.debug(
+                    "[Giftia] Command message stored for bot %s; skipping LLM reply",
+                    bot_name,
+                )
+                return
 
             await self._enqueue_message(
                 event, bot_name, group_or_user_id, current_message

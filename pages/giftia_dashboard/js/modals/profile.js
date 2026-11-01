@@ -6,6 +6,7 @@ window.openEditUserProfileModal = function(item) {
     document.getElementById("edit-user-prof-group").value = item.group_or_user_id;
     document.getElementById("edit-user-prof-user").value = item.user_id;
     document.getElementById("edit-user-prof-base-relation").value = item.base_relation ?? 0;
+    document.getElementById("edit-user-prof-account-type").value = Object.hasOwn(window.ACCOUNT_TYPE_LABELS, item.account_type) ? item.account_type : "unknown";
     const callNameInput = document.getElementById("edit-user-prof-call-name");
     callNameInput.value = item.local_call_name || "";
     callNameInput.placeholder = !item.local_call_name && item.call_name ? `留空时使用：${item.call_name}` : "留空时使用最近设置的称呼";
@@ -19,6 +20,7 @@ window.submitEditUserProfile = async function() {
     const group = document.getElementById("edit-user-prof-group").value;
     const user = document.getElementById("edit-user-prof-user").value;
     const relationVal = document.getElementById("edit-user-prof-base-relation").value;
+    const accountType = document.getElementById("edit-user-prof-account-type").value;
     const callName = document.getElementById("edit-user-prof-call-name").value.trim();
     const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
     const avatarDescription = document.getElementById("edit-user-prof-avatar").value.trim();
@@ -35,6 +37,7 @@ window.submitEditUserProfile = async function() {
             group_or_user_id: group,
             user_id: user,
             base_relation: baseRelation,
+            account_type: accountType,
             call_name: callName,
             attitude: attitude,
             avatar_description: avatarDescription
