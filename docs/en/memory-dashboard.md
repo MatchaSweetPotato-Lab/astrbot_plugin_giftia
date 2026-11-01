@@ -44,8 +44,6 @@ Decision and formal reply prompts include the category as the first line of each
 
 The `search_user_profile` tool also displays each matched member's account category directly from the saved shared profile within the current bot, showing unknown when unconfirmed. Queries do not call the platform API or modify profiles.
 
-![Editing the shared account category, using example data](../images/account-type-profile-edit.jpg)
-
 Click a card's affinity pill to open the interaction-rating history dialog for the bot and user across conversations. Its summary shows final affinity, the base and interaction components, recent and long-term scores and their evaluation counts. History appears below with ten entries per page, page numbers, previous/next controls, the current record range and total count. The final page contains the remaining entries. Members without history still have a score summary, followed by an empty state in the record area. Browsing history is independent of the fifty-entry context window used by background tone reviews. Failed requests offer a retry button.
 
 ![Affinity dialog with score breakdowns, evaluation counts and ten history entries per page, using example data](../images/member-relation-history.png)
