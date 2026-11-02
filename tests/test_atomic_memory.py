@@ -123,7 +123,7 @@ def atom(msg, **updates):
     }
 
 
-async def extract(runtime, msg, items, media=None):
+async def extract(runtime, msg, items, media=None, novelty=None):
     """Run production extraction against a synthetic model response.
 
     Args:
@@ -131,13 +131,27 @@ async def extract(runtime, msg, items, media=None):
         msg: New source message.
         items: Proposed memories from the mock model.
         media: Available completed media captions.
+        novelty: Optional response from the novelty-review model.
 
     Returns:
         Extraction success status.
     """
-    runtime.manager._call_summary_llm = AsyncMock(
-        return_value=json.dumps({"memories": items})
-    )
+
+    async def complete(task_name, system_prompt, user_prompt, **kwargs):
+        if task_name == "记忆新颖性整理":
+            if novelty is not None:
+                return novelty
+            return json.dumps(
+                {
+                    "decisions": [
+                        {"candidate_id": item["candidate_id"], "is_new": True}
+                        for item in json.loads(user_prompt)["candidates"]
+                    ]
+                }
+            )
+        return json.dumps({"memories": items})
+
+    runtime.manager._call_summary_llm = AsyncMock(side_effect=complete)
     return await runtime.manager._run_memory_summary_task(
         "bot",
         "group",
@@ -736,6 +750,9 @@ async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runt
             }
         ),
     )
+    runtime.plugin.data_cache.set_bot_status = AsyncMock(
+        wraps=runtime.plugin.data_cache.set_bot_status
+    )
     await runtime.manager.maintain_memories()
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group") == 1
@@ -748,18 +765,19 @@ async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runt
         "bot:other-group": 7,
     }
     status = await runtime.db.get_bot_status("group", "bot")
-    assert status.state == "不活跃"
+    assert status.state == "聊天中"
     assert status.mood == "开心"
     assert status.memory == "稍后一起玩"
     assert status.action == "看手机"
     assert status.custom_status == {"衣着": "外套"}
     assert (
         await runtime.plugin.data_cache.get_bot_status("bot", "group")
-    ).state == "不活跃"
+    ).state == "聊天中"
+    runtime.plugin.data_cache.set_bot_status.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_periodic_tick_deactivates_quiet_session_without_pending_memory(runtime):
+async def test_periodic_tick_closes_quiet_window_without_pending_memory(runtime):
     await message(runtime, "之前已归纳的对话")
     await runtime.manager.force_trigger_passive_memory("bot", "group", "self")
     runtime.manager._call_summary_llm.reset_mock()
@@ -771,7 +789,7 @@ async def test_periodic_tick_deactivates_quiet_session_without_pending_memory(ru
     await runtime.manager.maintain_memories()
 
     assert runtime.plugin.active_reply_counters["bot:group"] == 0
-    assert (await runtime.db.get_bot_status("group", "bot")).state == "不活跃"
+    assert (await runtime.db.get_bot_status("group", "bot")).state == "聊天中"
     runtime.manager._call_summary_llm.assert_not_awaited()
 
 
@@ -796,18 +814,21 @@ async def test_periodic_tick_uses_latest_message_for_activity_timeout(
 
     expired = quiet_seconds >= 300
     assert runtime.plugin.active_reply_counters["bot:group"] == (0 if expired else 10)
-    assert (await runtime.db.get_bot_status("group", "bot")).state == (
-        "不活跃" if expired else "聊天中"
-    )
+    assert (await runtime.db.get_bot_status("group", "bot")).state == "聊天中"
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == ((0, 0, 0) if expired else (pending.db_id, pending.db_id, 1))
 
 
 @pytest.mark.asyncio
-async def test_periodic_tick_deactivates_session_before_failed_summary(runtime):
+async def test_periodic_tick_closes_window_before_failed_summary_without_status_change(
+    runtime,
+):
     pending = await message(runtime, "总结失败后仍要重试的消息")
     runtime.plugin.active_reply_counters["bot:group"] = 10
+    await runtime.plugin.data_cache.set_bot_status(
+        "bot", "group", Status(state="聊天中")
+    )
     states_during_summary = []
 
     async def fail_summary(*args, **kwargs):
@@ -821,9 +842,9 @@ async def test_periodic_tick_deactivates_session_before_failed_summary(runtime):
     await runtime.manager.maintain_memories()
 
     runtime.manager._call_summary_llm.assert_awaited_once()
-    assert states_during_summary == [(0, "不活跃")]
+    assert states_during_summary == [(0, "聊天中")]
     assert runtime.plugin.active_reply_counters["bot:group"] == 0
-    assert (await runtime.db.get_bot_status("group", "bot")).state == "不活跃"
+    assert (await runtime.db.get_bot_status("group", "bot")).state == "聊天中"
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (
@@ -1323,6 +1344,8 @@ async def test_history_cleanup_during_inference_preserves_sources_until_commit(r
     started, release = asyncio.Event(), asyncio.Event()
 
     async def complete(*args, **kwargs):
+        if args[0] == "记忆新颖性整理":
+            return '{"decisions": [{"candidate_id": 1, "is_new": true}]}'
         started.set()
         await release.wait()
         return json.dumps({"memories": [atom(pending)]})
@@ -1584,7 +1607,7 @@ async def test_bot_perspective_text_preserves_actual_actors_and_source_quotes(
 
 
 @pytest.mark.asyncio
-async def test_new_facts_append_without_rewriting_history_or_starting_other_model_tasks(
+async def test_changed_facts_are_reviewed_without_rewriting_history(
     runtime,
 ):
     first = await message(runtime, "我最喜欢卡夫卡")
@@ -1596,7 +1619,13 @@ async def test_new_facts_append_without_rewriting_history_or_starting_other_mode
     assert len(stored) == 2
     assert stored[0] == original
     assert stored[1]["text"] == latest.content
-    assert runtime.manager._call_summary_llm.await_count == 1
+    assert [
+        call.args[0] for call in runtime.manager._call_summary_llm.await_args_list
+    ] == ["原子记忆归纳", "记忆新颖性整理"]
+    candidates = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
+        "candidates"
+    ]
+    assert candidates[0]["related_memories"][0]["memory_id"] == original["memory_id"]
     runtime.plugin.ltm.search_memory.assert_not_awaited()
     async with runtime.db.conn.execute(
         "SELECT key FROM kv_store WHERE key LIKE 'atomic_memory:consolidation:%'"
@@ -1604,6 +1633,441 @@ async def test_new_facts_append_without_rewriting_history_or_starting_other_mode
         assert await cursor.fetchall() == []
     assert not hasattr(runtime.manager, "consolidate_memories")
     assert not hasattr(runtime.manager, "consolidation_tasks")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("day,hour", [(10, 14), (11, 12)])
+async def test_repeated_identity_is_not_saved_again_but_sources_are_completed(
+    runtime, day, hour
+):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我还在读高中", day=day, hour=hour)
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=[
+            json.dumps({"memories": [atom(latest, topic="学业")]}),
+            '{"decisions": [{"candidate_id": 1, "is_new": false}]}',
+        ]
+    )
+    runtime.manager._run_profile_summary_task = AsyncMock(return_value=True)
+    runtime.manager._run_attitude_summary_task = AsyncMock()
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", latest.db_id, latest.db_id
+    )
+    assert await rows(runtime) == [original]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+        == latest.db_id
+    )
+    call = runtime.manager._call_summary_llm.call_args
+    candidate = json.loads(call.args[2])["candidates"][0]
+    assert candidate["new_memory"]["source_times"] == [latest.time]
+    assert candidate["related_memories"][0]["source_times"] == [first.time]
+    assert "不得把新的发言时间" in call.args[1]
+    assert original["indexed_revision"] == 0
+    runtime.plugin.ltm.search_memory.assert_not_awaited()
+    runtime.manager._run_profile_summary_task.assert_awaited_once()
+    runtime.manager._run_attitude_summary_task.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_novelty_review_keeps_new_details_and_original_evidence(runtime):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我是高中生，高二，在上海读书", day=11)
+    assert await extract(
+        runtime,
+        latest,
+        [
+            atom(latest, text="他是高中生", topic="身份"),
+            atom(latest, text="他读高二，在上海读书", topic="学业"),
+        ],
+        novelty=json.dumps(
+            {
+                "decisions": [
+                    {"candidate_id": 2, "is_new": True},
+                    {"candidate_id": 1, "is_new": False},
+                ]
+            }
+        ),
+    )
+    stored = await rows(runtime)
+    assert stored[0] == original
+    assert len(stored) == 2
+    assert stored[1]["text"] == "他读高二，在上海读书"
+    evidence = json.loads(stored[1]["metadata"])["evidence"]
+    assert [item["source_id"] for item in evidence] == [latest.db_id]
+    assert evidence[0]["quote"] == latest.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edited_topic", [None, "校园饮食"])
+async def test_novelty_review_removes_known_facts_from_mixed_candidate(
+    runtime, monkeypatch, edited_topic
+):
+    from core.memory.atomic import MemoryRecords, validate_memory_records
+
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我是高中生，平时每天都在学校吃食堂", day=11)
+    proposal = atom(
+        latest,
+        text="用户A是高中生，平时每天在学校食堂吃饭",
+        topic="学生身份",
+        importance=7,
+        occurred_at=latest.time,
+    )
+    initial = validate_memory_records(
+        MemoryRecords.model_validate({"memories": [proposal]}), [latest], {}, "self"
+    )[0]
+    insert = AsyncMock(wraps=runtime.db.memories_repo.insert_memories)
+    monkeypatch.setattr(runtime.db.memories_repo, "insert_memories", insert)
+    edited_text = "用户A平时每天在学校食堂吃饭"
+    assert await extract(
+        runtime,
+        latest,
+        [proposal],
+        novelty=json.dumps(
+            {
+                "decisions": [
+                    {
+                        "candidate_id": 1,
+                        "is_new": True,
+                        "text": f"  {edited_text}  ",
+                        "topic": edited_topic,
+                    }
+                ]
+            }
+        ),
+    )
+
+    stored = await rows(runtime)
+    assert len(stored) == 2
+    assert stored[0] == original
+    assert stored[1]["text"] == edited_text
+    metadata = json.loads(stored[1]["metadata"])
+    assert metadata["topic"] == (edited_topic or proposal["topic"])
+    assert metadata["associated_user_ids"] == initial["associated_user_ids"]
+    assert metadata["occurred_at"] == initial["occurred_at"]
+    assert stored[1]["importance"] == proposal["importance"]
+    assert metadata["evidence"] == initial["evidence"]
+    assert metadata["evidence"][0]["quote"] == latest.content
+    committed = insert.await_args.args[2][0]
+    assert committed["fingerprint"] != initial["fingerprint"]
+    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
+    assert payload["source_evidence"] == initial["evidence"]
+    assert payload["candidates"][0]["new_memory"]["source_ids"] == [latest.db_id]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_novelty_edits_target_only_the_selected_candidate(runtime):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    latest = await message(
+        runtime, "我是高中生，每天在学校食堂吃饭，平时喜欢打羽毛球", day=11
+    )
+    assert await extract(
+        runtime,
+        latest,
+        [
+            atom(latest, text="用户A是高中生，每天在学校食堂吃饭", topic="学生生活"),
+            atom(latest, text="用户A平时喜欢打羽毛球", topic="运动偏好"),
+        ],
+        novelty=json.dumps(
+            {
+                "decisions": [
+                    {"candidate_id": 2, "is_new": True, "text": None, "topic": None},
+                    {
+                        "candidate_id": 1,
+                        "is_new": True,
+                        "text": "用户A每天在学校食堂吃饭",
+                        "topic": "校园饮食",
+                    },
+                ]
+            }
+        ),
+    )
+    stored = await rows(runtime)
+    assert [item["text"] for item in stored[1:]] == [
+        "用户A每天在学校食堂吃饭",
+        "用户A平时喜欢打羽毛球",
+    ]
+    assert json.loads(stored[2]["metadata"])["topic"] == "运动偏好"
+    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
+    assert len(payload["source_evidence"]) == 1
+    assert len(payload["candidates"]) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"text": ""},
+        {"text": "   "},
+        {"text": "新" * 301},
+        {"text": 123},
+        {"topic": ""},
+        {"topic": "长" * 81},
+        {"is_new": False, "text": "用户A每天在学校食堂吃饭"},
+        {"text": "用户A每天在学校食堂吃饭", "evidence": [{"source_id": 999}]},
+    ],
+)
+async def test_invalid_novelty_edits_do_not_save_or_advance_progress(runtime, edit):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first)])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我是高中生，平时每天都在学校吃食堂", day=11)
+    assert not await extract(
+        runtime,
+        latest,
+        [atom(latest)],
+        novelty=json.dumps(
+            {"decisions": [{"candidate_id": 1, "is_new": True, **edit}]}
+        ),
+    )
+    assert await rows(runtime) == [original]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (latest.db_id, latest.db_id, 1)
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+        == first.db_id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text", ["我已经高中毕业，上大学了", "今天再次履行了周末帮忙的约定"]
+)
+async def test_novelty_review_can_keep_changes_and_distinct_events(runtime, text):
+    first = await message(runtime, "我是高中生，今天履行了帮忙的约定")
+    assert await extract(runtime, first, [atom(first)])
+    latest = await message(runtime, text, day=11)
+    assert await extract(runtime, latest, [atom(latest, occurred_at=latest.time)])
+    assert len(await rows(runtime)) == 2
+    prompt = runtime.manager._call_summary_llm.call_args.args[1]
+    assert "实际再次发生的独立事件" in prompt
+    assert "身份或偏好变化" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        "",
+        "broken",
+        "{}",
+        '{"decisions": []}',
+        '{"decisions": [{"candidate_id": 1, "is_new": "false"}]}',
+        '{"decisions": [{"candidate_id": 2, "is_new": false}]}',
+        '{"decisions": [{"candidate_id": 1, "is_new": false}, {"candidate_id": 1, "is_new": true}]}',
+    ],
+)
+async def test_failed_novelty_review_preserves_pending_sources_for_retry(
+    runtime, response
+):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first)])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我在读高中", day=11)
+    assert not await extract(runtime, latest, [atom(latest)], novelty=response)
+    assert await rows(runtime) == [original]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (latest.db_id, latest.db_id, 1)
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+        == first.db_id
+    )
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest)],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
+    )
+    assert await rows(runtime) == [original]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,bot,user,session,compared",
+    [
+        ("session", "bot", "user", "group", True),
+        ("session", "bot", "user", "other-group", False),
+        ("user", "bot", "user", "other-group", True),
+        ("all", "bot", "user", "other-group", True),
+        ("all", "bot", "other-user", "group", False),
+        ("user", "other-bot", "user", "group", False),
+    ],
+)
+async def test_novelty_recall_respects_bot_members_and_configured_scope(
+    runtime, scope, bot, user, session, compared
+):
+    runtime.plugin.memory_recall_scope = scope
+    await runtime.db.conn.execute(
+        "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata) "
+        "VALUES (?, ?, 'old-identity', '他是高中生', ?)",
+        (bot, session, json.dumps({"associated_user_ids": [user], "topic": "身份"})),
+    )
+    await runtime.db.conn.commit()
+    latest = await message(runtime, "我是高中生")
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest, topic="身份")],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
+    )
+    assert len(await rows(runtime)) == (1 if compared else 2)
+    assert runtime.manager._call_summary_llm.await_count == (2 if compared else 1)
+
+
+@pytest.mark.asyncio
+async def test_novelty_recall_includes_semantic_matches_outside_sqlite_candidates(
+    runtime,
+):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    original = (await rows(runtime))[0]
+    await runtime.db.conn.execute("UPDATE memories SET indexed_revision=revision")
+    for index in range(11):
+        await runtime.db.conn.execute(
+            "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata) "
+            "VALUES ('bot', 'group', ?, ?, ?)",
+            (
+                f"filler-{index}",
+                f"无关的学习消息{index}",
+                json.dumps({"associated_user_ids": ["user"], "topic": "学业"}),
+            ),
+        )
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf["enabled"] = True
+    runtime.plugin.ltm.search_memory.return_value = [{"id": original["memory_id"]}]
+    latest = await message(runtime, "我还在读高中", day=11)
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest, topic="学业")],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
+    )
+    call = runtime.plugin.ltm.search_memory.call_args.kwargs
+    assert call["query"] == latest.content
+    assert call["raise_errors"] is True
+    assert call["include_ids"] == [original["memory_id"]]
+    candidate = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
+        "candidates"
+    ][0]
+    assert original["memory_id"] in {
+        item["memory_id"] for item in candidate["related_memories"]
+    }
+    assert len(await rows(runtime)) == 12
+
+
+@pytest.mark.asyncio
+async def test_vector_recall_failure_does_not_commit_or_complete_new_sources(runtime):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first)])
+    await runtime.db.conn.execute("UPDATE memories SET indexed_revision=revision")
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf["enabled"] = True
+    runtime.plugin.ltm.search_memory.side_effect = RuntimeError("embedding unavailable")
+    latest = await message(runtime, "我还在读高中", day=11)
+    assert not await extract(runtime, latest, [atom(latest)])
+    assert len(await rows(runtime)) == 1
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (latest.db_id, latest.db_id, 1)
+
+
+@pytest.mark.asyncio
+async def test_novelty_review_filters_repeated_candidates_in_the_same_batch(runtime):
+    latest = await message(runtime, "我是高中生，现在仍在读高中")
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest, text="他是高中生"), atom(latest, text="他仍在读高中")],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": true}, {"candidate_id": 2, "is_new": false}]}',
+    )
+    assert len(await rows(runtime)) == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_session_reviews_are_serialized_to_avoid_duplicate_writes(
+    runtime, monkeypatch
+):
+    first = await message(runtime, "我是高中生")
+    second = MessageData(
+        user_id="user",
+        group_or_user_id="other-group",
+        message_id="second-identity",
+        content="我还在读高中",
+        time="2020-01-11T12:00:00+08:00",
+    )
+    await runtime.db.insert_message("bot", second)
+    second = (
+        await runtime.db.get_messages_by_id_range("bot", "other-group", 1, 10000)
+    )[0]
+    await runtime.manager.observe_messages("bot", "other-group", "self", [second])
+    started, release, second_extracted = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    reviews = []
+    original_review = runtime.manager._review_memory_novelty
+
+    async def review(*args):
+        reviews.append(args[1])
+        if len(reviews) == 1:
+            started.set()
+            await release.wait()
+        return await original_review(*args)
+
+    async def complete(task_name, system_prompt, user_prompt, **kwargs):
+        if task_name == "记忆新颖性整理":
+            return '{"decisions": [{"candidate_id": 1, "is_new": false}]}'
+        source = first if kwargs["group_or_user_id"] == "group" else second
+        if source is second:
+            second_extracted.set()
+        return json.dumps({"memories": [atom(source, topic="身份")]})
+
+    monkeypatch.setattr(runtime.manager, "_review_memory_novelty", review)
+    runtime.manager._call_summary_llm = AsyncMock(side_effect=complete)
+    first_task = asyncio.create_task(
+        runtime.manager._run_memory_summary_task(
+            "bot", "group", "self", "Giftia", {"alias_observation_messages": [first]}
+        )
+    )
+    tasks = [first_task]
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        tasks.append(
+            asyncio.create_task(
+                runtime.manager._run_memory_summary_task(
+                    "bot",
+                    "other-group",
+                    "self",
+                    "Giftia",
+                    {"alias_observation_messages": [second]},
+                )
+            )
+        )
+        await asyncio.wait_for(second_extracted.wait(), 2)
+        assert reviews == ["group"]
+    finally:
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks), 2)
+    assert results == [True, True]
+    assert reviews == ["group", "other-group"]
+    assert len(await rows(runtime)) == 1
 
 
 @pytest.mark.asyncio

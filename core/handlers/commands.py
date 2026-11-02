@@ -912,25 +912,11 @@ caption: {media_caption.caption}"""
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
-        # 1. 重置当前群/会话的接话活跃分析窗口为 0
         fmt_key = f"{bot_name}:{group_or_user_id}"
         self.plugin.active_reply_counters[fmt_key] = 0
 
-        # 2. 将当前会话 Bot 的临时状态更新为「不活跃」并持久化
-        await self.plugin.data_cache.set_bot_status(
-            bot_name=bot_name,
-            group_id=group_or_user_id,
-            status=Status(state="不活跃"),
-        )
-
         yield await event.send(
-            MessageChain(
-                [
-                    Plain(
-                        f"已将【{nickname}】在当前会话的状态设置为「不活跃」，接话分析窗口已重置。"
-                    )
-                ]
-            )
+            MessageChain([Plain(f"已重置【{nickname}】在当前会话的接话分析窗口。")])
         )
 
     async def force_summarize(

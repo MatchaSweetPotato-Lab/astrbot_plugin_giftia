@@ -10,18 +10,21 @@ from xml.etree.ElementTree import Element, SubElement, fromstring, indent, tostr
 from astrbot.api import logger
 
 from ..llm.json_parse import parse_markdown_json
+from ..llm.preset_prompts import DEFAULT_MEMORY_NOVELTY_PROMPT
 from ..llm.prompt import (
     _apply_call_names_to_messages,
     parse_caption_to_str,
     process_media_captions_for_prompt,
 )
-from ..utils.schemas import MediaCaption, MessageData, Status
+from ..utils.schemas import MediaCaption, MessageData
 from .atomic import (
     DirectSpeech,
+    MemoryNoveltyReview,
     MemoryRecords,
     memory_metadata,
     validate_memory_records,
 )
+from .recall_scope import resolve_memory_recall_scope
 
 
 class MemoryMaintenanceMixin:
@@ -105,7 +108,7 @@ class MemoryMaintenanceMixin:
     async def _run_memory_summary_task(
         self, bot_name, group_or_user_id, self_id, nickname, context
     ) -> bool:
-        """Persist only new, directly evidenced records without historical recall.
+        """Extract evidenced records and persist only novel information.
 
         Args:
             bot_name: Owning bot configuration.
@@ -153,14 +156,40 @@ class MemoryMaintenanceMixin:
         try:
             parsed = MemoryRecords.model_validate(parse_markdown_json(completion))
             records = validate_memory_records(parsed, messages, media, self_id)
-            affected = await repo.insert_memories(
-                bot_name,
-                group_or_user_id,
-                records,
-                batch_key=batch_key,
-                source_end=messages[-1].db_id,
-                source_ids=[msg.db_id for msg in messages],
-            )
+            # Serialize review and commit across sessions sharing the same bot.
+            lock = self.novelty_locks.setdefault(bot_name, asyncio.Lock())
+            async with lock:
+                records = await self._review_memory_novelty(
+                    bot_name, group_or_user_id, self_id, nickname, records
+                )
+                # Rebuild source snapshots and fingerprints after candidate edits.
+                reviewed = MemoryRecords.model_validate(
+                    {
+                        "memories": [
+                            {
+                                "associated_user_ids": item["associated_user_ids"],
+                                "topic": item["topic"],
+                                "text": item["text"],
+                                "occurred_at": item["occurred_at"],
+                                "importance": item["importance"],
+                                "evidence": [
+                                    {"source_id": ref["source_id"]}
+                                    for ref in item["evidence"]
+                                ],
+                            }
+                            for item in records
+                        ]
+                    }
+                )
+                records = validate_memory_records(reviewed, messages, media, self_id)
+                affected = await repo.insert_memories(
+                    bot_name,
+                    group_or_user_id,
+                    records,
+                    batch_key=batch_key,
+                    source_end=messages[-1].db_id,
+                    source_ids=[msg.db_id for msg in messages],
+                )
         except (ValueError, TypeError) as error:
             logger.warning(
                 "[Giftia Memory] Rejected extraction for %s:%s: %s",
@@ -180,6 +209,158 @@ class MemoryMaintenanceMixin:
             group_or_user_id,
         )
         return True
+
+    async def _review_memory_novelty(
+        self, bot_name, session_id, self_id, nickname, records: list[dict]
+    ) -> list[dict]:
+        """Recall related facts and retain only candidates' new information.
+
+        Args:
+            bot_name: Owning bot configuration.
+            session_id: Current conversation.
+            self_id: Observing bot account.
+            nickname: Observing bot nickname.
+            records: Validated candidates with immutable source evidence.
+
+        Returns:
+            Approved candidates with optional text and topic edits, preserving evidence.
+
+        Raises:
+            ValueError: Recall or review failed, or decisions are incomplete.
+        """
+        if not records:
+            return []
+        scope = resolve_memory_recall_scope(self.plugin)
+        limit = max(1, min(10, 50 // len(records)))
+        metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
+        associated = (
+            f"CASE WHEN json_type({metadata}, '$.associated_user_ids')='array' "
+            f"THEN json_extract({metadata}, '$.associated_user_ids') ELSE '[]' END"
+        )
+        candidates = []
+        for index, record in enumerate(records, 1):
+            users = record["associated_user_ids"]
+            placeholders = ",".join("?" for _ in users)
+            predicate = "bot_name=?"
+            params = [bot_name]
+            if scope == "session":
+                predicate += " AND group_or_user_id=?"
+                params.append(session_id)
+            predicate += (
+                f" AND EXISTS (SELECT 1 FROM json_each({associated}) "
+                f"WHERE type IN ('text', 'integer') AND CAST(value AS TEXT) IN ({placeholders}))"
+            )
+            params.extend(users)
+            # SQLite also covers disabled embeddings and records awaiting indexing.
+            async with self.plugin.db.query(
+                "SELECT memory_id, group_or_user_id, text, metadata FROM memories "
+                f"WHERE {predicate} ORDER BY (text=?) DESC, "
+                f"(json_extract({metadata}, '$.topic')=?) DESC, id DESC LIMIT ?",
+                (*params, record["text"], record["topic"], limit),
+            ) as cursor:
+                related = {
+                    row["memory_id"]: dict(row) for row in await cursor.fetchall()
+                }
+            if self.plugin.embedding_conf.get("enabled", False):
+                try:
+                    recalled = await self.search_and_filter_memories(
+                        bot_name,
+                        session_id,
+                        record["text"],
+                        limit=min(5, limit),
+                        threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                        user_ids=users,
+                        raise_errors=True,
+                    )
+                except Exception as error:
+                    raise ValueError("Memory novelty recall failed") from error
+                related.update((item["memory_id"], item) for item in recalled)
+            snapshots = []
+            for item in [record, *related.values()]:
+                saved = memory_metadata(item) if "memory_id" in item else item
+                snapshot = {
+                    "associated_user_ids": saved.get("associated_user_ids", []),
+                    "topic": saved.get("topic", ""),
+                    "text": item["text"],
+                    "occurred_at": saved.get("occurred_at", ""),
+                    "source_times": list(
+                        dict.fromkeys(
+                            ref["time"]
+                            for ref in saved.get("evidence", [])
+                            if isinstance(ref, dict) and ref.get("time")
+                        )
+                    ),
+                }
+                if "memory_id" in item:
+                    snapshot["memory_id"] = item["memory_id"]
+                    snapshot["source_session_id"] = item["group_or_user_id"]
+                else:
+                    snapshot["source_ids"] = item["new_source_ids"]
+                snapshots.append(snapshot)
+            candidates.append(
+                {
+                    "candidate_id": index,
+                    "new_memory": snapshots[0],
+                    "related_memories": snapshots[1:],
+                }
+            )
+        if len(records) == 1 and not candidates[0]["related_memories"]:
+            return records
+        prompt = self._format_prompt_template(
+            DEFAULT_MEMORY_NOVELTY_PROMPT, nickname, self_id
+        )
+        prompt += "\n\nJSON Schema:\n" + json.dumps(
+            MemoryNoveltyReview.model_json_schema(), ensure_ascii=False
+        )
+        completion = await self._call_summary_llm(
+            "记忆新颖性整理",
+            prompt,
+            json.dumps(
+                {
+                    "candidates": candidates,
+                    "source_evidence": list(
+                        {
+                            ref["source_id"]: ref
+                            for item in records
+                            for ref in item["evidence"]
+                        }.values()
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            bot_name=bot_name,
+            group_or_user_id=session_id,
+        )
+        if not completion:
+            raise ValueError("Memory novelty review returned no decisions")
+        review = MemoryNoveltyReview.model_validate(parse_markdown_json(completion))
+        decisions = {item.candidate_id: item for item in review.decisions}
+        if len(decisions) != len(review.decisions) or set(decisions) != set(
+            range(1, len(records) + 1)
+        ):
+            raise ValueError("Memory novelty review must cover every candidate once")
+        kept = []
+        for candidate, record in zip(candidates, records):
+            decision = decisions[candidate["candidate_id"]]
+            if decision.is_new:
+                updated = dict(record)
+                if decision.text is not None:
+                    updated["text"] = decision.text
+                if decision.topic is not None:
+                    updated["topic"] = decision.topic
+                kept.append(updated)
+            else:
+                if decision.text is not None or decision.topic is not None:
+                    raise ValueError("Discarded candidates cannot contain edits")
+                if not candidate["related_memories"] and not any(
+                    set(record["associated_user_ids"])
+                    & set(item["associated_user_ids"])
+                    for item in kept
+                ):
+                    raise ValueError(
+                        "Duplicate decision has no related fact to compare"
+                    )
+        return kept
 
     async def _sync_memory_vectors(self, bot_name: str, session_id: str) -> None:
         """Retry optional indexing without changing durable memory state.
@@ -235,7 +416,7 @@ class MemoryMaintenanceMixin:
                     break
 
     async def maintain_memories(self) -> None:
-        """Deactivate quiet sessions, flush memories, and retry vector indexing.
+        """Close quiet reply windows, flush memories, and retry vector indexing.
 
         Returns:
             None. Failures remain retryable on the next scheduled tick.
@@ -300,14 +481,9 @@ class MemoryMaintenanceMixin:
                                     ).timestamp()
                                     >= 300
                                 ):
-                                    # Expire activity before the model call so failures
+                                    # Close the reply window before the model call so failures
                                     # do not preserve it and later messages can reactivate.
                                     self.plugin.active_reply_counters[key] = 0
-                                    await self.plugin.data_cache.set_bot_status(
-                                        bot_name=bot_name,
-                                        group_id=session_id,
-                                        status=Status(state="不活跃"),
-                                    )
                                     if pending:
                                         summarized = True
                                         await self._run_background_summarize(

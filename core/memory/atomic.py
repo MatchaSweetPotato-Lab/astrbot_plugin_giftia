@@ -99,6 +99,31 @@ class MemoryRecords(BaseModel):
     memories: list[MemoryRecord] = Field(max_length=50)
 
 
+class MemoryNoveltyDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    candidate_id: StrictInt = Field(ge=1)
+    is_new: bool
+    text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+        description="仅保留本批新增信息的完整事实正文；无需修改或丢弃时为 null。",
+    )
+    topic: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        description="正文精简后需要同步调整的主题；无需修改或丢弃时为 null。",
+    )
+
+
+class MemoryNoveltyReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decisions: list[MemoryNoveltyDecision] = Field(min_length=1, max_length=50)
+
+
 def memory_metadata(memory: dict) -> dict:
     """Read metadata without interpreting retired classification fields.
 
