@@ -15,7 +15,7 @@ from ..llm.prompt import (
     parse_caption_to_str,
     process_media_captions_for_prompt,
 )
-from ..utils.schemas import MediaCaption, MessageData
+from ..utils.schemas import MediaCaption, MessageData, Status
 from .atomic import (
     DirectSpeech,
     MemoryRecords,
@@ -235,7 +235,7 @@ class MemoryMaintenanceMixin:
                     break
 
     async def maintain_memories(self) -> None:
-        """Flush quiet sessions and retry optional vector indexing.
+        """Deactivate quiet sessions, flush memories, and retry vector indexing.
 
         Returns:
             None. Failures remain retryable on the next scheduled tick.
@@ -289,6 +289,7 @@ class MemoryMaintenanceMixin:
                                         session_id, bot_name, limit=1
                                     )
                                     if pending
+                                    or self.plugin.active_reply_counters.get(key, 0) > 0
                                     else []
                                 )
                                 if (
@@ -299,14 +300,23 @@ class MemoryMaintenanceMixin:
                                     ).timestamp()
                                     >= 300
                                 ):
-                                    summarized = True
-                                    await self._run_background_summarize(
-                                        bot_name,
-                                        session_id,
-                                        self_id,
-                                        first_id,
-                                        last_id,
+                                    # Expire activity before the model call so failures
+                                    # do not preserve it and later messages can reactivate.
+                                    self.plugin.active_reply_counters[key] = 0
+                                    await self.plugin.data_cache.set_bot_status(
+                                        bot_name=bot_name,
+                                        group_id=session_id,
+                                        status=Status(state="不活跃"),
                                     )
+                                    if pending:
+                                        summarized = True
+                                        await self._run_background_summarize(
+                                            bot_name,
+                                            session_id,
+                                            self_id,
+                                            first_id,
+                                            last_id,
+                                        )
                                 if not summarized:
                                     nickname = self.plugin.bot_map[bot_name].get(
                                         "nickname", bot_name

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -11,7 +12,7 @@ from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.prompt import build_reply_prompt
 from core.memory.passive_memory import PassiveMemoryManager
-from core.utils.schemas import MediaCaption, MessageData
+from core.utils.schemas import MediaCaption, MessageData, Status
 
 
 @pytest_asyncio.fixture
@@ -713,6 +714,18 @@ async def test_automatic_summary_is_serialized_and_shutdown_cancels_worker(runti
 @pytest.mark.asyncio
 async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runtime):
     await message(runtime, "还有最后一句对话")
+    runtime.plugin.active_reply_counters.update({"bot:group": 10, "bot:other-group": 7})
+    await runtime.plugin.data_cache.set_bot_status(
+        "bot",
+        "group",
+        Status(
+            state="聊天中",
+            mood="开心",
+            memory="稍后一起玩",
+            action="看手机",
+            custom_status={"衣着": "外套"},
+        ),
+    )
     await runtime.db.upsert_kv_data(
         "atomic_memory:session:bot:group",
         json.dumps(
@@ -730,6 +743,94 @@ async def test_periodic_tick_flushes_quiet_conversation_without_new_arrival(runt
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (0, 0, 0)
+    assert runtime.plugin.active_reply_counters == {
+        "bot:group": 0,
+        "bot:other-group": 7,
+    }
+    status = await runtime.db.get_bot_status("group", "bot")
+    assert status.state == "不活跃"
+    assert status.mood == "开心"
+    assert status.memory == "稍后一起玩"
+    assert status.action == "看手机"
+    assert status.custom_status == {"衣着": "外套"}
+    assert (
+        await runtime.plugin.data_cache.get_bot_status("bot", "group")
+    ).state == "不活跃"
+
+
+@pytest.mark.asyncio
+async def test_periodic_tick_deactivates_quiet_session_without_pending_memory(runtime):
+    await message(runtime, "之前已归纳的对话")
+    await runtime.manager.force_trigger_passive_memory("bot", "group", "self")
+    runtime.manager._call_summary_llm.reset_mock()
+    runtime.plugin.active_reply_counters["bot:group"] = 10
+    await runtime.plugin.data_cache.set_bot_status(
+        "bot", "group", Status(state="聊天中")
+    )
+
+    await runtime.manager.maintain_memories()
+
+    assert runtime.plugin.active_reply_counters["bot:group"] == 0
+    assert (await runtime.db.get_bot_status("group", "bot")).state == "不活跃"
+    runtime.manager._call_summary_llm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quiet_seconds", [299, 300])
+async def test_periodic_tick_uses_latest_message_for_activity_timeout(
+    runtime, monkeypatch, quiet_seconds
+):
+    pending = await message(runtime, "已见待归纳的旧消息")
+    latest = await message(runtime, "最新但未见的消息", day=11, observed=False)
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = datetime.fromisoformat(latest.time) + timedelta(
+        seconds=quiet_seconds
+    )
+    monkeypatch.setattr("core.memory.maintenance.datetime", clock)
+    runtime.plugin.active_reply_counters["bot:group"] = 10
+    await runtime.plugin.data_cache.set_bot_status(
+        "bot", "group", Status(state="聊天中")
+    )
+
+    await runtime.manager.maintain_memories()
+
+    expired = quiet_seconds >= 300
+    assert runtime.plugin.active_reply_counters["bot:group"] == (0 if expired else 10)
+    assert (await runtime.db.get_bot_status("group", "bot")).state == (
+        "不活跃" if expired else "聊天中"
+    )
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == ((0, 0, 0) if expired else (pending.db_id, pending.db_id, 1))
+
+
+@pytest.mark.asyncio
+async def test_periodic_tick_deactivates_session_before_failed_summary(runtime):
+    pending = await message(runtime, "总结失败后仍要重试的消息")
+    runtime.plugin.active_reply_counters["bot:group"] = 10
+    states_during_summary = []
+
+    async def fail_summary(*args, **kwargs):
+        status = await runtime.db.get_bot_status("group", "bot")
+        states_during_summary.append(
+            (runtime.plugin.active_reply_counters["bot:group"], status.state)
+        )
+        return None
+
+    runtime.manager._call_summary_llm = AsyncMock(side_effect=fail_summary)
+    await runtime.manager.maintain_memories()
+
+    runtime.manager._call_summary_llm.assert_awaited_once()
+    assert states_during_summary == [(0, "不活跃")]
+    assert runtime.plugin.active_reply_counters["bot:group"] == 0
+    assert (await runtime.db.get_bot_status("group", "bot")).state == "不活跃"
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (
+        pending.db_id,
+        pending.db_id,
+        1,
+    )
 
 
 @pytest.mark.asyncio
