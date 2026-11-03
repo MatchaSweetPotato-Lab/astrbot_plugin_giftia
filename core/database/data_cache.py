@@ -1164,8 +1164,21 @@ class DataCache:
         return True
 
     async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
-        """删除全部记忆"""
+        """Delete one conversation's factual memories and their cached recall copies.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Conversation whose factual memories are deleted.
+
+        Raises:
+            RuntimeError: The vector store reports a failed deletion.
+        """
+        await self.db.delete_all_memories(
+            bot_name=bot_name, group_or_user_id=group_or_user_id
+        )
         fmt_key = f"{bot_name}:{group_or_user_id}"
+        self.memories.pop(fmt_key, None)
+        self.session_recalled_memories.pop(fmt_key, None)
         for key, pool in self.session_recalled_memories.items():
             if key.startswith(f"{bot_name}:"):
                 for memory_id, memory in list(pool.items()):
@@ -1174,47 +1187,11 @@ class DataCache:
                     )
                     if source == group_or_user_id:
                         pool.pop(memory_id, None)
-        targets = [
-            self.group_profiles,
-            self.memories,
-            self.bot_status,
-            self.recent_messages,
-            self.session_recalled_memories,
-        ]
-        for cache in targets:
-            cache.pop(fmt_key, None)
-
-        prefix = f"{bot_name}:"
-        for cache_dict in [
-            self.user_profiles,
-            self.relations,
-            self.user_profile_records,
-        ]:
-            keys_to_delete = [k for k in cache_dict.keys() if k.startswith(prefix)]
-            for k in keys_to_delete:
-                cache_dict.pop(k, None)
-
-        await asyncio.gather(
-            self.db.delete_group_user_profiles(
+        if self.ltm and self.ltm.embedding_conf.get("enabled", False):
+            if not await self.ltm.delete_all_memories(
                 bot_name=bot_name, group_or_user_id=group_or_user_id
-            ),
-            self.db.delete_group_profile(
-                bot_name=bot_name, group_or_user_id=group_or_user_id
-            ),
-            self.ltm.delete_all_memories(
-                bot_name=bot_name, group_or_user_id=group_or_user_id
-            ),
-            self.db.delete_all_memories(
-                bot_name=bot_name, group_or_user_id=group_or_user_id
-            ),
-            self.db.delete_bot_status(
-                group_or_user_id=group_or_user_id, bot_name=bot_name
-            ),
-            self.db.delete_chat_history(
-                group_or_user_id=group_or_user_id, bot_name=bot_name
-            ),
-            return_exceptions=True,
-        )
+            ):
+                raise RuntimeError("Failed to delete conversation memory vectors")
 
 
 def is_temp_or_local_path(s: str | None) -> bool:

@@ -240,21 +240,36 @@ class CommandHandler:
         await self.plugin.data_cache.delete_memory(memory_id)
         yield await event.send(MessageChain([Plain("删除记忆成功")]))
 
-    async def delete_all_memories(
-        self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
-    ):
-        """删除全部记忆"""
-        if not self.plugin.embedding_conf.get("enabled", False):
-            logger.error("未启用embedding功能")
-            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
+    async def delete_all_memories(self, event: AstrMessageEvent):
+        """Clear only the current bot's factual memories in this conversation.
+
+        Args:
+            event: Command event identifying the bot and conversation.
+
+        Yields:
+            A success or failure response after the deletion finishes.
+        """
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("当前适配器未绑定机器人")]))
+            return
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        if not group_or_user_id:
+            yield await event.send(MessageChain([Plain("无法确定当前会话")]))
             return
         try:
             await self.plugin.data_cache.delete_all_memories(
                 bot_name=bot_name, group_or_user_id=group_or_user_id
             )
-        except Exception:
-            logger.error("删除全部记忆失败")
-        yield await event.send(MessageChain([Plain("删除全部记忆成功")]))
+        except Exception as error:
+            logger.error(
+                f"Failed to clear conversation memories ({bot_name}:{group_or_user_id}): {error}"
+            )
+            yield await event.send(
+                MessageChain([Plain("清空当前会话记忆失败，请重试")])
+            )
+            return
+        yield await event.send(MessageChain([Plain("清空当前会话记忆成功")]))
 
     async def fill_energy(self, event: AstrMessageEvent, bot_name: str):
         """给当前群的指定机器人加满能量"""

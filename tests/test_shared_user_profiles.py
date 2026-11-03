@@ -11,6 +11,7 @@ from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.prompt import build_user_profile_block
 from core.memory.passive_memory import PassiveMemoryManager
+from core.utils.schemas import MessageData, Status
 
 
 @pytest_asyncio.fixture
@@ -267,7 +268,7 @@ async def test_public_history_filters_source_before_pagination_without_changing_
 
 
 @pytest.mark.asyncio
-async def test_session_cleanup_preserves_shared_profile_and_other_group_data(
+async def test_memory_cleanup_preserves_all_profiles_and_relation_history(
     shared_runtime,
 ):
     rt = shared_runtime
@@ -277,25 +278,49 @@ async def test_session_cleanup_preserves_shared_profile_and_other_group_data(
     for group in ("group-a", "group-b"):
         await rt.cache.update_relation("bot", group, "user", 2, "互动")
         await rt.db.upsert_user_aliases("bot", group, "user", "群内外号")
-    await rt.cache.get_user_profile_record("bot", "group-b", "user")
-    await rt.cache.get_user_relation("bot", "group-b", "user")
-    rt.cache.ltm = SimpleNamespace(delete_all_memories=AsyncMock())
-    await rt.cache.delete_all_memories("bot", "group-a")
-    record = await rt.cache.get_user_profile_record("bot", "group-b", "user")
-    assert record["call_name"] is None and record["base_relation"] == 12
-    assert record["total_count"] == 1
-    assert (
-        await rt.db.get_user_aliases("bot", "group-a", "user", ignore_count_filter=True)
-        == []
-    )
-    assert (
-        len(
-            await rt.db.get_user_aliases(
-                "bot", "group-b", "user", ignore_count_filter=True
-            )
+        await rt.cache.set_group_profile("bot", group, "保留群规")
+        await rt.cache.set_bot_status(
+            "bot",
+            group,
+            Status(mood="开心", memory="状态记忆", custom_status={"服装": "常服"}),
         )
-        == 1
-    )
-    assert (await rt.db.get_relation_changes("bot", "group-a", "user"))[0][
-        "group_or_user_id"
-    ] == "group-b"
+        await rt.cache.add_message(
+            "bot", group, MessageData(message_id=group, user_id="user", content=group)
+        )
+    records = {}
+    aliases = {}
+    other_data = {}
+    for group in ("group-a", "group-b"):
+        records[group] = await rt.cache.get_user_profile_record("bot", group, "user")
+        await rt.cache.get_user_profile("bot", group, "user")
+        await rt.cache.get_user_relation("bot", group, "user")
+        aliases[group] = await rt.db.get_user_aliases(
+            "bot", group, "user", ignore_count_filter=True
+        )
+        other_data[group] = (
+            await rt.db.get_group_profile(bot_name="bot", group_or_user_id=group),
+            await rt.db.get_bot_status(bot_name="bot", group_or_user_id=group),
+            await rt.db.get_messages(bot_name="bot", group_or_user_id=group),
+        )
+    history = await rt.db.get_relation_changes("bot", "group-a", "user")
+    cached_profiles = dict(rt.cache.user_profiles)
+    cached_records = dict(rt.cache.user_profile_records)
+    cached_relations = dict(rt.cache.relations)
+    await rt.cache.delete_all_memories("bot", "group-a")
+    assert rt.cache.user_profiles == cached_profiles
+    assert rt.cache.user_profile_records == cached_records
+    assert rt.cache.relations == cached_relations
+    for group in ("group-a", "group-b"):
+        assert (
+            await rt.db.get_user_profile_record("bot", group, "user") == records[group]
+        )
+        assert (
+            await rt.db.get_user_aliases("bot", group, "user", ignore_count_filter=True)
+            == aliases[group]
+        )
+        assert (
+            await rt.db.get_group_profile(bot_name="bot", group_or_user_id=group),
+            await rt.db.get_bot_status(bot_name="bot", group_or_user_id=group),
+            await rt.db.get_messages(bot_name="bot", group_or_user_id=group),
+        ) == other_data[group]
+    assert await rt.db.get_relation_changes("bot", "group-a", "user") == history
