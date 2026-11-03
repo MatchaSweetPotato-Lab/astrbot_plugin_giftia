@@ -78,7 +78,7 @@ class MemoryRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     memory_type: Literal["fact", "event"] = Field(
-        description="fact 为持续事实，需去重整理；event 为时间节点上的具体事件，直接保存。"
+        description="fact 为被提及的持续信息或既往经历，需去重整理；event 为本批新近发生的事件或互动，含本次讲述旧事的动作，直接保存。同段聊天可拆成两类记忆。"
     )
     associated_user_ids: list[str] = Field(min_length=1, max_length=20)
     topic: str = Field(min_length=1, max_length=80)
@@ -87,7 +87,10 @@ class MemoryRecord(BaseModel):
         max_length=300,
         description="简明陈述一个事实，自身用我；每位群友首次出现时用称呼（完整 user_id），无称呼时用完整 user_id。",
     )
-    occurred_at: str = ""
+    occurred_at: str = Field(
+        default="",
+        description="仅 event 可填写明确的实际发生时间（带时区的 ISO 格式），不明确时留空；fact 留空，记录时间由程序保存。",
+    )
     importance: StrictInt = Field(
         default=5,
         ge=1,
@@ -112,7 +115,7 @@ class MemoryNoveltyDecision(BaseModel):
         default=None,
         min_length=1,
         max_length=300,
-        description="仅保留本批新增信息的完整事实正文，保留涉及群友的称呼及完整账号锚定；无需修改或丢弃时为 null。",
+        description="仅保留本批新增信息的完整事实正文，保留涉及群友的称呼、完整账号锚定及必要的时间限定；无需修改或丢弃时为 null。",
     )
     topic: str | None = Field(
         default=None,
@@ -233,7 +236,9 @@ def validate_memory_records(
             evidence.append(verified)
         item["evidence"] = list({ref["source_id"]: ref for ref in evidence}.values())
         item["new_source_ids"] = sorted({ref.source_id for ref in record.evidence})
-        if item["occurred_at"]:
+        if item["memory_type"] == "fact":
+            item["occurred_at"] = ""
+        elif item["occurred_at"]:
             try:
                 timestamp = datetime.fromisoformat(
                     item["occurred_at"].replace("Z", "+00:00")

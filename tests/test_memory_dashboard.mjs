@@ -170,7 +170,7 @@ test('memory cards display fact, event and unclassified types', () => {
         { text: 'invalid legacy type', metadata: { memory_type: '__proto__' } },
     ]);
     const html = get('memory-list').innerHTML;
-    for (const label of ['持续事实', '具体事件', '未分类']) assert.ok(html.includes(label));
+    for (const label of ['事实', '具体事件', '未分类']) assert.ok(html.includes(label));
     assert.equal((html.match(/未分类/g) || []).length, 2);
 });
 

@@ -130,9 +130,8 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         *,
         user_ids: list[str] | None = None,
         raise_errors: bool = False,
-        memory_type: str | None = None,
     ) -> list[dict]:
-        """Recall indexed facts within the configured recall scope.
+        """Recall indexed memories within the configured recall scope.
 
         Args:
             bot_name: Owning bot configuration.
@@ -146,7 +145,6 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             user_ids: Target accounts in user scope, or an explicit narrowing
                 filter in session and all scopes. None uses the configured scope.
             raise_errors: Propagate vector search failures for retryable maintenance.
-            memory_type: Optional record type filter; untyped legacy records are facts.
 
         Returns:
             Factual memories with matching index revisions.
@@ -197,12 +195,6 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             else:
                 scope = f"({scope}) AND ({user_scope})"
         predicate = f"bot_name=? AND ({scope}) AND revision=indexed_revision"
-        if memory_type is not None:
-            metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
-            predicate += (
-                f" AND COALESCE(json_extract({metadata}, '$.memory_type'), 'fact')=?"
-            )
-            params.append(memory_type)
         async with self.plugin.db.query(
             f"SELECT memory_id FROM memories WHERE {predicate}",
             params,

@@ -214,6 +214,48 @@ async def test_extraction_without_embeddings_retains_provenance_and_atomic_check
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "memory_type,model_time,expected_time",
+    [
+        ("fact", None, ""),
+        ("fact", "2020-01-10T12:00:00+08:00", ""),
+        ("fact", "以前", ""),
+        ("event", None, ""),
+        ("event", "2020-01-10T12:00:00+08:00", "2020-01-10T04:00:00+00:00"),
+        ("event", "以前", None),
+    ],
+)
+async def test_facts_use_recording_time_and_only_events_validate_occurrence_time(
+    runtime, memory_type, model_time, expected_time
+):
+    msg = await message(runtime, "我在2020年参加过运动会")
+    text = "用户（user）在2020年参加过运动会"
+    proposal = atom(msg, memory_type=memory_type, text=text)
+    if model_time is not None:
+        proposal["occurred_at"] = model_time
+    before = datetime.now().astimezone()
+    assert await extract(runtime, msg, [proposal]) is (expected_time is not None)
+    after = datetime.now().astimezone()
+    stored = await rows(runtime)
+    if expected_time is None:
+        assert stored == []
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (msg.db_id, msg.db_id, 1)
+        return
+    assert len(stored) == 1
+    saved = stored[0]
+    metadata = json.loads(saved["metadata"])
+    assert metadata["occurred_at"] == expected_time
+    assert before <= datetime.fromisoformat(saved["created_at"]) <= after
+    assert saved["text"] == text
+    assert metadata["evidence"][0]["quote"] == msg.content
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
 async def test_id_only_references_snapshot_full_direct_messages_and_deduplicate(
     runtime,
 ):
@@ -1770,7 +1812,6 @@ async def test_novelty_review_removes_known_facts_from_mixed_candidate(
         "associated_user_ids",
         "topic",
         "text",
-        "occurred_at",
     }
     assert candidate["new_memory"]["topic"] == proposal["topic"]
     assert set(candidate["related_memories"][0]) == {
@@ -2061,30 +2102,116 @@ async def test_events_at_different_times_from_one_source_remain_separate(runtime
 
 
 @pytest.mark.asyncio
-async def test_fact_recall_filters_event_records_before_vector_search(runtime):
+@pytest.mark.parametrize("embedding_enabled", [False, True])
+async def test_retold_fact_is_deduplicated_while_retelling_event_is_saved(
+    runtime, embedding_enabled
+):
     event = await message(runtime, "今天参加了运动会")
-    assert await extract(runtime, event, [atom(event, memory_type="event")])
+    assert await extract(
+        runtime,
+        event,
+        [atom(event, memory_type="event", topic="运动会", occurred_at=event.time)],
+    )
     fact = await message(runtime, "我是高中生", hour=14)
     assert await extract(runtime, fact, [atom(fact)])
     saved = await rows(runtime)
+    event_id = saved[0]["memory_id"]
     fact_id = saved[1]["memory_id"]
     await runtime.db.conn.execute("UPDATE memories SET indexed_revision=revision")
     await runtime.db.conn.commit()
-    runtime.plugin.embedding_conf["enabled"] = True
-    runtime.plugin.ltm.search_memory.return_value = [{"id": fact_id}]
-    latest = await message(runtime, "我还在读高中", day=11)
+    original = await rows(runtime)
+    runtime.plugin.embedding_conf["enabled"] = embedding_enabled
+    runtime.plugin.ltm.search_memory.return_value = [{"id": event_id}]
+    latest = await message(
+        runtime, "还记得昨天参加的那场运动会吗？今天聊起接力赛，我还是很激动", day=11
+    )
+    retelling = atom(
+        latest,
+        memory_type="event",
+        topic="重提运动会",
+        text="用户（user）今天向我重提昨天的运动会，并表示聊起接力赛仍很激动",
+        occurred_at=latest.time,
+    )
     assert await extract(
         runtime,
         latest,
-        [atom(latest)],
+        [
+            atom(
+                latest,
+                text="用户（user）在2020年1月10日参加了运动会",
+                topic="运动会",
+                occurred_at=event.time,
+            ),
+            retelling,
+        ],
         novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
     )
-    assert runtime.plugin.ltm.search_memory.call_args.kwargs["include_ids"] == [fact_id]
-    candidate = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
+    if embedding_enabled:
+        assert set(runtime.plugin.ltm.search_memory.call_args.kwargs["include_ids"]) == {
+            event_id,
+            fact_id,
+        }
+    else:
+        runtime.plugin.ltm.search_memory.assert_not_awaited()
+    candidates = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
         "candidates"
-    ][0]
-    assert [item["memory_id"] for item in candidate["related_memories"]] == [fact_id]
-    assert len(await rows(runtime)) == 2
+    ]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    related = {item["memory_id"]: item for item in candidate["related_memories"]}
+    assert set(related) == {event_id, fact_id}
+    assert "occurred_at" not in candidate["new_memory"]
+    assert "2020年1月10日" in candidate["new_memory"]["text"]
+    assert related[event_id]["occurred_at"] == json.loads(original[0]["metadata"])[
+        "occurred_at"
+    ]
+    stored = await rows(runtime)
+    assert len(stored) == 3
+    assert stored[:2] == original
+    assert stored[-1]["text"] == retelling["text"]
+    metadata = json.loads(stored[-1]["metadata"])
+    assert metadata["memory_type"] == "event"
+    assert metadata["evidence"][0]["source_id"] == latest.db_id
+    assert metadata["evidence"][0]["quote"] == latest.content
+    assert datetime.fromisoformat(metadata["occurred_at"]) == datetime.fromisoformat(
+        latest.time
+    )
+    assert metadata["occurred_at"] != related[event_id]["occurred_at"]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_retrospective_fact_keeps_new_details_without_rewriting_original_event(
+    runtime,
+):
+    event = await message(runtime, "今天参加了运动会")
+    assert await extract(
+        runtime,
+        event,
+        [atom(event, memory_type="event", topic="运动会", occurred_at=event.time)],
+    )
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "上次运动会我参加了接力赛，还拿到了第一名", day=11)
+    detail = "用户（user）在2020年1月10日运动会的接力赛中获得第一名"
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest, topic="运动会", occurred_at=event.time)],
+        novelty=json.dumps(
+            {"decisions": [{"candidate_id": 1, "is_new": True, "text": detail}]}
+        ),
+    )
+    stored = await rows(runtime)
+    assert len(stored) == 2
+    assert stored[0] == original
+    assert stored[1]["text"] == detail
+    metadata = json.loads(stored[1]["metadata"])
+    assert metadata["memory_type"] == "fact"
+    assert metadata["occurred_at"] == ""
+    assert metadata["evidence"][0]["source_id"] == latest.db_id
+    assert metadata["evidence"][0]["quote"] == latest.content
 
 
 @pytest.mark.asyncio
@@ -2140,6 +2267,7 @@ async def test_failed_novelty_review_preserves_pending_sources_for_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("memory_type", [None, "fact", "event", "legacy"])
 @pytest.mark.parametrize(
     "scope,bot,user,session,compared",
     [
@@ -2152,13 +2280,23 @@ async def test_failed_novelty_review_preserves_pending_sources_for_retry(
     ],
 )
 async def test_novelty_recall_respects_bot_members_and_configured_scope(
-    runtime, scope, bot, user, session, compared
+    runtime, scope, bot, user, session, compared, memory_type
 ):
     runtime.plugin.memory_recall_scope = scope
     await runtime.db.conn.execute(
         "INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, metadata) "
         "VALUES (?, ?, 'old-identity', '他是高中生', ?)",
-        (bot, session, json.dumps({"associated_user_ids": [user], "topic": "身份"})),
+        (
+            bot,
+            session,
+            json.dumps(
+                {
+                    "associated_user_ids": [user],
+                    "topic": "身份",
+                    **({"memory_type": memory_type} if memory_type else {}),
+                }
+            ),
+        ),
     )
     await runtime.db.conn.commit()
     latest = await message(runtime, "我是高中生")
@@ -2173,11 +2311,14 @@ async def test_novelty_recall_respects_bot_members_and_configured_scope(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("original_type", ["fact", "event"])
 async def test_novelty_recall_includes_semantic_matches_outside_sqlite_candidates(
-    runtime,
+    runtime, original_type
 ):
-    first = await message(runtime, "我是高中生")
-    assert await extract(runtime, first, [atom(first, topic="身份")])
+    first = await message(runtime, "我在2020年1月10日参加了一场比赛")
+    assert await extract(
+        runtime, first, [atom(first, topic="比赛", memory_type=original_type)]
+    )
     original = (await rows(runtime))[0]
     await runtime.db.conn.execute("UPDATE memories SET indexed_revision=revision")
     for index in range(11):
@@ -2187,17 +2328,17 @@ async def test_novelty_recall_includes_semantic_matches_outside_sqlite_candidate
             (
                 f"filler-{index}",
                 f"无关的学习消息{index}",
-                json.dumps({"associated_user_ids": ["user"], "topic": "学业"}),
+                json.dumps({"associated_user_ids": ["user"], "topic": "往事"}),
             ),
         )
     await runtime.db.conn.commit()
     runtime.plugin.embedding_conf["enabled"] = True
     runtime.plugin.ltm.search_memory.return_value = [{"id": original["memory_id"]}]
-    latest = await message(runtime, "我还在读高中", day=11)
+    latest = await message(runtime, "还记得之前参加的那场比赛吗", day=11)
     assert await extract(
         runtime,
         latest,
-        [atom(latest, topic="学业")],
+        [atom(latest, topic="往事")],
         novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
     )
     call = runtime.plugin.ltm.search_memory.call_args.kwargs

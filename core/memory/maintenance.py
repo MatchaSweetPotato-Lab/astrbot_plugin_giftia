@@ -229,7 +229,7 @@ class MemoryMaintenanceMixin:
     async def _review_memory_novelty(
         self, bot_name, session_id, self_id, nickname, records: list[dict]
     ) -> list[dict]:
-        """Recall related facts and retain only candidates' new information.
+        """Recall related memories and retain only candidates' new information.
 
         Args:
             bot_name: Owning bot configuration.
@@ -265,9 +265,9 @@ class MemoryMaintenanceMixin:
             predicate += (
                 f" AND EXISTS (SELECT 1 FROM json_each({associated}) "
                 f"WHERE type IN ('text', 'integer') AND CAST(value AS TEXT) IN ({placeholders}))"
-                f" AND COALESCE(json_extract({metadata}, '$.memory_type'), 'fact')='fact'"
             )
             params.extend(users)
+            # Include past events so retrospective facts can match their original records.
             # SQLite also covers disabled embeddings and records awaiting indexing.
             async with self.plugin.db.query(
                 "SELECT memory_id, group_or_user_id, text, metadata FROM memories "
@@ -288,7 +288,6 @@ class MemoryMaintenanceMixin:
                         threshold=self.plugin.embedding_conf.get("threshold", 0.7),
                         user_ids=users,
                         raise_errors=True,
-                        memory_type="fact",
                     )
                 except Exception as error:
                     raise ValueError("Memory novelty recall failed") from error
@@ -299,9 +298,9 @@ class MemoryMaintenanceMixin:
                 snapshot = {
                     "associated_user_ids": saved.get("associated_user_ids", []),
                     "text": item["text"],
-                    "occurred_at": saved.get("occurred_at", ""),
                 }
                 if "memory_id" in item:
+                    snapshot["occurred_at"] = saved.get("occurred_at", "")
                     snapshot["memory_id"] = item["memory_id"]
                     snapshot["source_session_id"] = item["group_or_user_id"]
                 else:

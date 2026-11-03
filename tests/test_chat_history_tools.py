@@ -12,7 +12,7 @@ from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.llm.llm_tools import GetMessageContextTool, SearchChatHistoryTool
 from core.llm.native_tools import SearchMemoryTool
-from core.llm.prompt import build_reply_prompt
+from core.llm.prompt import build_reply_prompt, format_memory_time
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import SYSTEM_XML_TAGS, MessageData
 
@@ -383,8 +383,9 @@ async def test_search_result_message_id_fetches_context(runtime, mode, private, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["native", "tool_call"])
 @pytest.mark.parametrize("source_session", ["100", "200", "300"])
+@pytest.mark.parametrize("memory_type", ["fact", "event"])
 async def test_memory_tool_and_automatic_recall_locate_the_same_original_context(
-    runtime, monkeypatch, mode, source_session
+    runtime, monkeypatch, mode, source_session, memory_type
 ):
     plugin = runtime.tools["get_message_context"].plugin
     plugin.bot_map = {"bot": {}}
@@ -395,7 +396,10 @@ async def test_memory_tool_and_automatic_recall_locate_the_same_original_context
     record = {
         "id": "internal-memory",
         "text": "我记得成员在这个会话说过的话。",
+        "created_at": "2026-10-20T12:00:00+08:00",
         "metadata": {
+            "memory_type": memory_type,
+            "occurred_at": "2026-10-10T12:00:00+08:00",
             "source_session_id": source_session,
             "associated_user_ids": ["300"] if source_session == "300" else ["bob"],
             "evidence": [
@@ -417,7 +421,11 @@ async def test_memory_tool_and_automatic_recall_locate_the_same_original_context
         )
         output = result["results"]
     tool_memory = fromstring(json.loads(output)["memory_context"])
-    expected = {"message_id": "shared-target"}
+    expected = {"memory_type": memory_type, "message_id": "shared-target"}
+    if memory_type == "fact":
+        expected["recorded_at"] = format_memory_time(record["created_at"])
+    else:
+        expected["occurred_at"] = format_memory_time(record["metadata"]["occurred_at"])
     if source_session != "100":
         kind = "私聊" if source_session == "300" else "群聊"
         expected["source"] = f"来源{kind}：{source_session}"

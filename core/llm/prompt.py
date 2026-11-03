@@ -902,7 +902,7 @@ def build_memory_items(
         current_session_id: Requesting conversation used to identify external sources.
 
     Returns:
-        Escaped memory XML with factual text, times and at most one source locator.
+        Escaped memory XML with type-specific times and at most one source locator.
     """
     if seen_ids is None:
         seen_ids = set()
@@ -924,7 +924,10 @@ def build_memory_items(
         if not text or key in seen_ids:
             continue
         metadata = memory_metadata(item)
-        attrs = []
+        memory_type = metadata.get("memory_type")
+        if memory_type not in ("fact", "event"):
+            memory_type = "unclassified"
+        attrs = [f"memory_type={quoteattr(memory_type)}"]
         source_label = str(metadata.get("source_label") or "").strip()
         source_session_id = metadata.get("source_session_id") or item.get(
             "group_or_user_id"
@@ -984,18 +987,19 @@ def build_memory_items(
                 attrs.append(
                     f"message_id={quoteattr(message_ids[len(message_ids) // 2])}"
                 )
-        times = {
-            field: item.get(field) or metadata.get(field)
-            for field in (
-                "occurred_at",
-                "observed_from",
-                "observed_until",
-            )
-        }
-        if not any(
-            times[field] for field in ("occurred_at", "observed_from", "observed_until")
-        ):
-            times["recorded_at"] = item.get("created_at")
+        if memory_type == "fact":
+            times = {"recorded_at": item.get("created_at")}
+        elif memory_type == "event":
+            times = {
+                "occurred_at": item.get("occurred_at") or metadata.get("occurred_at")
+            }
+        else:
+            times = {
+                field: item.get(field) or metadata.get(field)
+                for field in ("occurred_at", "observed_from", "observed_until")
+            }
+            if not any(times.values()):
+                times["recorded_at"] = item.get("created_at")
         for field, value in times.items():
             if isinstance(value, str) and value.strip():
                 attrs.append(f"{field}={quoteattr(format_memory_time(value))}")
