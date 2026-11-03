@@ -85,7 +85,7 @@ class MemoryRecord(BaseModel):
     text: str = Field(
         min_length=1,
         max_length=300,
-        description="简明陈述事实，每条记忆只表达一个事实。",
+        description="简明陈述一个事实，自身用我；每位群友首次出现时用称呼（完整 user_id），无称呼时用完整 user_id。",
     )
     occurred_at: str = ""
     importance: StrictInt = Field(
@@ -112,7 +112,7 @@ class MemoryNoveltyDecision(BaseModel):
         default=None,
         min_length=1,
         max_length=300,
-        description="仅保留本批新增信息的完整事实正文；无需修改或丢弃时为 null。",
+        description="仅保留本批新增信息的完整事实正文，保留涉及群友的称呼及完整账号锚定；无需修改或丢弃时为 null。",
     )
     topic: str | None = Field(
         default=None,
