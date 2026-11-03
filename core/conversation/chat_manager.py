@@ -31,7 +31,7 @@ from ..llm.prompt import parse_message_to_str, truncate_message_content
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
 from ..utils.message_markdown import normalize_qq_markdown_chain
 from ..utils.message_media import format_node_components
-from ..utils.notice_parse import NoticeParseResult
+from ..utils.notice_parse import NoticeParser, NoticeParseResult
 from ..utils.schemas import MessageData, XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
@@ -221,6 +221,24 @@ class ChatManager:
         if getattr(self.plugin, "_terminated", False):
             return
 
+        msg_obj = getattr(event, "message_obj", None)
+        raw_message = getattr(msg_obj, "raw_message", None) if msg_obj else None
+        post_type = NoticeParser.get_event_field(raw_message, "post_type", "")
+        notice_type = NoticeParser.get_event_field(raw_message, "notice_type", "")
+        sub_type = NoticeParser.get_event_field(raw_message, "sub_type", "")
+        message_name = getattr(raw_message, "name", "") or NoticeParser.get_event_field(
+            raw_message, "name", ""
+        )
+        # Discard transient input-state notices before installing logging or tasks.
+        if (
+            post_type == "notice"
+            and (
+                notice_type == "input_status"
+                or (notice_type == "notify" and sub_type == "input_status")
+            )
+        ) or message_name in ("notice.notify.input_status", "notice.input_status"):
+            return
+
         # 1. 检查白名单拦截
         if not self.decision_engine.check_whitelists(event):
             return
@@ -232,10 +250,7 @@ class ChatManager:
             event._giftia_bypass_logging = True
 
         # 2. 处理撤回消息通知
-        msg_obj = getattr(event, "message_obj", None)
-        raw_message = getattr(msg_obj, "raw_message", None) if msg_obj else None
         if raw_message:
-            message_name = getattr(raw_message, "name", "")
             if message_name in ["notice.group_recall", "notice.friend_recall"]:
                 recalled_message_id = str(getattr(raw_message, "message_id", ""))
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
@@ -253,27 +268,12 @@ class ChatManager:
                 return
 
         # 3. 跳过机器人自己的发言与自身主动发起的交互通知（如自身发出的普通消息、自身戳一戳、自身贴表情等）
-        raw_msg = getattr(msg_obj, "raw_message", None) if msg_obj else None
-        post_type = (
-            (
-                raw_msg.get("post_type", "")
-                if hasattr(raw_msg, "get")
-                else getattr(raw_msg, "post_type", "")
-            )
-            if raw_msg
-            else ""
-        )
         self_id = str(event.get_self_id() or "").strip()
         sender_id = str(event.get_sender_id() or "").strip()
         if self_id and sender_id and sender_id == self_id:
             # 仅放行可能影响机器人自身状态的系统通知事件（如群禁言、管理员变更、退群等）
             is_state_notice = False
-            if raw_msg and post_type == "notice":
-                notice_type = (
-                    raw_msg.get("notice_type", "")
-                    if hasattr(raw_msg, "get")
-                    else getattr(raw_msg, "notice_type", "")
-                )
+            if raw_message and post_type == "notice":
                 if notice_type in ("group_ban", "group_admin", "group_decrease"):
                     is_state_notice = True
 
