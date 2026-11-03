@@ -1,6 +1,7 @@
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
+from xml.sax.saxutils import quoteattr
 
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
@@ -17,6 +18,15 @@ REACTION_NOTICE_TYPES = [
     "group_msg_emoji_like",
     "friend_msg_emoji_like",
 ]
+GROUP_STATE_NOTICE_TYPES = {
+    "group_admin",
+    "group_increase",
+    "group_decrease",
+    "group_card",
+    "group_ban",
+    "essence",
+}
+GROUP_STATE_NOTIFY_SUBTYPES = {"group_name", "title", "honor", "lucky_king"}
 
 
 @dataclass
@@ -63,6 +73,36 @@ class NoticeParser:
         if hasattr(obj, "get"):
             return obj.get(field_name, default)
         return getattr(obj, field_name, default)
+
+    @staticmethod
+    def get_event_types(raw_message: Any) -> tuple[str, str, str]:
+        """Read OneBot event types from fields or a qualified event name.
+
+        Args:
+            raw_message: Raw dictionary, OneBot event, or named event object.
+
+        Returns:
+            The post type, notice type, and subtype, using empty strings when absent.
+        """
+        post_type = str(
+            NoticeParser.get_event_field(raw_message, "post_type", "") or ""
+        )
+        notice_type = str(
+            NoticeParser.get_event_field(raw_message, "notice_type", "") or ""
+        )
+        sub_type = str(NoticeParser.get_event_field(raw_message, "sub_type", "") or "")
+        name = getattr(raw_message, "name", "") or NoticeParser.get_event_field(
+            raw_message, "name", ""
+        )
+        if isinstance(name, str):
+            parts = name.split(".")
+            if parts[0] in ("notice", "request", "meta_event"):
+                post_type = post_type or parts[0]
+                if parts[0] == "notice" and len(parts) > 1:
+                    notice_type = notice_type or parts[1]
+                    if len(parts) > 2:
+                        sub_type = sub_type or parts[2]
+        return post_type.strip(), notice_type.strip(), sub_type.strip()
 
     @staticmethod
     def format_duration(duration: int) -> str:
@@ -170,48 +210,102 @@ class NoticeParser:
         if not raw_message:
             return result
 
-        post_type = self.get_event_field(raw_message, "post_type", "")
-        notice_type = self.get_event_field(raw_message, "notice_type", "")
-        message_name = str(self.get_event_field(raw_message, "name", "") or "")
-        sub_type = str(self.get_event_field(raw_message, "sub_type", "") or "").strip()
+        post_type, notice_type, sub_type = self.get_event_types(raw_message)
+        if post_type != "notice":
+            return result
         self_id = str(event.get_self_id() or "").strip()
         group_id = str(event.get_group_id() or "").strip()
+        if group_id in ("0", "None"):
+            group_id = ""
 
         result.sub_type = sub_type
         result.notice_type = notice_type
         result.group_id = group_id
 
-        reaction_names = [f"notice.{t}" for t in REACTION_NOTICE_TYPES]
-
         # 1. 贴表情回应（Reaction）
-        if (
-            post_type == "notice" and notice_type in REACTION_NOTICE_TYPES
-        ) or message_name in reaction_names:
+        if notice_type in REACTION_NOTICE_TYPES:
+            if notice_type.startswith("group_") and not group_id:
+                return result
             result.is_notice = True
             result.role = "message"
+            actor_id = str(
+                self.get_event_field(raw_message, "user_id", "") or ""
+            ).strip()
+            if actor_id not in ("", "0", "None"):
+                result.sender_id = actor_id
 
-            emoji_id = str(self.get_event_field(raw_message, "emoji_id", "") or "")
-            if not emoji_id:
-                likes = self.get_event_field(raw_message, "likes", [])
-                if likes and isinstance(likes, list) and len(likes) > 0:
-                    first_like = likes[0]
-                    emoji_id = str(
-                        self.get_event_field(first_like, "emoji_id", "") or ""
-                    )
-
+            likes = self.get_event_field(raw_message, "likes", [])
+            if not isinstance(likes, list) or not likes:
+                emoji_id = str(self.get_event_field(raw_message, "emoji_id", "") or "")
+                likes = [{"emoji_id": emoji_id}] if emoji_id else []
             target_msg_id = str(
                 self.get_event_field(raw_message, "message_id", "") or ""
             )
-            emoji_desc = EMOJI_MAP.get(emoji_id, f"表情:{emoji_id}")
-            result.content = f'[贴表情回应: {emoji_desc}] <emoji_like message_id="{target_msg_id}" emoji_id="{emoji_id}" />'
+            is_add = self.get_event_field(raw_message, "is_add", True) not in (
+                False,
+                0,
+                "false",
+                "0",
+            )
+            action = "add" if is_add else "remove"
+            label = "贴表情回应" if is_add else "取消表情回应"
+            parts = []
+            for like in likes:
+                emoji_id = str(self.get_event_field(like, "emoji_id", "") or "")
+                if not emoji_id:
+                    continue
+                emoji_desc = EMOJI_MAP.get(emoji_id, f"表情:{emoji_id}")
+                count = self.get_event_field(like, "count", None)
+                count_text = f" ×{count}" if count is not None else ""
+                count_attr = (
+                    f" count={quoteattr(str(count))}" if count is not None else ""
+                )
+                parts.append(
+                    f"[{label}: {emoji_desc}{count_text}] "
+                    f"<emoji_like message_id={quoteattr(target_msg_id)} "
+                    f"emoji_id={quoteattr(emoji_id)} action={quoteattr(action)}{count_attr} />"
+                )
+            result.content = " ".join(parts)
             if hasattr(event, "message_obj") and event.message_obj:
                 event.message_obj.message = [Plain(text=result.content)]
             return result
 
+        if notice_type == "notify" and sub_type == "poke":
+            target_id = str(
+                self.get_event_field(raw_message, "target_id", "") or ""
+            ).strip()
+            if not target_id or target_id in ("0", "None"):
+                return result
+            target_ref, _ = await self.resolve_target_ref(
+                event, bot_name, target_id, self_id
+            )
+            result.is_notice = True
+            result.content = f"[戳一戳:{target_ref}]"
+            if hasattr(event, "message_obj") and event.message_obj:
+                event.message_obj.message = [Plain(text=result.content)]
+            return result
+
+        # File delivery is authored by the uploader, including private offline files.
+        if notice_type in ("group_upload", "offline_file"):
+            if notice_type == "group_upload" and not group_id:
+                return result
+            if notice_type == "offline_file" and group_id:
+                return result
+            file_info = self.get_event_field(raw_message, "file", {}) or {}
+            file_name = str(self.get_event_field(file_info, "name", "") or "").strip()
+            if not file_name:
+                return result
+            result.is_notice = True
+            result.content = f"[文件:{file_name}]"
+            if hasattr(event, "message_obj") and event.message_obj:
+                event.message_obj.message = [Plain(text=result.content)]
+            return result
+
+        if not group_id:
+            return result
+
         # 2. 群管理员变动 (group_admin)
-        if (post_type == "notice" and notice_type == "group_admin") or (
-            message_name and message_name.startswith("notice.group_admin")
-        ):
+        if notice_type == "group_admin":
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"
@@ -237,9 +331,7 @@ class NoticeParser:
             return result
 
         # 3. 成员加入群聊 (group_increase)
-        if (post_type == "notice" and notice_type == "group_increase") or (
-            message_name and message_name.startswith("notice.group_increase")
-        ):
+        if notice_type == "group_increase":
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"
@@ -280,9 +372,7 @@ class NoticeParser:
             return result
 
         # 4. 成员退出/被移出群聊 (group_decrease)
-        if (post_type == "notice" and notice_type == "group_decrease") or (
-            message_name and message_name.startswith("notice.group_decrease")
-        ):
+        if notice_type == "group_decrease":
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"
@@ -302,7 +392,14 @@ class NoticeParser:
                 event, operator_id, target_id
             )
 
-            if sub_type == "leave":
+            if sub_type == "disband":
+                operator_ref = await self.resolve_operator_ref(event, operator_id)
+                msg = (
+                    f"【系统消息】{operator_ref} 解散了群聊"
+                    if operator_ref
+                    else "【系统消息】群聊已解散"
+                )
+            elif sub_type == "leave":
                 msg = f"【系统消息】{target_ref} 退出了群聊"
             elif sub_type in ("kick", "kick_me"):
                 msg = (
@@ -319,9 +416,9 @@ class NoticeParser:
             return result
 
         # 5. 群名片修改 (group_card)
-        if (post_type == "notice" and notice_type == "group_card") or (
-            message_name and message_name.startswith("notice.group_card")
-        ):
+        if notice_type == "group_card":
+            if self.get_event_field(raw_message, "card_new", None) is None:
+                return result
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"
@@ -341,41 +438,64 @@ class NoticeParser:
                 event.message_obj.message = [Plain(text=msg)]
             return result
 
-        # 6. 群文件上传 (group_upload)
-        if (post_type == "notice" and notice_type == "group_upload") or (
-            message_name and message_name.startswith("notice.group_upload")
-        ):
+        if notice_type == "essence":
+            if sub_type not in ("add", "delete"):
+                return result
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"
             result.sender_name = "系统"
-
-            target_id = str(
-                self.get_event_field(raw_message, "user_id", "") or ""
+            author_id = str(
+                self.get_event_field(raw_message, "sender_id", "")
+                or self.get_event_field(raw_message, "user_id", "")
+                or ""
             ).strip()
-            file_info = self.get_event_field(raw_message, "file", {}) or {}
-            file_name = (
-                file_info.get("name") if isinstance(file_info, dict) else "未知文件"
+            author_ref, _ = await self.resolve_target_ref(
+                event, bot_name, author_id, self_id
             )
-
-            target_name = await self._resolve_user_name(
-                event=event,
-                user_id=target_id,
-                current_name="",
-                force_lookup=True,
+            operator_id = str(
+                self.get_event_field(raw_message, "operator_id", "") or ""
+            ).strip()
+            operator_ref = (
+                await self.resolve_operator_ref(event, operator_id) or "管理员"
             )
-            target_ref = self.format_user_ref(target_name or target_id, target_id)
-            msg = f'【系统消息】{target_ref} 上传了群文件 "{file_name}"'
-
-            result.content = msg
+            message_id = str(self.get_event_field(raw_message, "message_id", "") or "")
+            action = "设为精华" if sub_type == "add" else "移出精华"
+            result.content = (
+                f"【系统消息】{operator_ref} 将 {author_ref} 的消息"
+                f"（消息 ID: {message_id or '未知'}）{action}"
+            )
             if hasattr(event, "message_obj") and event.message_obj:
-                event.message_obj.message = [Plain(text=msg)]
+                event.message_obj.message = [Plain(text=result.content)]
             return result
 
         # 7. 荣誉与头衔等提示 (notify)
-        if (post_type == "notice" and notice_type == "notify") or (
-            message_name and message_name.startswith("notice.notify")
-        ):
+        if notice_type == "notify":
+            if sub_type == "group_name":
+                name_new = str(
+                    self.get_event_field(raw_message, "name_new", "") or ""
+                ).strip()
+                if not name_new:
+                    return result
+                result.is_notice = True
+                result.role = "system"
+                result.sender_id = "system"
+                result.sender_name = "系统"
+                operator_id = str(
+                    self.get_event_field(raw_message, "operator_id", "")
+                    or self.get_event_field(raw_message, "user_id", "")
+                    or ""
+                ).strip()
+                operator_ref = await self.resolve_operator_ref(event, operator_id)
+                result.content = (
+                    f'【系统消息】{operator_ref} 将群名修改为 "{name_new}"'
+                    if operator_ref
+                    else f'【系统消息】群名修改为 "{name_new}"'
+                )
+                if hasattr(event, "message_obj") and event.message_obj:
+                    event.message_obj.message = [Plain(text=result.content)]
+                return result
+
             if sub_type == "honor":
                 result.is_notice = True
                 result.role = "system"
@@ -448,6 +568,8 @@ class NoticeParser:
                 return result
 
             elif sub_type == "title":
+                if self.get_event_field(raw_message, "title", None) is None:
+                    return result
                 result.is_notice = True
                 result.role = "system"
                 result.sender_id = "system"
@@ -467,7 +589,11 @@ class NoticeParser:
                     force_lookup=True,
                 )
                 target_ref = self.format_user_ref(target_name or target_id, target_id)
-                msg = f'【系统消息】{target_ref} 获得了新头衔 "{title}"'
+                msg = (
+                    f'【系统消息】{target_ref} 获得了新头衔 "{title}"'
+                    if title
+                    else f"【系统消息】{target_ref} 的专属头衔已移除"
+                )
 
                 result.content = msg
                 if hasattr(event, "message_obj") and event.message_obj:
@@ -475,9 +601,7 @@ class NoticeParser:
                 return result
 
         # 8. 群禁言通知 (group_ban)
-        if (post_type == "notice" and notice_type == "group_ban") or (
-            message_name and message_name.startswith("notice.group_ban")
-        ):
+        if notice_type == "group_ban":
             result.is_notice = True
             result.role = "system"
             result.sender_id = "system"

@@ -92,6 +92,9 @@ class DataCache:
         self.recent_messages: defaultdict[str, deque[MessageData]] = defaultdict(
             lambda: deque(maxlen=self.msg_number)
         )
+        self._recent_file_deliveries: deque[
+            tuple[float, tuple[str, ...], str, MessageData]
+        ] = deque(maxlen=256)
         # 记忆缓存
         self.memories: defaultdict[str, deque[MemoryItem]] = defaultdict(
             lambda: deque(maxlen=self.memory_number)
@@ -152,7 +155,8 @@ class DataCache:
         msg_data: MessageData,
         *,
         observed_by_bot: bool = False,
-    ) -> None:
+        file_delivery: tuple[str, str, str] | None = None,
+    ) -> bool:
         """Persist a message and observe confirmed bot output in an active conversation.
 
         Args:
@@ -161,6 +165,11 @@ class DataCache:
             msg_data: Message to store, assigning a local ID when necessary.
             observed_by_bot: Whether this is successfully sent bot output, eligible
                 for observation while the conversation is active or replying.
+            file_delivery: Event kind, filename, and size for a standalone file
+                delivery that may also arrive as a notice.
+
+        Returns:
+            Whether a new message was stored rather than a duplicate delivery.
         """
         import time
 
@@ -172,6 +181,50 @@ class DataCache:
 
         # Clean entries older than 2 seconds
         self._recent_adds = [x for x in self._recent_adds if now - x[0] < 2.0]
+        while (
+            self._recent_file_deliveries
+            and now - self._recent_file_deliveries[0][0] >= 2.0
+        ):
+            self._recent_file_deliveries.popleft()
+
+        file_key = None
+        if file_delivery:
+            source, filename, size = file_delivery
+            file_key = (bot_name, group_id, msg_data.user_id, filename, size)
+            for previous in self._recent_file_deliveries:
+                _, previous_key, previous_source, previous_message = previous
+                if previous_key != file_key or previous_source == source:
+                    continue
+                # Pair one notice with one message; repeated uploads still survive.
+                if source == "message" and msg_data.message_id:
+                    # Keep the native ID even when the notice was stored first.
+                    old_id = previous_message.message_id
+                    async with self.db.transaction() as conn:
+                        await conn.execute(
+                            "UPDATE chat_history SET message_id = ? "
+                            "WHERE bot_name = ? AND group_or_user_id = ? AND message_id = ?",
+                            (msg_data.message_id, bot_name, group_id, old_id),
+                        )
+                    previous_message.message_id = msg_data.message_id
+                    for cached in self.recent_messages.get(
+                        f"{bot_name}:{group_id}", ()
+                    ):
+                        if cached.message_id == old_id:
+                            cached.message_id = msg_data.message_id
+                    self._recent_adds = [
+                        (
+                            ts,
+                            b,
+                            g,
+                            msg_data.message_id
+                            if b == bot_name and g == group_id and mid == old_id
+                            else mid,
+                            content,
+                        )
+                        for ts, b, g, mid, content in self._recent_adds
+                    ]
+                self._recent_file_deliveries.remove(previous)
+                return False
 
         # Check for duplicate
         for ts, b, g, mid, c in self._recent_adds:
@@ -181,13 +234,13 @@ class DataCache:
                     logger.debug(
                         f"[Giftia] Duplicate message write bypassed (message_id match): {msg_data.message_id}"
                     )
-                    return
+                    return False
                 # If either message lacks a message_id, fall back to content matching
                 if (not mid or not msg_data.message_id) and c == msg_data.content:
                     logger.debug(
                         f"[Giftia] Duplicate message write bypassed (content match): {msg_data.content}"
                     )
-                    return
+                    return False
 
         # Record this write
         self._recent_adds.append(
@@ -210,10 +263,15 @@ class DataCache:
         )
         # 将消息写入数据库
         await self.db.insert_message(bot_name=bot_name, message=msg_data)
+        if file_key is not None and file_delivery is not None:
+            self._recent_file_deliveries.append(
+                (now, file_key, file_delivery[0], msg_data)
+            )
         if observe_output:
             await self.plugin.passive_memory_manager.observe_messages(
                 bot_name, group_id, msg_data.user_id, [msg_data]
             )
+        return True
 
     async def add_cache_message(
         self, bot_name: str, group_id: str, msg_data: MessageData
