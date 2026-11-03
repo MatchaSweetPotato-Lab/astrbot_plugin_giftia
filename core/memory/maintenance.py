@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime
 from xml.etree.ElementTree import Element, SubElement, fromstring, indent, tostring
@@ -108,7 +109,7 @@ class MemoryMaintenanceMixin:
     async def _run_memory_summary_task(
         self, bot_name, group_or_user_id, self_id, nickname, context
     ) -> bool:
-        """Extract evidenced records and persist only novel information.
+        """Extract typed records, review facts, and preserve independent events.
 
         Args:
             bot_name: Owning bot configuration.
@@ -156,32 +157,47 @@ class MemoryMaintenanceMixin:
         try:
             parsed = MemoryRecords.model_validate(parse_markdown_json(completion))
             records = validate_memory_records(parsed, messages, media, self_id)
-            # Serialize review and commit across sessions sharing the same bot.
-            lock = self.novelty_locks.setdefault(bot_name, asyncio.Lock())
+            facts = [item for item in records if item["memory_type"] == "fact"]
+            # Only fact review needs serialization across this bot's sessions.
+            lock = (
+                self.novelty_locks.setdefault(bot_name, asyncio.Lock())
+                if facts
+                else nullcontext()
+            )
             async with lock:
-                records = await self._review_memory_novelty(
-                    bot_name, group_or_user_id, self_id, nickname, records
-                )
-                # Rebuild source snapshots and fingerprints after candidate edits.
-                reviewed = MemoryRecords.model_validate(
-                    {
-                        "memories": [
-                            {
-                                "associated_user_ids": item["associated_user_ids"],
-                                "topic": item["topic"],
-                                "text": item["text"],
-                                "occurred_at": item["occurred_at"],
-                                "importance": item["importance"],
-                                "evidence": [
-                                    {"source_id": ref["source_id"]}
-                                    for ref in item["evidence"]
-                                ],
-                            }
-                            for item in records
-                        ]
-                    }
-                )
-                records = validate_memory_records(reviewed, messages, media, self_id)
+                if facts:
+                    order = {item["fingerprint"]: i for i, item in enumerate(records)}
+                    facts = await self._review_memory_novelty(
+                        bot_name, group_or_user_id, self_id, nickname, facts
+                    )
+                    records = sorted(
+                        [item for item in records if item["memory_type"] == "event"]
+                        + facts,
+                        key=lambda item: order[item["fingerprint"]],
+                    )
+                    # Rebuild source snapshots and fingerprints after fact edits.
+                    reviewed = MemoryRecords.model_validate(
+                        {
+                            "memories": [
+                                {
+                                    "memory_type": item["memory_type"],
+                                    "associated_user_ids": item["associated_user_ids"],
+                                    "topic": item["topic"],
+                                    "text": item["text"],
+                                    "occurred_at": item["occurred_at"],
+                                    "importance": item["importance"],
+                                    "evidence": [
+                                        {"source_id": ref["source_id"]}
+                                        for ref in item["evidence"]
+                                    ],
+                                }
+                                for item in records
+                            ]
+                        }
+                    )
+                    records = validate_memory_records(
+                        reviewed, messages, media, self_id
+                    )
                 affected = await repo.insert_memories(
                     bot_name,
                     group_or_user_id,
@@ -203,7 +219,7 @@ class MemoryMaintenanceMixin:
             self.plugin.data_cache.remove_session_recalled_memory(memory_id)
         await self._sync_memory_vectors(bot_name, group_or_user_id)
         logger.info(
-            "[Giftia Memory] Saved %s factual memories for %s:%s",
+            "[Giftia Memory] Saved %s memories for %s:%s",
             len(affected),
             bot_name,
             group_or_user_id,
@@ -249,6 +265,7 @@ class MemoryMaintenanceMixin:
             predicate += (
                 f" AND EXISTS (SELECT 1 FROM json_each({associated}) "
                 f"WHERE type IN ('text', 'integer') AND CAST(value AS TEXT) IN ({placeholders}))"
+                f" AND COALESCE(json_extract({metadata}, '$.memory_type'), 'fact')='fact'"
             )
             params.extend(users)
             # SQLite also covers disabled embeddings and records awaiting indexing.
@@ -271,6 +288,7 @@ class MemoryMaintenanceMixin:
                         threshold=self.plugin.embedding_conf.get("threshold", 0.7),
                         user_ids=users,
                         raise_errors=True,
+                        memory_type="fact",
                     )
                 except Exception as error:
                     raise ValueError("Memory novelty recall failed") from error
@@ -280,22 +298,14 @@ class MemoryMaintenanceMixin:
                 saved = memory_metadata(item) if "memory_id" in item else item
                 snapshot = {
                     "associated_user_ids": saved.get("associated_user_ids", []),
-                    "topic": saved.get("topic", ""),
                     "text": item["text"],
                     "occurred_at": saved.get("occurred_at", ""),
-                    "source_times": list(
-                        dict.fromkeys(
-                            ref["time"]
-                            for ref in saved.get("evidence", [])
-                            if isinstance(ref, dict) and ref.get("time")
-                        )
-                    ),
                 }
                 if "memory_id" in item:
                     snapshot["memory_id"] = item["memory_id"]
                     snapshot["source_session_id"] = item["group_or_user_id"]
                 else:
-                    snapshot["source_ids"] = item["new_source_ids"]
+                    snapshot["topic"] = item["topic"]
                 snapshots.append(snapshot)
             candidates.append(
                 {
@@ -315,19 +325,7 @@ class MemoryMaintenanceMixin:
         completion = await self._call_summary_llm(
             "记忆新颖性整理",
             prompt,
-            json.dumps(
-                {
-                    "candidates": candidates,
-                    "source_evidence": list(
-                        {
-                            ref["source_id"]: ref
-                            for item in records
-                            for ref in item["evidence"]
-                        }.values()
-                    ),
-                },
-                ensure_ascii=False,
-            ),
+            json.dumps({"candidates": candidates}, ensure_ascii=False),
             bot_name=bot_name,
             group_or_user_id=session_id,
         )

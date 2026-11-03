@@ -115,6 +115,7 @@ def atom(msg, **updates):
         Model response item.
     """
     return {
+        "memory_type": "fact",
         "associated_user_ids": [msg.user_id],
         "topic": "game",
         "text": msg.content,
@@ -1665,9 +1666,11 @@ async def test_repeated_identity_is_not_saved_again_but_sources_are_completed(
     )
     call = runtime.manager._call_summary_llm.call_args
     candidate = json.loads(call.args[2])["candidates"][0]
-    assert candidate["new_memory"]["source_times"] == [latest.time]
-    assert candidate["related_memories"][0]["source_times"] == [first.time]
-    assert "不得把新的发言时间" in call.args[1]
+    assert candidate["new_memory"]["topic"] == "学业"
+    assert "topic" not in candidate["related_memories"][0]
+    assert "source_times" not in candidate["new_memory"]
+    assert "source_times" not in candidate["related_memories"][0]
+    assert "只是在复述已知身份" in call.args[1]
     assert original["indexed_revision"] == 0
     runtime.plugin.ltm.search_memory.assert_not_awaited()
     runtime.manager._run_profile_summary_task.assert_awaited_once()
@@ -1761,8 +1764,22 @@ async def test_novelty_review_removes_known_facts_from_mixed_candidate(
     committed = insert.await_args.args[2][0]
     assert committed["fingerprint"] != initial["fingerprint"]
     payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
-    assert payload["source_evidence"] == initial["evidence"]
-    assert payload["candidates"][0]["new_memory"]["source_ids"] == [latest.db_id]
+    assert set(payload) == {"candidates"}
+    candidate = payload["candidates"][0]
+    assert set(candidate["new_memory"]) == {
+        "associated_user_ids",
+        "topic",
+        "text",
+        "occurred_at",
+    }
+    assert candidate["new_memory"]["topic"] == proposal["topic"]
+    assert set(candidate["related_memories"][0]) == {
+        "associated_user_ids",
+        "text",
+        "occurred_at",
+        "memory_id",
+        "source_session_id",
+    }
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (0, 0, 0)
@@ -1803,8 +1820,38 @@ async def test_novelty_edits_target_only_the_selected_candidate(runtime):
     ]
     assert json.loads(stored[2]["metadata"])["topic"] == "运动偏好"
     payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
-    assert len(payload["source_evidence"]) == 1
+    assert "source_evidence" not in payload
     assert len(payload["candidates"]) == 2
+    assert [item["new_memory"]["topic"] for item in payload["candidates"]] == [
+        "学生生活",
+        "运动偏好",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_novelty_review_can_edit_only_new_candidate_title(runtime):
+    first = await message(runtime, "我是高中生")
+    assert await extract(runtime, first, [atom(first, topic="身份")])
+    original = (await rows(runtime))[0]
+    latest = await message(runtime, "我每天在学校食堂吃饭", day=11)
+    proposal = atom(latest, text="用户A每天在学校食堂吃饭", topic="日常生活")
+    assert await extract(
+        runtime,
+        latest,
+        [proposal],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": true, "text": null, "topic": "校园饮食"}]}',
+    )
+    stored = await rows(runtime)
+    assert stored[0] == original
+    assert stored[1]["text"] == proposal["text"]
+    metadata = json.loads(stored[1]["metadata"])
+    assert metadata["topic"] == "校园饮食"
+    assert metadata["evidence"][0]["quote"] == latest.content
+    candidate = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
+        "candidates"
+    ][0]
+    assert candidate["new_memory"]["topic"] == "日常生活"
+    assert "topic" not in candidate["related_memories"][0]
 
 
 @pytest.mark.asyncio
@@ -1846,17 +1893,212 @@ async def test_invalid_novelty_edits_do_not_save_or_advance_progress(runtime, ed
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "text", ["我已经高中毕业，上大学了", "今天再次履行了周末帮忙的约定"]
+    "text,memory_type",
+    [
+        ("我已经高中毕业，上大学了", "fact"),
+        ("今天再次履行了周末帮忙的约定", "event"),
+    ],
 )
-async def test_novelty_review_can_keep_changes_and_distinct_events(runtime, text):
-    first = await message(runtime, "我是高中生，今天履行了帮忙的约定")
+async def test_fact_changes_are_reviewed_and_events_bypass_review(
+    runtime, text, memory_type
+):
+    first = await message(runtime, "我是高中生")
     assert await extract(runtime, first, [atom(first)])
     latest = await message(runtime, text, day=11)
-    assert await extract(runtime, latest, [atom(latest, occurred_at=latest.time)])
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest, occurred_at=latest.time, memory_type=memory_type)],
+    )
     assert len(await rows(runtime)) == 2
-    prompt = runtime.manager._call_summary_llm.call_args.args[1]
-    assert "实际再次发生的独立事件" in prompt
-    assert "身份或偏好变化" in prompt
+    assert runtime.manager._call_summary_llm.await_count == (
+        2 if memory_type == "fact" else 1
+    )
+    if memory_type == "fact":
+        assert "身份或偏好变化" in runtime.manager._call_summary_llm.call_args.args[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("embedding_enabled", [False, True])
+async def test_event_only_batch_skips_review_and_recall_and_preserves_time_nodes(
+    runtime, monkeypatch, embedding_enabled
+):
+    old = await message(runtime, "我是高中生")
+    assert await extract(runtime, old, [atom(old)])
+    first = await message(runtime, "参加了一次运动会", hour=14)
+    second = await message(runtime, "参加了一次运动会", day=11)
+    proposals = [
+        atom(msg, memory_type="event", topic="运动会") for msg in [first, second]
+    ]
+    runtime.plugin.embedding_conf["enabled"] = embedding_enabled
+    review = AsyncMock(side_effect=AssertionError("event entered novelty review"))
+    monkeypatch.setattr(runtime.manager, "_review_memory_novelty", review)
+    runtime.plugin.ltm.search_memory.side_effect = AssertionError(
+        "event performed recall"
+    )
+    runtime.manager._call_summary_llm = AsyncMock(
+        return_value=json.dumps({"memories": proposals})
+    )
+    lock = runtime.manager.novelty_locks["bot"]
+    await lock.acquire()
+    try:
+        assert await asyncio.wait_for(
+            runtime.manager._run_memory_summary_task(
+                "bot",
+                "group",
+                "self",
+                "Giftia",
+                {"alias_observation_messages": [first, second]},
+            ),
+            2,
+        )
+    finally:
+        lock.release()
+    review.assert_not_awaited()
+    runtime.plugin.ltm.search_memory.assert_not_awaited()
+    runtime.manager._call_summary_llm.assert_awaited_once()
+    stored = await rows(runtime)
+    assert len(stored) == 3
+    assert stored[1]["memory_id"] != stored[2]["memory_id"]
+    for row, msg in zip(stored[1:], [first, second]):
+        metadata = json.loads(row["metadata"])
+        assert row["text"] == msg.content
+        assert metadata["memory_type"] == "event"
+        assert metadata["evidence"][0]["source_id"] == msg.db_id
+    assert await runtime.manager._run_memory_summary_task(
+        "bot",
+        "group",
+        "self",
+        "Giftia",
+        {"alias_observation_messages": [first, second]},
+    )
+    runtime.manager._call_summary_llm.assert_awaited_once()
+    assert len(await rows(runtime)) == 3
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keep_fact", [False, True])
+async def test_mixed_batch_reviews_only_facts_and_keeps_events_in_order(
+    runtime, keep_fact
+):
+    old = await message(runtime, "我是高中生")
+    assert await extract(runtime, old, [atom(old, topic="身份")])
+    latest = await message(
+        runtime, "今天参加了运动会，我是高中生，每天在食堂吃饭，还完成了作品", day=11
+    )
+    proposals = [
+        atom(latest, memory_type="event", text="用户A今天参加了运动会", topic="运动会"),
+        atom(latest, text="用户A是高中生", topic="身份"),
+        atom(latest, text="用户A是高中生，每天在食堂吃饭", topic="校园生活"),
+        atom(latest, memory_type="event", text="用户A今天完成了作品", topic="作品完成"),
+    ]
+    decision = {"candidate_id": 2, "is_new": keep_fact}
+    if keep_fact:
+        decision.update(text="用户A每天在食堂吃饭", topic="校园饮食")
+    assert await extract(
+        runtime,
+        latest,
+        proposals,
+        novelty=json.dumps(
+            {
+                "decisions": [
+                    {"candidate_id": 1, "is_new": False},
+                    decision,
+                ]
+            }
+        ),
+    )
+    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
+    assert [item["new_memory"]["text"] for item in payload["candidates"]] == [
+        proposals[1]["text"],
+        proposals[2]["text"],
+    ]
+    stored = await rows(runtime)
+    assert [item["text"] for item in stored[1:]] == (
+        [proposals[0]["text"], "用户A每天在食堂吃饭", proposals[3]["text"]]
+        if keep_fact
+        else [proposals[0]["text"], proposals[3]["text"]]
+    )
+    for row in [stored[1], stored[-1]]:
+        metadata = json.loads(row["metadata"])
+        assert metadata["memory_type"] == "event"
+        assert metadata["evidence"][0]["quote"] == latest.content
+    if keep_fact:
+        assert json.loads(stored[2]["metadata"])["memory_type"] == "fact"
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_events_at_different_times_from_one_source_remain_separate(runtime):
+    msg = await message(runtime, "昨天和今天都参加了活动", day=11)
+    assert await extract(
+        runtime,
+        msg,
+        [
+            atom(
+                msg,
+                memory_type="event",
+                text="用户A参加了活动",
+                occurred_at="2020-01-10T12:00:00+08:00",
+            ),
+            atom(
+                msg,
+                memory_type="event",
+                text="用户A参加了活动",
+                occurred_at="2020-01-11T12:00:00+08:00",
+            ),
+        ],
+    )
+    stored = await rows(runtime)
+    assert len(stored) == 2
+    assert len({json.loads(row["metadata"])["occurred_at"] for row in stored}) == 2
+    runtime.manager._call_summary_llm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fact_recall_filters_event_records_before_vector_search(runtime):
+    event = await message(runtime, "今天参加了运动会")
+    assert await extract(runtime, event, [atom(event, memory_type="event")])
+    fact = await message(runtime, "我是高中生", hour=14)
+    assert await extract(runtime, fact, [atom(fact)])
+    saved = await rows(runtime)
+    fact_id = saved[1]["memory_id"]
+    await runtime.db.conn.execute("UPDATE memories SET indexed_revision=revision")
+    await runtime.db.conn.commit()
+    runtime.plugin.embedding_conf["enabled"] = True
+    runtime.plugin.ltm.search_memory.return_value = [{"id": fact_id}]
+    latest = await message(runtime, "我还在读高中", day=11)
+    assert await extract(
+        runtime,
+        latest,
+        [atom(latest)],
+        novelty='{"decisions": [{"candidate_id": 1, "is_new": false}]}',
+    )
+    assert runtime.plugin.ltm.search_memory.call_args.kwargs["include_ids"] == [fact_id]
+    candidate = json.loads(runtime.manager._call_summary_llm.call_args.args[2])[
+        "candidates"
+    ][0]
+    assert [item["memory_id"] for item in candidate["related_memories"]] == [fact_id]
+    assert len(await rows(runtime)) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("memory_type", [None, "other"])
+async def test_extraction_requires_a_valid_explicit_memory_type(runtime, memory_type):
+    msg = await message(runtime, "我是高中生")
+    proposal = atom(msg, memory_type=memory_type)
+    if memory_type is None:
+        proposal.pop("memory_type")
+    assert not await extract(runtime, msg, [proposal])
+    assert await rows(runtime) == []
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (msg.db_id, msg.db_id, 1)
 
 
 @pytest.mark.asyncio
@@ -2131,11 +2373,12 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
     runtime.manager._run_attitude_summary_task.assert_awaited_once()
 
 
-def test_extraction_schema_only_requests_facts_and_evidence():
+def test_extraction_schema_requests_memory_type_and_evidence():
     from core.memory.atomic import MemoryRecords
 
     fields = MemoryRecords.model_json_schema()["$defs"]["MemoryRecord"]["properties"]
     assert set(fields) == {
+        "memory_type",
         "associated_user_ids",
         "topic",
         "text",

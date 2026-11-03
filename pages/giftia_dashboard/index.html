@@ -219,6 +219,15 @@
                             <select id="memory-group-id"></select>
                         </div>
                         <div class="filter-group">
+                            <label for="memory-type">记忆类型</label>
+                            <select id="memory-type">
+                                <option value="">全部类型</option>
+                                <option value="fact">持续事实（fact）</option>
+                                <option value="event">具体事件（event）</option>
+                                <option value="unclassified">未分类（旧数据）</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
                             <label>关联群友账号</label>
                             <input type="text" id="memory-associated-user-id" placeholder="筛选关联群友">
                         </div>
@@ -569,6 +578,13 @@
                     <input type="text" id="add-mem-group" placeholder="例如: 123456789">
                 </div>
                 <div class="form-group">
+                    <label for="add-mem-type">记忆类型 <span class="required">*</span></label>
+                    <select id="add-mem-type">
+                        <option value="fact">持续事实（fact）</option>
+                        <option value="event">具体事件（event）</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="add-mem-topic">主题 <span class="required">*</span></label>
                     <input type="text" id="add-mem-topic" maxlength="80" placeholder="例如：使用某个表情互动">
                 </div>
@@ -628,6 +644,15 @@
                                             <label>搜索记忆内容</label>
                                             <input type="text" id="clean-mem-search" placeholder="可选关键词">
                                         </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="clean-mem-type">记忆类型</label>
+                                        <select id="clean-mem-type">
+                                            <option value="">全部类型</option>
+                                            <option value="fact">持续事实（fact）</option>
+                                            <option value="event">具体事件（event）</option>
+                                            <option value="unclassified">未分类（旧数据）</option>
+                                        </select>
                                     </div>
                                     <div class="clean-filter-grid">
                                         <div class="form-group">
@@ -742,6 +767,14 @@
                 <div class="form-group">
                     <label>群聊/用户ID</label>
                     <input type="text" id="edit-mem-group" readonly class="readonly-input">
+                </div>
+                <div class="form-group">
+                    <label for="edit-mem-type">记忆类型</label>
+                    <select id="edit-mem-type">
+                        <option value="">未分类（旧数据）</option>
+                        <option value="fact">持续事实（fact）</option>
+                        <option value="event">具体事件（event）</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label>关联群友账号 <span class="required">*</span> (多个以英文逗号分隔)</label>

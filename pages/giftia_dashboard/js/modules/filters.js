@@ -61,6 +61,7 @@ export function getScopedFilterParams(viewKey) {
         case "memories":
             return {
                 bot_name: document.getElementById("memory-bot-name").value,
+                memory_type: document.getElementById("memory-type").value,
                 associated_user_id: document.getElementById("memory-associated-user-id").value,
                 search: document.getElementById("memory-search").value
             };

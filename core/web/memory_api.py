@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..database.profile_store import PROFILE_NAMES_CTE
 from ..memory.atomic import MemoryRecord, memory_metadata
 from ..utils.schemas import normalize_memory_importance
 from .web_helpers import optional_bool, optional_int
@@ -34,7 +35,7 @@ class MemoryApi:
         """Build shared list, session-count, and cleanup filters.
 
         Args:
-            values: Query or body fields with optional scope, participant and text filters.
+            values: Query or body fields with scope, type, participant and text filters.
 
         Returns:
             SQL predicates and their bound parameters.
@@ -48,6 +49,16 @@ class MemoryApi:
             params.append(value)
         # Guard legacy malformed metadata before querying exact account IDs.
         metadata = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END"
+        memory_type = str(values.get("memory_type") or "").strip()
+        if memory_type == "unclassified":
+            conditions.append(
+                f"COALESCE(json_extract({metadata}, '$.memory_type'), '') NOT IN ('fact', 'event')"
+            )
+        elif memory_type in ("fact", "event"):
+            conditions.append(f"json_extract({metadata}, '$.memory_type')=?")
+            params.append(memory_type)
+        elif memory_type:
+            raise ValueError("记忆类型筛选无效")
         user_id = str(values.get("associated_user_id") or "").strip()
         if user_id:
             conditions.append(
@@ -190,12 +201,20 @@ class MemoryApi:
                                 user_ids.add(str(auid))
                 if user_ids:
                     placeholders = ",".join(["?"] * len(user_ids))
-                    sql = f"""
-                        SELECT user_id, call_name
-                        FROM user_profiles
+                    sql = (
+                        PROFILE_NAMES_CTE
+                        + f"""
+                        SELECT user_id, resolved_call_name AS call_name
+                        FROM profiles
                         WHERE bot_name = ? AND user_id IN ({placeholders})
                     """
-                    sql_params = [bot_name, *user_ids]
+                    )
+                    sql_params = [
+                        group_or_user_id,
+                        group_or_user_id,
+                        bot_name,
+                        *user_ids,
+                    ]
                     try:
                         async with self.giftia.db.query(sql, sql_params) as cursor:
                             p_rows = await cursor.fetchall()
@@ -302,6 +321,7 @@ class MemoryApi:
                     uid.strip() for uid in associated.split(",") if uid.strip()
                 ]
             item = MemoryRecord(
+                memory_type=body.get("memory_type", "fact"),
                 topic=body.get("topic") or "人工记录",
                 text=body.get("text"),
                 associated_user_ids=associated,
@@ -341,7 +361,7 @@ class MemoryApi:
             return error_response(f"添加记忆失败: {str(e)}")
 
     async def update_memory(self):
-        """Edit a fact in place while preserving its identity and original evidence."""
+        """Edit memory content and type while preserving identity and source evidence."""
         try:
             body = await request.json()
             memory_id = body.get("memory_id")
@@ -368,6 +388,14 @@ class MemoryApi:
             metadata = memory_metadata(dict(old))
             if "topic" in body and body["topic"] != metadata.get("topic", ""):
                 return error_response("主题不能改写，请新增一条记忆")
+            if "memory_type" in body:
+                memory_type = body["memory_type"]
+                if memory_type not in ("fact", "event", ""):
+                    return error_response("记忆类型须为 fact、event 或留空")
+                if memory_type:
+                    metadata["memory_type"] = memory_type
+                else:
+                    metadata.pop("memory_type", None)
             associated = body.get("associated_user_ids")
             if isinstance(associated, str):
                 associated = [

@@ -15,6 +15,7 @@ class Field {
         if (!this.children.has(selector)) this.children.set(selector, new Field());
         return this.children.get(selector);
     }
+    querySelectorAll() { return []; }
     replaceChildren(...options) { this.options = options; this.value = options[0]?.value || ''; }
     append(...options) { this.options.push(...options); }
 }
@@ -23,6 +24,7 @@ globalThis.Option = class {
 };
 globalThis.document = {
     addEventListener() {},
+    querySelectorAll() { return []; },
     getElementById(id) {
         if (!fields.has(id)) fields.set(id, new Field());
         return fields.get(id);
@@ -31,6 +33,7 @@ globalThis.document = {
 globalThis.window = {};
 await import('../pages/giftia_dashboard/js/utils.js');
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
+const { getScopedFilterParams } = await import('../pages/giftia_dashboard/js/modules/filters.js');
 const { loadMemories, renderMemories } = await import('../pages/giftia_dashboard/js/modules/render/memories.js');
 const { renderChatHistory } = await import('../pages/giftia_dashboard/js/modules/render/history.js');
 const { renderRelationChanges } = await import('../pages/giftia_dashboard/js/modules/render/relation_history.js');
@@ -51,9 +54,7 @@ beforeEach(() => {
     window.closeModal = () => {};
     window.showToast = () => {};
     window.GiftiaApp = {
-        getScopedFilterParams: () => ({
-            bot_name: get('memory-bot-name').value
-        }),
+        getScopedFilterParams,
         resetPagination: () => {},
         refreshScopedFilters: async () => {},
         loadMemories: async () => {},
@@ -140,7 +141,7 @@ test('slower responses cannot replace the newly selected conversation', async ()
     assert.equal(state.pagination.memories.total, 1);
 });
 
-test('fact edits preserve revision and source evidence without classification fields', async () => {
+test('fact edits preserve revision and source evidence while setting memory type', async () => {
     const item = {
         memory_id: 'fact', bot_name: 'bot', group_or_user_id: 'group', revision: 7,
         text: 'original text', metadata: { topic: '角色喜好', evidence: [{ quote: 'original' }] }
@@ -149,13 +150,85 @@ test('fact edits preserve revision and source evidence without classification fi
     let body;
     window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
     get('edit-mem-text').value = 'corrected text';
+    assert.equal(get('edit-mem-type').value, '');
+    get('edit-mem-type').value = 'event';
     await window.submitEditMemory();
     assert.equal(body.revision, 7);
     assert.equal(body.text, 'corrected text');
+    assert.equal(body.memory_type, 'event');
     for (const immutable of ['status', 'expires_at', 'evidence', 'user_id', 'kind', 'subject_id']) {
         assert.equal(Object.hasOwn(body, immutable), false);
     }
     assert.deepEqual(item.metadata.evidence, [{ quote: 'original' }]);
+});
+
+test('memory cards display fact, event and unclassified types', () => {
+    renderMemories([
+        { text: 'background', metadata: { memory_type: 'fact' } },
+        { text: 'occasion', metadata: { memory_type: 'event' } },
+        { text: 'legacy', metadata: {} },
+        { text: 'invalid legacy type', metadata: { memory_type: '__proto__' } },
+    ]);
+    const html = get('memory-list').innerHTML;
+    for (const label of ['持续事实', '具体事件', '未分类']) assert.ok(html.includes(label));
+    assert.equal((html.match(/未分类/g) || []).length, 2);
+});
+
+test('memory type filter is included in list and scoped filter requests', async () => {
+    get('memory-type').value = 'unclassified';
+    assert.equal(getScopedFilterParams('memories').memory_type, 'unclassified');
+    let params;
+    window.apiGet = async (path, value) => {
+        params = value;
+        return { status: 'success', data: { items: [], total: 0 } };
+    };
+    await loadMemories();
+    assert.equal(params.memory_type, 'unclassified');
+});
+
+test('older type filter responses cannot replace the newly selected type', async () => {
+    const pending = [];
+    window.apiGet = () => new Promise(resolve => pending.push(resolve));
+    get('memory-type').value = 'fact';
+    const first = loadMemories();
+    get('memory-type').value = 'event';
+    const second = loadMemories();
+    pending[1]({ status: 'success', data: { total: 1, items: [{ text: 'selected event', metadata: { memory_type: 'event' } }] } });
+    await second;
+    pending[0]({ status: 'success', data: { total: 9, items: [{ text: 'stale fact', metadata: { memory_type: 'fact' } }] } });
+    await first;
+    assert.match(get('memory-list').innerHTML, /selected event/);
+    assert.doesNotMatch(get('memory-list').innerHTML, /stale fact/);
+    assert.equal(state.pagination.memories.total, 1);
+});
+
+test('manual creation inherits and keeps the selected event type', async () => {
+    get('memory-type').value = 'event';
+    window.openAddMemoryModal();
+    assert.equal(get('add-mem-type').value, 'event');
+    for (const [field, value] of Object.entries({ bot: 'bot', group: 'group', 'associated-ids': 'A', topic: 'occasion', text: 'A attended an event' })) {
+        get(`add-mem-${field}`).value = value;
+    }
+    let body;
+    window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
+    await window.submitAddMemory();
+    assert.equal(body.memory_type, 'event');
+    assert.equal(get('memory-type').value, 'event');
+});
+
+test('memory cleanup inherits the selected type and submits it with its criteria', async () => {
+    get('memory-type').value = 'unclassified';
+    window.openMemoryCleanModal();
+    assert.equal(get('clean-mem-type').value, 'unclassified');
+    let body;
+    window.apiPost = async (path, value) => {
+        body = value;
+        return { status: 'success', data: { items: [], total: 0 } };
+    };
+    await window.loadMemoryCleanCandidates();
+    assert.equal(body.memory_type, 'unclassified');
+    assert.equal(body.bot_name, 'bot');
+    assert.equal(body.group_or_user_id, 'group');
 });
 
 test('manual creation saves all participants and selects the saved conversation', async () => {

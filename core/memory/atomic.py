@@ -1,10 +1,11 @@
-"""Factual memory records and verified source evidence."""
+"""Typed memory records and verified source evidence."""
 
 import hashlib
 import json
 import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -76,6 +77,9 @@ class MemoryEvidence(BaseModel):
 class MemoryRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
+    memory_type: Literal["fact", "event"] = Field(
+        description="fact 为持续事实，需去重整理；event 为时间节点上的具体事件，直接保存。"
+    )
     associated_user_ids: list[str] = Field(min_length=1, max_length=20)
     topic: str = Field(min_length=1, max_length=80)
     text: str = Field(
@@ -114,7 +118,7 @@ class MemoryNoveltyDecision(BaseModel):
         default=None,
         min_length=1,
         max_length=80,
-        description="正文精简后需要同步调整的主题；无需修改或丢弃时为 null。",
+        description="需要修改时输出候选的新主题；无需修改或丢弃时为 null。",
     )
 
 
@@ -239,10 +243,12 @@ def validate_memory_records(
                 raise ValueError("Invalid occurred_at") from error
         fingerprint = json.dumps(
             [
+                item["memory_type"],
                 item["associated_user_ids"],
                 record.topic,
                 " ".join(record.text.split()),
                 item["new_source_ids"],
+                item["occurred_at"] if item["memory_type"] == "event" else "",
             ],
             ensure_ascii=False,
         )
