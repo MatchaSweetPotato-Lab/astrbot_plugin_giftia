@@ -283,6 +283,51 @@ async def test_reactions_keep_actions_counts_and_actual_actor(
     assert "None" not in row.content
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_format", ["onebot", "dict", "object"])
+@pytest.mark.parametrize(
+    "direction,action",
+    [
+        ({"sub_type": "remove"}, "remove"),
+        ({"sub_type": "add"}, "add"),
+        ({"is_add": False}, "remove"),
+        ({"is_add": "False"}, "remove"),
+        ({"is_add": " false "}, "remove"),
+        ({"is_add": 0}, "remove"),
+        ({"is_add": "0"}, "remove"),
+        ({"is_add": True}, "add"),
+        ({"is_add": " True "}, "add"),
+        ({"is_add": None, "sub_type": "remove"}, "remove"),
+        ({"is_add": "", "sub_type": "remove"}, "remove"),
+        ({}, "add"),
+    ],
+)
+async def test_reaction_direction_survives_storage(
+    runtime, raw_format, direction, action
+):
+    await runtime.dispatch(
+        {
+            "notice_type": "group_msg_emoji_like",
+            "operator_id": 200,
+            "message_id": -908673431,
+            "message_seq": 1538,
+            "likes": [{"emoji_id": "66", "count": 1}],
+            **direction,
+        },
+        raw_format=raw_format,
+    )
+
+    rows = await runtime.db.get_messages("100", "bot")
+    assert len(rows) == 1
+    row = rows[0]
+    label = "贴表情回应" if action == "add" else "取消表情回应"
+    assert row.content.startswith(f"[{label}:")
+    assert f'action="{action}"' in row.content
+    assert 'message_id="-908673431"' in row.content
+    assert 'count="1"' in row.content
+    assert (row.user_id, row.role) == ("200", "message")
+
+
 IGNORED_EVENTS = [
     {"notice_type": "notify", "sub_type": "input_status"},
     {"notice_type": "input_status"},

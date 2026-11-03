@@ -241,12 +241,16 @@ class NoticeParser:
             target_msg_id = str(
                 self.get_event_field(raw_message, "message_id", "") or ""
             )
-            is_add = self.get_event_field(raw_message, "is_add", True) not in (
-                False,
-                0,
-                "false",
-                "0",
-            )
+            is_add = self.get_event_field(raw_message, "is_add", None)
+            if isinstance(is_add, str):
+                is_add = is_add.strip().lower()
+            if is_add in (False, 0, "false", "0"):
+                is_add = False
+            elif is_add in (True, 1, "true", "1"):
+                is_add = True
+            else:
+                # Some OneBot implementations report only the reaction subtype.
+                is_add = sub_type.lower() != "remove"
             action = "add" if is_add else "remove"
             label = "贴表情回应" if is_add else "取消表情回应"
             parts = []
