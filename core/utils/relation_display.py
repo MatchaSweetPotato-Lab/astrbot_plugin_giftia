@@ -1,18 +1,19 @@
 def build_relation_display(record: dict) -> dict[str, float | str]:
-    """Format affinity components with the actual signed recent correction.
+    """Format affinity components with the signed net effect of recent ratings.
 
     Args:
         record: Shared profile or score data with unrounded interaction and
-            long-term scores. Missing long-term data implies no known correction.
+            recent baseline scores. The baseline excludes selected recent ratings;
+            missing baseline data implies no known recent effect.
 
     Returns:
         The one-decimal recent effect and a consistent component summary.
         The effect is already included in the interaction score.
     """
     interaction = float(record.get("interaction_score", 50))
-    long_term = float(record.get("long_term_score", interaction))
+    baseline = float(record.get("recent_baseline_score", interaction))
     # Subtract before rounding either score and normalize negative zero.
-    recent_effect = round(interaction - long_term, 1) or 0.0
+    recent_effect = round(interaction - baseline, 1) or 0.0
     return {
         "recent_effect": recent_effect,
         "relation_components": (

@@ -132,7 +132,9 @@ class RelationHistoryStoreMixin:
 
         Returns:
             Unrounded final, base, recent, long-term and interaction scores with
-            sample counts. Each magnitude cancels its own signed squared weights.
+            sample counts. The recent baseline excludes the selected recent
+            ratings and applies the same historical aggregation without replaying
+            or replacing them. Each magnitude cancels its own signed squared weights.
             Accumulated weights are limited to the 80, 85, 90 and 95 score bounds
             before adding the next tier. Magnitude five can approach 100 or zero.
             Stronger weights fill lower ranges before carrying into higher ones.
@@ -196,9 +198,16 @@ class RelationHistoryStoreMixin:
         recent_weight = _allocate_relation_weight(
             tuple(row[f"recent_weight_{magnitude}"] for magnitude in range(1, 6))
         )
-        long_term_score, recent_score = (
+        # Remove raw tier weights before cancellation and limits are reapplied.
+        recent_baseline_weight = _allocate_relation_weight(
+            tuple(
+                row[f"weight_{magnitude}"] - row[f"recent_weight_{magnitude}"]
+                for magnitude in range(1, 6)
+            )
+        )
+        long_term_score, recent_score, recent_baseline_score = (
             50 + 50 * weight / (RELATION_CURVE_SCALE + abs(weight))
-            for weight in (long_term_weight, recent_weight)
+            for weight in (long_term_weight, recent_weight, recent_baseline_weight)
         )
         if not row["recent_count"]:
             recent_score = long_term_score
@@ -216,6 +225,7 @@ class RelationHistoryStoreMixin:
             "interaction_score": interaction_score,
             "recent_score": recent_score,
             "long_term_score": long_term_score,
+            "recent_baseline_score": recent_baseline_score,
             "relation": row["base_relation"] + interaction_score,
             "total_count": row["total_count"],
             "recent_count": row["recent_count"],

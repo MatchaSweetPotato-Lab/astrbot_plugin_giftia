@@ -353,6 +353,7 @@ test('profile scores retain fractions and show components and counts in the affi
     const profile = {
         user_id: 'friend', relation: 83.1818, base_relation: 0,
         interaction_score: 83.1818, recent_score: 75, long_term_score: 95.4545,
+        recent_baseline_score: 95.4545,
         recent_count: 10, total_count: 100
     };
     renderUserProfiles([profile]);
@@ -370,15 +371,17 @@ test('profile scores retain fractions and show components and counts in the affi
 });
 
 test('affinity modal derives signed recent effects before rounding component scores', async () => {
-    for (const [interaction, longTerm, effect] of [
+    for (const [interaction, baseline, effect] of [
         [84.94, 80.06, '+4.9'],
         [84.86, 86.44, '-1.6'],
         [84.86, 84.94, '-0.1'],
-        [84.94, 84.96, '+0.0']
+        [84.94, 84.96, '+0.0'],
+        [3, 0, '+3.0']
     ]) {
         const profile = {
             user_id: 'friend', relation: 30 + interaction, base_relation: 30,
-            interaction_score: interaction, long_term_score: longTerm,
+            interaction_score: interaction, long_term_score: 90,
+            recent_baseline_score: baseline,
             recent_count: 10, total_count: 50
         };
         window.apiGet = async () => ({ status: 'success', data: {
@@ -389,6 +392,12 @@ test('affinity modal derives signed recent effects before rounding component sco
         assert.ok(summary.includes(`基础分：30；互动分：${interaction.toFixed(1)}（近期：${effect}）`));
         assert.doesNotMatch(summary, /近期分|长期分|-0\.0/);
     }
+});
+
+test('affinity modal without a recent baseline shows no known recent effect', async () => {
+    window.apiGet = async () => ({ status: 'success', data: { items: [], total: 0, page: 1 } });
+    await window.openUserRelationHistoryModal({ interaction_score: 80, long_term_score: 75 });
+    assert.match(get('user-relation-history-summary').innerHTML, /互动分：80\.0（近期：\+0\.0）/);
 });
 
 test('editing a fractional base does not submit an update', async () => {

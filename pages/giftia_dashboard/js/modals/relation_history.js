@@ -10,7 +10,7 @@ let mutationPending = false;
 
 function renderHistoryScore(item) {
     const interaction = Number(item.interaction_score ?? 50);
-    const recentEffect = Number((interaction - Number(item.long_term_score ?? interaction)).toFixed(1));
+    const recentEffect = Number((interaction - Number(item.recent_baseline_score ?? interaction)).toFixed(1));
     const signedEffect = `${recentEffect >= 0 ? '+' : ''}${recentEffect.toFixed(1)}`;
     document.getElementById('user-relation-history-summary').innerHTML = `
         <div class="relation-score-total">

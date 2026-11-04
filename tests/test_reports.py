@@ -56,16 +56,17 @@ def test_profile_default_hides_legacy_empty_values_without_requiring_history(ser
 
 
 @pytest.mark.parametrize(
-    "interaction,long_term,effect",
+    "interaction,baseline,effect",
     [
         (84.94, 80.06, "+4.9"),
         (84.86, 86.44, "-1.6"),
         (84.86, 84.94, "-0.1"),
         (84.94, 84.96, "+0.0"),
+        (3, 0, "+3.0"),
     ],
 )
 def test_profile_reports_show_the_actual_recent_effect_before_rounding_scores(
-    service, interaction, long_term, effect
+    service, interaction, baseline, effect
 ):
     data = build_user_profile_report(
         "bot",
@@ -76,7 +77,8 @@ def test_profile_reports_show_the_actual_recent_effect_before_rounding_scores(
             "relation": 30 + interaction,
             "base_relation": 30,
             "interaction_score": interaction,
-            "long_term_score": long_term,
+            "long_term_score": 90,
+            "recent_baseline_score": baseline,
             "recent_score": 70,
             "recent_count": 10,
             "total_count": 50,
@@ -87,10 +89,20 @@ def test_profile_reports_show_the_actual_recent_effect_before_rounding_scores(
     assert data["relation_components"] == summary
     assert summary in rendered
     assert data["recent_effect"] == pytest.approx(float(effect))
+    assert data["recent_baseline_score"] == round(baseline, 1)
+    assert data["long_term_score"] == 90
     assert "-0.0" not in rendered
     assert "近期分" not in rendered and "长期分" not in rendered
     assert "累计评价：50次" in rendered
     assert "近7天" not in rendered
+
+
+def test_profile_report_without_a_recent_baseline_shows_no_known_recent_effect():
+    data = build_user_profile_report(
+        "bot", "小吉", "group", "user", {"interaction_score": 80, "long_term_score": 75}
+    )
+    assert data["recent_baseline_score"] == 80
+    assert data["recent_effect"] == 0
 
 
 @pytest.mark.parametrize("memory", [None, "", " \n\t", "<想法> & 灵感\n下一步"])

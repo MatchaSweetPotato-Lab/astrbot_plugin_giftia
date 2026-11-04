@@ -39,6 +39,7 @@ def command(tmp_path):
                     "interaction_score": 50,
                     "recent_score": 50,
                     "long_term_score": 50,
+                    "recent_baseline_score": 50,
                     "total_count": 0,
                     "recent_count": 0,
                     "title": "朋友",
@@ -424,10 +425,13 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
         )
         expected_recent = 7900 / 109
         expected_long_term = 900 / 11
+        expected_baseline = 3550 / 43
         expected_interaction = 82.476615361989
         expected_relation = 7 + expected_interaction
         assert before["total_count"] == 14 and before["recent_count"] == 10
         assert before["relation"] == pytest.approx(expected_relation)
+        assert before["long_term_score"] == pytest.approx(expected_long_term)
+        assert before["recent_baseline_score"] == pytest.approx(expected_baseline)
         if mode == "图片响应":
             Path(plugin.html_render.return_value).write_bytes(b"rendered image")
         _ = [chunk async for chunk in handler.get_user_profile(event, "user")]
@@ -438,7 +442,7 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
         )
         assert f"{expected_relation:.1f}" in rendered
         assert f"{expected_interaction:.1f}" in rendered
-        assert f"近期：{expected_interaction - expected_long_term:+.1f}" in rendered
+        assert f"近期：{expected_interaction - expected_baseline:+.1f}" in rendered
         assert f"{expected_recent:.1f}" not in rendered
         assert "近期分" not in rendered and "长期分" not in rendered
         assert "累计评价：14次" in rendered
@@ -460,6 +464,7 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
             "bot", "foreign-group", "user"
         )
         assert other["relation"] == pytest.approx(expected_relation)
+        assert other["recent_baseline_score"] == pytest.approx(expected_baseline)
         assert other["total_count"] == 14 and other["recent_count"] == 10
     finally:
         await plugin.db.close()

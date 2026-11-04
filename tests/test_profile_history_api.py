@@ -285,6 +285,7 @@ async def test_manual_base_updates_derived_scores_and_keeps_interaction_history(
     ][0]
     assert profile["base_relation"] == -70
     assert profile["interaction_score"] == pytest.approx(3700 / 67)
+    assert profile["recent_baseline_score"] == 50
     assert profile["relation"] == pytest.approx(-70 + 3700 / 67)
     cached = await plugin.data_cache.get_user_profile_record("bot", "group", "user")
     assert cached["relation"] == profile["relation"]
@@ -331,6 +332,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
             {"action": "add", "delta": 5, "reason": "手动记录的帮助"},
             3 + 72025 / 784,
             4,
+            1700 / 27,
         ),
         (
             {
@@ -341,10 +343,11 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
             },
             3 + 569300 / 6713,
             4,
+            1500 / 79,
         ),
     ]
     created_id = None
-    for revision, (operation, expected, count) in enumerate(operations):
+    for revision, (operation, expected, count, baseline) in enumerate(operations):
         await plugin.data_cache.get_user_profile("bot", "group", "user")
         await plugin.data_cache.get_user_profile_record("bot", "group", "user")
         await plugin.data_cache.get_user_relation("bot", "group", "user")
@@ -360,6 +363,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
         assert result["score"]["relation"] == pytest.approx(expected)
         assert result["score"]["recent_score"] == pytest.approx(4100 / 47)
         assert result["score"]["total_count"] == count
+        assert result["score"]["recent_baseline_score"] == pytest.approx(baseline)
         for cache in (
             plugin.data_cache.user_profiles,
             plugin.data_cache.user_profile_records,
@@ -393,6 +397,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     score = response.json()["data"]["score"]
     assert score["base_relation"] == 3
     assert score["interaction_score"] == 50
+    assert score["recent_baseline_score"] == 50
     assert score["relation"] == 53
     assert score["total_count"] == 0
 

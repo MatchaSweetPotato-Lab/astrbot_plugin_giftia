@@ -13,6 +13,7 @@ from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.prompt import build_decision_prompt, build_reply_prompt
 from core.memory.passive_memory import PassiveMemoryManager
+from core.utils.relation_display import build_relation_display
 from core.utils.schemas import MessageData
 
 
@@ -250,6 +251,72 @@ async def test_recent_samples_are_capped_and_identical_samples_keep_the_same_sco
     assert f"累计评价：{len(deltas)}次" in prompt
     assert "近7天" not in prompt
     assert "正向变化占比" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "older,recent,baseline,long_term",
+    [
+        ((), (), 50, 50),
+        ((), (1,) * 10, 50, 1000 / 13),
+        ((), (-5,), 50, 600 / 47),
+        ((2,), (), 725 / 11, 725 / 11),
+        ((1,) * 20 + (-1,) * 20, (1,) * 10, 50, 1000 / 13),
+        ((1,) * 10, (1,) * 10, 1000 / 13, 80),
+        ((2,) * 6, (1,) * 10, 85, 85),
+        ((1,) * 25, (-5,), 80, 600 / 29),
+    ],
+)
+async def test_recent_baseline_recalculates_history_without_selected_recent_ratings(
+    runtime, relation_clock, older, recent, baseline, long_term
+):
+    await runtime.cache.set_user_profile("bot", "group", "user", base_relation=30)
+    now = relation_clock.now.isoformat()
+    await runtime.db.conn.executemany(
+        "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+        "reason, occurred_at, created_at) VALUES ('bot', ?, 'user', ?, ?, ?, ?)",
+        [
+            (
+                group,
+                delta,
+                "实际互动",
+                (relation_clock.now - timedelta(days=age)).isoformat(),
+                now,
+            )
+            for deltas, age, group in ((older, 8, "old-group"), (recent, 0, "group"))
+            for delta in deltas
+        ],
+    )
+    await runtime.db.conn.commit()
+    score = await runtime.db.get_relation_score("bot", "another-group", "user")
+    assert score["total_count"] == len(older) + len(recent)
+    assert score["recent_count"] == len(recent)
+    assert score["recent_baseline_score"] == pytest.approx(baseline)
+    assert score["long_term_score"] == pytest.approx(long_term)
+    assert score["relation"] == 30 + score["interaction_score"]
+    if not older or not recent:
+        assert score["interaction_score"] == score["long_term_score"]
+    if len(older) == 40:
+        assert score["interaction_score"] == pytest.approx(77.337019, abs=1e-6)
+        assert build_relation_display(score)["recent_effect"] == 27.3
+    cached = await runtime.cache.get_user_profile_record("bot", "group", "user")
+    assert cached["recent_baseline_score"] == score["recent_baseline_score"]
+
+
+@pytest.mark.asyncio
+async def test_recent_baseline_does_not_refill_or_replay_remaining_recent_history(
+    runtime, relation_clock
+):
+    for delta in (1,) * 15 + (-1,) + (1,) * 10:
+        await runtime.db.apply_relation_change(
+            "bot", "group", "user", delta, "近期互动"
+        )
+    score = await runtime.db.get_relation_score("bot", "group", "user")
+    assert score["total_count"] == 26
+    assert score["recent_count"] == 10
+    assert score["recent_baseline_score"] == 80
+    assert score["long_term_score"] == score["interaction_score"] == 80
+    assert build_relation_display(score)["recent_effect"] == 0
 
 
 @pytest.mark.asyncio
@@ -574,6 +641,9 @@ async def test_recent_window_uses_occurrence_time_offsets_and_exact_seven_day_bo
     score = await runtime.db.get_relation_score("bot", "other-group", "user")
     assert score["total_count"] == 1
     assert score["recent_count"] == recent_count
+    assert score["recent_baseline_score"] == pytest.approx(
+        50 if recent_count else 3700 / 67
+    )
     assert score["long_term_score"] == pytest.approx(3700 / 67)
     assert score["recent_score"] == score["long_term_score"]
     assert score["interaction_score"] == pytest.approx(3700 / 67)
@@ -619,12 +689,14 @@ async def test_sparse_recent_window_uses_its_own_records_and_keeps_id_boundary(
     assert established["long_term_score"] == pytest.approx(8825 / 89)
     assert established["recent_score"] == established["long_term_score"]
     assert established["interaction_score"] == established["long_term_score"]
+    assert established["recent_baseline_score"] == established["long_term_score"]
     await runtime.db.apply_relation_change("bot", "group", "user", -1, "轻微分歧")
     history = await runtime.db.get_relation_changes("bot", "group", "user")
     boundary = history[-1]["id"]
     score = await runtime.db.get_relation_score("bot", "group", "user")
     assert score["total_count"] == 21
     assert score["recent_count"] == 1
+    assert score["recent_baseline_score"] == established["long_term_score"]
     assert score["long_term_score"] == pytest.approx(352300 / 3553)
     assert score["recent_score"] == pytest.approx(3000 / 67)
     assert score["long_term_score"] > 85
@@ -817,6 +889,8 @@ async def test_cached_scores_expire_without_new_interactions_and_keep_long_term_
         assert after["recent_count"] == 0
         assert after["total_count"] == 2
         assert after["recent_score"] == after["long_term_score"] == 50
+        assert after["recent_baseline_score"] == 50
+        assert build_relation_display(after)["recent_effect"] == 0
         assert after["relation"] == 57
 
 
@@ -1330,6 +1404,7 @@ def test_only_reply_speaker_profile_shows_three_escaped_change_reasons(score):
         "interaction_score": score,
         "recent_score": 70,
         "long_term_score": 72,
+        "recent_baseline_score": 70,
         "relation": score,
         "recent_count": 10,
     }
@@ -1362,7 +1437,7 @@ def test_only_reply_speaker_profile_shows_three_escaped_change_reasons(score):
     assert "+2：他主动道谢" in text
     assert "-1：双方发生分歧" in text
     assert "+1：接梗 <玩笑> & 回应" in text
-    assert f"基础分：0；互动分：{score:.1f}（近期：{score - 72:+.1f}）" in text
+    assert f"基础分：0；互动分：{score:.1f}（近期：{score - 70:+.1f}）" in text
     assert "累计评价：50次" in text
     assert "近7天" not in text
     assert "近期分：" not in text
