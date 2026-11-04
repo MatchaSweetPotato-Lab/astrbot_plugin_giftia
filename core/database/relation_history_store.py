@@ -6,6 +6,28 @@ import aiosqlite
 
 from .operations import serialized_operation
 
+RELATION_REGULAR_WEIGHT_LIMIT = 20
+RELATION_RECENT_CONFIDENCE_SCALE = 10
+
+
+def _allocate_relation_weight(regular_weight: float, major_weight: float) -> float:
+    """Cap net ordinary evidence before adding unrestricted major-event evidence.
+
+    Args:
+        regular_weight: Signed sum of squared ratings with magnitude one or two.
+        major_weight: Signed sum of squared ratings with magnitude three to five.
+
+    Returns:
+        Effective signed weight. Ordinary overflow cannot cancel major evidence.
+    """
+    return (
+        max(
+            -RELATION_REGULAR_WEIGHT_LIMIT,
+            min(RELATION_REGULAR_WEIGHT_LIMIT, regular_weight),
+        )
+        + major_weight
+    )
+
 
 class RelationHistoryConflictError(Exception):
     """The member's history changed after a manual editor loaded it."""
@@ -22,7 +44,7 @@ class RelationHistoryStoreMixin:
         connection: aiosqlite.Connection | None = None,
         through_id: int | None = None,
     ) -> dict[str, int | float]:
-        """Calculate affinity from all history and a rolling seven-day window.
+        """Calculate affinity from capped ordinary and unrestricted major weights.
 
         Args:
             bot_name: Owning bot configuration.
@@ -33,16 +55,21 @@ class RelationHistoryStoreMixin:
 
         Returns:
             Unrounded final, base, recent, long-term and interaction scores with
-            sample counts. Each rating contributes its squared magnitude to its
-            direction. Recent scores use the long-term score as their prior; an
-            empty recent window keeps the long-term score. Empty history is fifty.
+            sample counts. Net ordinary weight is capped before major evidence is
+            added. One continuous curve maps the resulting weight to affinity;
+            major weight first fills the regular range and then carries beyond it.
+            Recent scores use only seven-day evidence and fall back to the
+            long-term score when that window is empty. Recent corrections must
+            agree with the recent net direction, with confidence approaching a
+            sixty-percent share. Ten effective units give a thirty-percent
+            share. Empty history is fifty.
         """
         scope = (bot_name, user_id)
         now = datetime.now(timezone.utc)
         async with (connection or self.conn).execute(
             # Legacy message times are local and naive; explicit offsets already
             # identify instants and must not receive SQLite's local-to-UTC shift.
-            "WITH history AS (SELECT "
+            "WITH history AS (SELECT delta, "
             "MAX(delta, 0) * MAX(delta, 0) AS positive, "
             "MAX(-delta, 0) * MAX(-delta, 0) AS negative, "
             "julianday(occurred_at, CASE "
@@ -58,6 +85,14 @@ class RelationHistoryStoreMixin:
             "COALESCE(SUM(is_recent), 0) AS recent_count, "
             "COALESCE(SUM(positive * is_recent), 0) AS recent_positive, "
             "COALESCE(SUM(negative * is_recent), 0) AS recent_negative, "
+            "COALESCE(SUM(CASE WHEN delta>=3 THEN positive ELSE 0 END), 0) "
+            "AS major_positive, "
+            "COALESCE(SUM(CASE WHEN delta<=-3 THEN negative ELSE 0 END), 0) "
+            "AS major_negative, "
+            "COALESCE(SUM(CASE WHEN delta>=3 THEN positive * is_recent "
+            "ELSE 0 END), 0) AS recent_major_positive, "
+            "COALESCE(SUM(CASE WHEN delta<=-3 THEN negative * is_recent "
+            "ELSE 0 END), 0) AS recent_major_negative, "
             "COALESCE((SELECT base_relation FROM user_profiles WHERE bot_name=? "
             "AND user_id=?), 0) AS base_relation "
             "FROM history",
@@ -71,15 +106,32 @@ class RelationHistoryStoreMixin:
             ),
         ) as cursor:
             row = await cursor.fetchone()
-        # All-time evidence retains the neutral prior of five units per direction.
-        long_term_score = (
-            100 * (5 + row["positive"]) / (10 + row["positive"] + row["negative"])
+        major_weight = row["major_positive"] - row["major_negative"]
+        regular_weight = row["positive"] - row["negative"] - major_weight
+        recent_major = row["recent_major_positive"] - row["recent_major_negative"]
+        recent_regular = row["recent_positive"] - row["recent_negative"] - recent_major
+        long_term_weight = _allocate_relation_weight(regular_weight, major_weight)
+        # Each window cancels its own evidence before combining the two tiers.
+        recent_weight = _allocate_relation_weight(recent_regular, recent_major)
+        # This scale maps the ordinary limit exactly to 85 (and its inverse to 15).
+        curve_scale = 3 * RELATION_REGULAR_WEIGHT_LIMIT / 7
+        long_term_score, recent_score = (
+            50 + 50 * weight / (curve_scale + abs(weight))
+            for weight in (long_term_weight, recent_weight)
         )
-        # Ten prior weight units anchor sparse recent evidence to the relationship.
-        recent_score = (10 * long_term_score + 100 * row["recent_positive"]) / (
-            10 + row["recent_positive"] + row["recent_negative"]
+        if not row["recent_count"]:
+            recent_score = long_term_score
+        # Only amplify score differences that agree with the recent net direction.
+        recent_adjustment = recent_score - long_term_score
+        if recent_weight * recent_adjustment <= 0:
+            recent_adjustment = 0.0
+        # Capped, cancelled evidence prevents ordinary overflow buying more influence.
+        recent_share = (
+            0.6
+            * abs(recent_weight)
+            / (RELATION_RECENT_CONFIDENCE_SCALE + abs(recent_weight))
         )
-        interaction_score = 0.6 * recent_score + 0.4 * long_term_score
+        interaction_score = long_term_score + recent_share * recent_adjustment
         return {
             "base_relation": row["base_relation"],
             "interaction_score": interaction_score,

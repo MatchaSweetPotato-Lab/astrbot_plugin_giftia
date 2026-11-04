@@ -284,8 +284,8 @@ async def test_manual_base_updates_derived_scores_and_keeps_interaction_history(
         "items"
     ][0]
     assert profile["base_relation"] == -70
-    assert profile["interaction_score"] == pytest.approx(6900 / 121)
-    assert profile["relation"] == pytest.approx(-70 + 6900 / 121)
+    assert profile["interaction_score"] == pytest.approx(3700 / 67)
+    assert profile["relation"] == pytest.approx(-70 + 3700 / 67)
     cached = await plugin.data_cache.get_user_profile_record("bot", "group", "user")
     assert cached["relation"] == profile["relation"]
     assert (await plugin.data_cache.get_user_relation("bot", "group", "user"))[
@@ -327,7 +327,11 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     ).json()["data"]
     target = original["items"][1]
     operations = [
-        ({"action": "add", "delta": 5, "reason": "手动记录的帮助"}, 3 + 12300 / 133, 4),
+        (
+            {"action": "add", "delta": 5, "reason": "手动记录的帮助"},
+            3 + 2825 / 32,
+            4,
+        ),
         (
             {
                 "action": "update",
@@ -335,7 +339,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
                 "delta": -4,
                 "reason": "修正为明显冒犯",
             },
-            3 + 4100 / 53,
+            3 + 528100 / 6439,
             4,
         ),
     ]
@@ -354,6 +358,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
             created_id = result["id"]
         assert result["revision"] == revision + 1
         assert result["score"]["relation"] == pytest.approx(expected)
+        assert result["score"]["recent_score"] == pytest.approx(4100 / 47)
         assert result["score"]["total_count"] == count
         for cache in (
             plugin.data_cache.user_profiles,
@@ -376,7 +381,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
         "/profiles/user/relation_history/save",
         json={**scope, "action": "delete", "id": created_id, "revision": 2},
     )
-    assert response.json()["data"]["score"]["relation"] == pytest.approx(28)
+    assert response.json()["data"]["score"]["relation"] == pytest.approx(3 + 1500 / 79)
     revision = 3
     for item in original["items"]:
         response = await client.post(

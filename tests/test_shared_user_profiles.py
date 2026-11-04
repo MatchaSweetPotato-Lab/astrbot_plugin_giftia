@@ -123,7 +123,7 @@ async def test_legacy_migration_merges_profiles_and_preserves_every_source_recor
         assert a["base_relation"] == b["base_relation"] == max(bases)
         assert a["attitude"] is None
         assert a["total_count"] == 2
-        assert a["relation"] == pytest.approx(max(bases) + 60)
+        assert a["relation"] == pytest.approx(max(bases) + 1700 / 27)
         assert (
             await db.get_user_aliases(
                 "bot", "group-a", "user", ignore_count_filter=True
@@ -202,7 +202,7 @@ async def test_shared_cache_keeps_aliases_local_and_invalidates_scores_across_gr
     assert not await rt.cache.update_relation("bot", "group-b", "user", -1, "重试", [7])
     a = await rt.cache.get_user_profile_record("bot", "group-a", "user")
     b = await rt.cache.get_user_profile_record("bot", "group-b", "user")
-    assert a["relation"] == b["relation"] == pytest.approx(74)
+    assert a["relation"] == b["relation"] == pytest.approx(10 + 1700 / 27)
     assert a["aliases"] == "阿明" and b["aliases"] == "明仔"
     assert "aliases" not in rt.cache.user_profile_records["bot:user"]
     history = await rt.db.get_relation_changes("bot", "group-a", "user")

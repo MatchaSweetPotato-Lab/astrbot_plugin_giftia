@@ -419,9 +419,8 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
         before = await plugin.data_cache.get_user_profile_record(
             "bot", session_id, "user"
         )
-        expected_recent = 132100 / 2187
-        expected_long_term = 1600 / 27
-        expected_interaction = 0.6 * expected_recent + 0.4 * expected_long_term
+        expected_recent = expected_long_term = 900 / 11
+        expected_interaction = expected_long_term
         expected_relation = 7 + expected_interaction
         assert before["total_count"] == 14 and before["recent_count"] == 14
         assert before["relation"] == pytest.approx(expected_relation)
