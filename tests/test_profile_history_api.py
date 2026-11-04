@@ -329,7 +329,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     operations = [
         (
             {"action": "add", "delta": 5, "reason": "手动记录的帮助"},
-            3 + 2825 / 32,
+            3 + 72025 / 784,
             4,
         ),
         (
@@ -339,7 +339,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
                 "delta": -4,
                 "reason": "修正为明显冒犯",
             },
-            3 + 528100 / 6439,
+            3 + 569300 / 6713,
             4,
         ),
     ]

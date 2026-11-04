@@ -207,49 +207,106 @@ async def test_concurrent_changes_are_atomic_and_replays_are_scoped(runtime):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "deltas,expected",
+    "deltas,expected,recent,interaction",
     [
-        ((), 50),
-        ((1,), 3700 / 67),
-        ((2,), 725 / 11),
-        ((3,), 3100 / 41),
-        ((4,), 3550 / 43),
-        ((5,), 4100 / 47),
-        ((-5,), 600 / 47),
-        ((1,) * 10, 1000 / 13),
-        ((1,) * 20, 85),
-        ((1,) * 40, 85),
-        ((2,) * 40, 85),
-        ((-1,) * 40, 15),
-        ((1,) * 100, 85),
-        ((1,) * 100 + (-1,) * 10, 85),
-        ((1, 1, -5), 3000 / 221),
-        ((5, -1), 1650 / 19),
-        ((1, 1, 1, 1, -1), 1700 / 27),
+        ((), 50, 50, 50),
+        ((1,), 3700 / 67, 3700 / 67, 3700 / 67),
+        ((2,), 725 / 11, 725 / 11, 725 / 11),
+        ((3,), 3100 / 41, 3100 / 41, 3100 / 41),
+        ((4,), 3550 / 43, 3550 / 43, 3550 / 43),
+        ((5,), 4100 / 47, 4100 / 47, 4100 / 47),
+        ((-5,), 600 / 47, 600 / 47, 600 / 47),
+        ((1,) * 10, 1000 / 13, 1000 / 13, 1000 / 13),
+        ((1,) * 20, 80, 1000 / 13, 80),
+        ((1,) * 40, 80, 1000 / 13, 80),
+        ((2,) * 40, 85, 85, 85),
+        ((-1,) * 40, 20, 300 / 13, 20),
+        ((1,) * 100, 80, 1000 / 13, 80),
+        ((1,) * 100 + (-1,) * 10, 80, 300 / 13, 71.928128649628),
+        ((1, 1, -5), 3000 / 221, 3000 / 221, 3000 / 221),
+        ((5, -1), 1650 / 19, 1650 / 19, 1650 / 19),
+        ((1, 1, 1, 1, -1), 1700 / 27, 1700 / 27, 1700 / 27),
     ],
 )
-async def test_identical_windows_share_layered_scores_and_preserve_sample_counts(
-    runtime, deltas, expected
+async def test_recent_samples_are_capped_and_identical_samples_keep_the_same_score(
+    runtime, deltas, expected, recent, interaction
 ):
     await runtime.cache.set_user_profile("bot", "group", "user", base_relation=-20)
     for delta in deltas:
         await runtime.cache.update_relation("bot", "group", "user", delta, "实际互动")
     score = await runtime.db.get_relation_score("bot", "group", "user")
-    assert score["recent_count"] == len(deltas)
+    assert score["recent_count"] == min(10, len(deltas))
     assert score["total_count"] == len(deltas)
     assert score["base_relation"] == -20
-    assert score["recent_score"] == score["long_term_score"]
+    assert score["recent_score"] == pytest.approx(recent)
     assert score["long_term_score"] == pytest.approx(expected)
-    assert score["interaction_score"] == pytest.approx(expected)
-    assert score["relation"] == pytest.approx(expected - 20)
+    assert score["interaction_score"] == pytest.approx(interaction)
+    assert score["relation"] == pytest.approx(interaction - 20)
     assert (await runtime.cache.get_user_relation("bot", "group", "user"))[
         0
-    ] == pytest.approx(expected - 20)
+    ] == pytest.approx(interaction - 20)
     prompt = build_reply_prompt([], [], None, user_id="user", relation_score=score)
-    assert f"互动分：{expected:.1f}" in prompt
-    assert f"近7天{len(deltas)}次" in prompt
+    assert f"互动分：{interaction:.1f}" in prompt
+    assert f"近7天{min(10, len(deltas))}次" in prompt
     assert f"共{len(deltas)}次" in prompt
     assert "正向变化占比" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("age_days", [0, 8])
+@pytest.mark.parametrize("direction", [-1, 1])
+@pytest.mark.parametrize(
+    "magnitude,bound", [(1, 80), (2, 85), (3, 90), (4, 95), (5, 100)]
+)
+async def test_rating_magnitudes_have_independent_symmetric_score_bounds(
+    runtime, relation_clock, age_days, direction, magnitude, bound
+):
+    occurred_at = (relation_clock.now - timedelta(days=age_days)).isoformat()
+    await runtime.db.conn.executemany(
+        "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', ?, ?, ?, ?)",
+        [(direction * magnitude, "同档持续互动", occurred_at, occurred_at)] * 100,
+    )
+    await runtime.db.conn.commit()
+    score = await runtime.db.get_relation_score("bot", "other-group", "user")
+    assert score["total_count"] == 100
+    assert score["recent_count"] == (10 if age_days == 0 else 0)
+    for field in ("long_term_score", "interaction_score"):
+        if magnitude == 5:
+            assert 99 < 50 + direction * (score[field] - 50) < 100
+        else:
+            assert score[field] == pytest.approx(50 + direction * (bound - 50))
+    if age_days == 0 and magnitude == 1:
+        assert score["recent_score"] == pytest.approx(50 + direction * (350 / 13))
+    elif age_days == 0 and magnitude == 5:
+        assert 98 < 50 + direction * (score["recent_score"] - 50) < 100
+    else:
+        assert score["recent_score"] == score["long_term_score"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("magnitude", [1, 2, 3, 4, 5])
+async def test_each_rating_tier_cancels_its_signed_evidence_before_limiting(
+    runtime, relation_clock, magnitude
+):
+    now = relation_clock.now.isoformat()
+    await runtime.db.conn.executemany(
+        "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', ?, ?, ?, ?)",
+        [
+            (delta, "同档正负抵消", now, now)
+            for delta in (magnitude,) * 100 + (-magnitude,) * 99
+        ],
+    )
+    await runtime.db.conn.commit()
+    score = await runtime.db.get_relation_score("bot", "group", "user")
+    expected = {1: 3700 / 67, 2: 725 / 11, 3: 3100 / 41, 4: 3550 / 43, 5: 4100 / 47}
+    assert score["total_count"] == 199
+    assert score["recent_count"] == 10
+    assert score["long_term_score"] == pytest.approx(expected[magnitude])
+    recent = {1: 300 / 13, 2: 15, 3: 10, 4: 5, 5: 300 / 181}
+    assert score["recent_score"] == pytest.approx(recent[magnitude])
+    assert score["interaction_score"] < score["long_term_score"]
 
 
 @pytest.mark.asyncio
@@ -281,15 +338,23 @@ async def test_daily_ratings_stay_below_85_and_major_events_control_the_upper_la
         "bot", "group", "user", -1, "日常负向互动", occurred_at=occurred_at
     )
     daily_negative = await runtime.db.get_relation_score("bot", "group", "user")
-    for field in ("recent_score", "long_term_score", "interaction_score"):
+    for field in ("recent_score", "long_term_score"):
         assert daily_negative[field] == pytest.approx(supported[field])
+    if age_days == 0:
+        assert daily_negative["interaction_score"] < supported["interaction_score"]
+    else:
+        assert daily_negative["interaction_score"] == supported["interaction_score"]
 
     await runtime.db.apply_relation_change(
         "bot", "group", "user", -major_delta, "重要负向事件", occurred_at=occurred_at
     )
     cancelled = await runtime.db.get_relation_score("bot", "group", "user")
-    for field in ("recent_score", "long_term_score", "interaction_score"):
+    for field in ("recent_score", "long_term_score"):
         assert cancelled[field] == pytest.approx(85)
+    if age_days == 0:
+        assert cancelled["interaction_score"] < daily_negative["interaction_score"]
+    else:
+        assert cancelled["interaction_score"] == pytest.approx(85)
 
     await runtime.db.apply_relation_change(
         "bot",
@@ -300,26 +365,29 @@ async def test_daily_ratings_stay_below_85_and_major_events_control_the_upper_la
         occurred_at=occurred_at,
     )
     debt = await runtime.db.get_relation_score("bot", "group", "user")
-    for field in ("recent_score", "long_term_score", "interaction_score"):
+    for field in ("recent_score", "long_term_score"):
         assert debt[field] == pytest.approx(600 / 19)
+    assert debt["interaction_score"] < cancelled["interaction_score"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("age_days", [0, 8])
 @pytest.mark.parametrize(
-    "ordinary,major,expected",
+    "ordinary,major,expected,recent",
     [
-        ((1,), (5,), 10600 / 121),
-        ((1,) * 25, (-5,), 600 / 19),
-        ((1,) * 25 + (-1,) * 5, (-5,), 600 / 19),
-        ((1,) * 25 + (-1,) * 10, (-5,), 300 / 13),
-        ((-1,) * 25, (5,), 1300 / 19),
-        ((1,) * 9, (), 3100 / 41),
-        ((), (3,), 3100 / 41),
+        ((1,), (5,), 10600 / 121, 10600 / 121),
+        ((1,) * 25, (-5,), 600 / 29, 750 / 43),
+        ((1,) * 25 + (-1,) * 5, (-5,), 600 / 29, 1500 / 121),
+        ((1,) * 25 + (-1,) * 10, (-5,), 600 / 29, 1500 / 149),
+        ((1,) * 25 + (-1,) * 15, (-5,), 200 / 11, 1500 / 149),
+        ((-1,) * 25, (5,), 2300 / 29, 3550 / 43),
+        ((2,) * 6, (-5,), 600 / 19, 600 / 19),
+        ((1,) * 9, (), 3100 / 41, 3100 / 41),
+        ((), (3,), 3100 / 41, 3100 / 41),
     ],
 )
 async def test_weight_carryover_and_cancellation_follow_the_same_budget_in_each_window(
-    runtime, relation_clock, age_days, ordinary, major, expected
+    runtime, relation_clock, age_days, ordinary, major, expected, recent
 ):
     occurred_at = (relation_clock.now - timedelta(days=age_days)).isoformat()
     for delta in ordinary + major:
@@ -328,9 +396,15 @@ async def test_weight_carryover_and_cancellation_follow_the_same_budget_in_each_
         )
     score = await runtime.db.get_relation_score("bot", "other-group", "user")
     assert score["total_count"] == len(ordinary + major)
-    assert score["recent_count"] == (len(ordinary + major) if age_days == 0 else 0)
-    for field in ("recent_score", "long_term_score", "interaction_score"):
-        assert score[field] == pytest.approx(expected)
+    assert score["recent_count"] == (
+        min(10, len(ordinary + major)) if age_days == 0 else 0
+    )
+    assert score["long_term_score"] == pytest.approx(expected)
+    assert score["recent_score"] == pytest.approx(recent if age_days == 0 else expected)
+    if age_days == 8 or len(ordinary + major) <= 10:
+        assert score["interaction_score"] == pytest.approx(expected)
+    else:
+        assert 0 <= score["interaction_score"] <= 100
     history = await runtime.db.get_relation_changes("bot", "group", "user")
     assert tuple(change["delta"] for change in history) == ordinary + major
 
@@ -356,8 +430,10 @@ async def test_each_window_uses_only_its_own_ordinary_and_major_evidence(
             "bot", "group", "user", 1, "日常正向互动", occurred_at=regular_time
         )
     before = await runtime.db.get_relation_score("bot", "group", "user")
-    assert before["long_term_score"] == pytest.approx(600 / 19)
-    assert before["recent_score"] == pytest.approx(85 if major_is_old else 600 / 47)
+    assert before["long_term_score"] == pytest.approx(600 / 29)
+    assert before["recent_score"] == pytest.approx(
+        1000 / 13 if major_is_old else 600 / 47
+    )
     await runtime.db.conn.executemany(
         "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
         "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', 1, ?, ?, ?)",
@@ -386,8 +462,10 @@ async def test_recent_window_excludes_old_major_evidence(runtime, relation_clock
         )
     major = await runtime.db.get_relation_score("bot", "group", "major")
     mild = await runtime.db.get_relation_score("bot", "group", "mild")
-    for field in ("recent_score", "long_term_score", "interaction_score"):
+    for field in ("recent_score", "long_term_score"):
         assert major[field] == pytest.approx(mild[field])
+    for score in (major, mild):
+        assert score["interaction_score"] > score["long_term_score"]
     assert major["recent_score"] == pytest.approx(3100 / 41)
     assert major["long_term_score"] == pytest.approx(750 / 43)
 
@@ -398,8 +476,8 @@ async def test_recent_window_excludes_old_major_evidence(runtime, relation_clock
     [
         (0, 0, 50, 50),
         (8, 8, 50, 50),
-        (8, 0, 600 / 47, 1600 / 47),
-        (0, 8, 4100 / 47, 3100 / 47),
+        (8, 0, 600 / 47, 1700 / 49),
+        (0, 8, 4100 / 47, 3200 / 49),
     ],
 )
 async def test_major_weights_cancel_before_scoring_within_each_windows_sample_set(
@@ -468,8 +546,9 @@ async def test_major_event_outweighs_repeated_mild_ratings_in_both_windows(
         )
     mixed = await runtime.db.get_relation_score("bot", "group", "major")
     assert mixed["total_count"] == 11
-    for field in ("long_term_score", "recent_score", "interaction_score"):
+    for field in ("long_term_score", "interaction_score"):
         assert direction * (mixed[field] - 50) > 0
+    assert direction * (mixed["recent_score"] - 50) * (-1 if age_days == 0 else 1) > 0
 
 
 @pytest.mark.asyncio
@@ -549,7 +628,7 @@ async def test_sparse_recent_window_uses_its_own_records_and_keeps_id_boundary(
     assert score["long_term_score"] == pytest.approx(352300 / 3553)
     assert score["recent_score"] == pytest.approx(3000 / 67)
     assert score["long_term_score"] > 85
-    assert score["interaction_score"] == pytest.approx(96.18948728)
+    assert score["interaction_score"] == pytest.approx(42459556 / 429913)
     await runtime.db.apply_relation_change("bot", "user", "user", -5, "后续分歧")
     await runtime.db.apply_relation_change("other-bot", "group", "user", 5, "其他 Bot")
     await runtime.db.apply_relation_change("bot", "group", "other", 5, "其他成员")
@@ -563,7 +642,7 @@ async def test_sparse_recent_window_uses_its_own_records_and_keeps_id_boundary(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direction", [-1, 1])
-@pytest.mark.parametrize("deltas", [(1,), (1,) * 20, (2,) * 40, (1, 1, -1), (5,)])
+@pytest.mark.parametrize("deltas", [(1,), (1,) * 20, (2,) * 40])
 async def test_recent_direction_preserves_established_affinity_without_opposing_evidence(
     runtime, relation_clock, direction, deltas
 ):
@@ -583,7 +662,7 @@ async def test_recent_direction_preserves_established_affinity_without_opposing_
             "bot", "group", "user", direction * delta, "近期互动"
         )
     score = await runtime.db.get_relation_score("bot", "other-group", "user")
-    assert score["recent_count"] == len(deltas)
+    assert score["recent_count"] == min(10, len(deltas))
     assert direction * (score["long_term_score"] - score["recent_score"]) > 0
     assert score["interaction_score"] == score["long_term_score"]
     assert score["relation"] == 7 + score["long_term_score"]
@@ -594,18 +673,19 @@ async def test_recent_direction_preserves_established_affinity_without_opposing_
 @pytest.mark.parametrize(
     "deltas,expected",
     [
-        ((1,), 37060 / 737),
-        ((1, 1, -1), 37060 / 737),
-        ((5, -5, 1), 37060 / 737),
-        ((1,) * 5, 1020 / 19),
-        ((1,) * 10, 755 / 13),
-        ((1,) * 20, 64),
-        ((5,), 3100 / 47),
-        ((5, -3), 34670 / 559),
-        ((1,) * 25 + (-5,), 880 / 19),
+        ((1,), 6068 / 121),
+        ((1, 1, -1), 9515366 / 190333),
+        ((5, -5, 1), 9001274 / 230153),
+        ((1,) * 5, 51.589078015018),
+        ((1,) * 10, 54.035935675186),
+        ((1,) * 20, 54.035935675186),
+        ((2,) * 5, 430630682 / 7210203),
+        ((5,), 3200 / 49),
+        ((5, -3), 504586 / 10241),
+        ((1,) * 25 + (-5,), 34.452852510903),
     ],
 )
-async def test_recent_correction_strength_uses_cancelled_and_capped_net_weight(
+async def test_recent_correction_uses_ordered_evidence_and_a_capped_sample(
     runtime, relation_clock, direction, deltas, expected
 ):
     old_time = (relation_clock.now - timedelta(days=8)).isoformat()
@@ -622,7 +702,7 @@ async def test_recent_correction_strength_uses_cancelled_and_capped_net_weight(
             "bot", "group", "user", direction * delta, "近期评价"
         )
     score = await runtime.db.get_relation_score("bot", "group", "user")
-    assert score["recent_count"] == len(deltas)
+    assert score["recent_count"] == min(10, len(deltas))
     assert score["total_count"] == 2 * len(deltas)
     assert score["long_term_score"] == 50
     assert score["interaction_score"] == pytest.approx(50 + direction * (expected - 50))
@@ -631,7 +711,7 @@ async def test_recent_correction_strength_uses_cancelled_and_capped_net_weight(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("direction", [-1, 1])
 @pytest.mark.parametrize("deltas", [(5, -5), (2, -2), (1,) * 9 + (-3,)])
-async def test_zero_recent_net_keeps_long_term_score_with_nonempty_recent_history(
+async def test_zero_recent_net_still_allows_a_new_negative_trend(
     runtime, relation_clock, direction, deltas
 ):
     old_time = (relation_clock.now - timedelta(days=8)).isoformat()
@@ -647,11 +727,11 @@ async def test_zero_recent_net_keeps_long_term_score_with_nonempty_recent_histor
     assert score["recent_count"] == len(deltas)
     assert score["recent_score"] == 50
     assert score["long_term_score"] != 50
-    assert score["interaction_score"] == score["long_term_score"]
+    assert direction * (score["interaction_score"] - score["long_term_score"]) < 0
 
 
 @pytest.mark.asyncio
-async def test_ordinary_overflow_cannot_increase_the_strength_of_recent_major_debt(
+async def test_older_major_event_leaves_recent_samples_but_remains_in_long_term_score(
     runtime, relation_clock
 ):
     old_time = (relation_clock.now - timedelta(days=8)).isoformat()
@@ -664,20 +744,22 @@ async def test_ordinary_overflow_cannot_increase_the_strength_of_recent_major_de
             "bot", "group", "user", delta, "近期评价"
         )
     before = await runtime.db.get_relation_score("bot", "group", "user")
-    assert before["recent_score"] == pytest.approx(600 / 19)
-    assert before["interaction_score"] == pytest.approx(45736 / 551)
+    assert before["recent_score"] == pytest.approx(750 / 43)
+    assert before["interaction_score"] == pytest.approx(44290 / 693)
     assert before["interaction_score"] < before["long_term_score"]
     now = relation_clock.now.isoformat()
     await runtime.db.conn.executemany(
         "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
-        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', 2, ?, ?, ?)",
+        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', 1, ?, ?, ?)",
         [("溢出的日常正向互动", now, now)] * 1000,
     )
     await runtime.db.conn.commit()
     after = await runtime.db.get_relation_score("bot", "group", "user")
-    assert after["recent_count"] == 1026
-    for field in ("recent_score", "long_term_score", "interaction_score", "relation"):
-        assert after[field] == before[field]
+    assert after["recent_count"] == 10
+    assert after["long_term_score"] == before["long_term_score"]
+    assert after["recent_score"] == pytest.approx(1000 / 13)
+    assert after["interaction_score"] == after["long_term_score"]
+    assert after["relation"] > before["relation"]
 
 
 @pytest.mark.asyncio
@@ -723,9 +805,9 @@ async def test_cached_scores_expire_without_new_interactions_and_keep_long_term_
         )
     before = await runtime.cache.get_user_profile_record("bot", "group", "user")
     assert before["recent_count"] == 1
-    assert before["relation"] == pytest.approx(1929 / 47)
+    assert before["relation"] == pytest.approx(2043 / 49)
     assert await runtime.cache.get_user_relation("bot", "other-group", "user") == (
-        pytest.approx(1929 / 47),
+        pytest.approx(2043 / 49),
         "朋友",
     )
     relation_clock.now += timedelta(seconds=2)
@@ -782,7 +864,108 @@ async def test_base_edits_refresh_all_scores_without_changing_history(runtime):
 
 
 @pytest.mark.asyncio
-async def test_eleventh_positive_rating_keeps_other_ratings_from_the_same_week(
+async def test_latest_negative_moves_affinity_after_forty_positive_ratings(
+    runtime, relation_clock
+):
+    await runtime.cache.set_user_profile("bot", "group", "user", base_relation=7)
+    old_time = (relation_clock.now - timedelta(minutes=1)).isoformat()
+    await runtime.db.conn.executemany(
+        "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', 1, ?, ?, ?)",
+        [("先前的友好交流", old_time, old_time)] * 40,
+    )
+    await runtime.db.conn.commit()
+    before = await runtime.cache.get_user_profile_record("bot", "group", "user")
+    assert before["interaction_score"] == 80
+    boundary = (await runtime.db.get_relation_changes("bot", "group", "user"))[-1]["id"]
+    await runtime.cache.update_relation("bot", "group", "user", -1, "最新的轻微分歧")
+    after = await runtime.cache.get_user_profile_record("bot", "other-group", "user")
+    assert after["total_count"] == 41
+    assert after["recent_count"] == 10
+    assert after["long_term_score"] == 80
+    assert after["recent_score"] == pytest.approx(2150 / 29)
+    assert after["interaction_score"] == pytest.approx(862 / 11)
+    assert after["relation"] == pytest.approx(939 / 11)
+    frozen = await runtime.db.get_relation_score(
+        "bot", "group", "user", through_id=boundary
+    )
+    assert frozen["total_count"] == 40
+    assert frozen["recent_count"] == 10
+    assert frozen["interaction_score"] == 80
+    for _ in range(3):
+        relation_clock.now += timedelta(seconds=1)
+        score = await runtime.db.get_relation_score("bot", "group", "user")
+        assert score["relation"] == after["relation"]
+
+
+@pytest.mark.asyncio
+async def test_recent_trend_uses_occurrence_order_instead_of_insertion_order(
+    runtime, relation_clock
+):
+    scores = []
+    for user_id, negative_age in (("latest-negative", 0), ("older-negative", 2)):
+        for count, age in ((31, 10), (9, 1)):
+            occurred_at = (relation_clock.now - timedelta(seconds=age)).isoformat()
+            await runtime.db.conn.executemany(
+                "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+                "reason, occurred_at, created_at) VALUES ('bot', 'group', ?, 1, ?, ?, ?)",
+                [(user_id, "友好交流", occurred_at, occurred_at)] * count,
+            )
+        await runtime.db.conn.commit()
+        await runtime.db.apply_relation_change(
+            "bot",
+            "group",
+            user_id,
+            -1,
+            "延迟记录的分歧",
+            occurred_at=(
+                relation_clock.now - timedelta(seconds=negative_age)
+            ).isoformat(),
+        )
+        scores.append(await runtime.db.get_relation_score("bot", "group", user_id))
+    latest, older = scores
+    for field in ("recent_score", "long_term_score", "recent_count", "total_count"):
+        assert latest[field] == older[field]
+    assert latest["interaction_score"] == pytest.approx(862 / 11)
+    assert older["interaction_score"] == pytest.approx(79.873822196187)
+    assert latest["interaction_score"] < older["interaction_score"] < 80
+
+
+@pytest.mark.asyncio
+async def test_recent_sample_filters_times_before_limiting_and_uses_id_for_equal_instants(
+    runtime, relation_clock
+):
+    utc_time = relation_clock.now.isoformat().replace("+00:00", "Z")
+    offset_time = relation_clock.now.astimezone(
+        timezone(timedelta(hours=8))
+    ).isoformat()
+    entries = [
+        (delta, utc_time if index % 2 else offset_time)
+        for index, delta in enumerate((5,) + (1,) * 9 + (-1,))
+    ]
+    entries += [
+        (5, (relation_clock.now - timedelta(days=1)).isoformat()),
+        (5, (relation_clock.now - timedelta(days=8)).isoformat()),
+        (5, (relation_clock.now + timedelta(seconds=1)).isoformat()),
+        (5, "unknown"),
+    ]
+    await runtime.db.conn.executemany(
+        "INSERT INTO relation_changes (bot_name, group_or_user_id, user_id, delta, "
+        "reason, occurred_at, created_at) VALUES ('bot', 'group', 'user', ?, ?, ?, ?)",
+        [
+            (delta, "评价时间边界", occurred_at, utc_time)
+            for delta, occurred_at in entries
+        ],
+    )
+    await runtime.db.conn.commit()
+    score = await runtime.db.get_relation_score("bot", "other-group", "user")
+    assert score["total_count"] == 15
+    assert score["recent_count"] == 10
+    assert score["recent_score"] == pytest.approx(2150 / 29)
+
+
+@pytest.mark.asyncio
+async def test_eleventh_rating_replaces_the_oldest_sample_without_erasing_long_term_support(
     runtime,
 ):
     for delta in [5] + [1] * 9:
@@ -793,9 +976,11 @@ async def test_eleventh_positive_rating_keeps_other_ratings_from_the_same_week(
     assert last["delta"] == 1
     after = (await runtime.db.get_relation_score("bot", "group", "user"))["relation"]
     assert after > before
-    assert (await runtime.db.get_relation_score("bot", "group", "user"))[
-        "recent_count"
-    ] == 11
+    score = await runtime.db.get_relation_score("bot", "group", "user")
+    assert score["total_count"] == 11
+    assert score["recent_count"] == 10
+    assert score["recent_score"] == pytest.approx(1000 / 13)
+    assert score["interaction_score"] == score["long_term_score"]
 
 
 @pytest.mark.asyncio

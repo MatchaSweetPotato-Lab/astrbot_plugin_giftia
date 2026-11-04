@@ -6,27 +6,104 @@ import aiosqlite
 
 from .operations import serialized_operation
 
-RELATION_REGULAR_WEIGHT_LIMIT = 20
+RELATION_CURVE_SCALE = 60 / 7
+RELATION_TIER_SCORE_LIMITS = (80, 85, 90, 95, 100)
+RELATION_TIER_WEIGHT_LIMITS = tuple(
+    RELATION_CURVE_SCALE * (score - 50) / (100 - score) if score < 100 else float("inf")
+    for score in RELATION_TIER_SCORE_LIMITS
+)
 RELATION_RECENT_CONFIDENCE_SCALE = 10
+RELATION_RECENT_SAMPLE_LIMIT = 10
 
 
-def _allocate_relation_weight(regular_weight: float, major_weight: float) -> float:
-    """Cap net ordinary evidence before adding unrestricted major-event evidence.
+def _allocate_relation_weight(rating_weights: tuple[float, ...]) -> float:
+    """Limit accumulated evidence before adding each stronger rating tier.
 
     Args:
-        regular_weight: Signed sum of squared ratings with magnitude one or two.
-        major_weight: Signed sum of squared ratings with magnitude three to five.
+        rating_weights: Signed net squared weights for magnitudes one through five.
 
     Returns:
-        Effective signed weight. Ordinary overflow cannot cancel major evidence.
+        Effective signed weight after applying each tier's symmetric score limits.
+        Lower-tier overflow cannot cancel stronger evidence.
+
+    Raises:
+        ValueError: The number of tier weights is not five.
     """
-    return (
-        max(
-            -RELATION_REGULAR_WEIGHT_LIMIT,
-            min(RELATION_REGULAR_WEIGHT_LIMIT, regular_weight),
+    weight = 0.0
+    for tier_weight, limit in zip(
+        rating_weights, RELATION_TIER_WEIGHT_LIMITS, strict=True
+    ):
+        weight = max(-limit, min(limit, weight + tier_weight))
+    return weight
+
+
+def _smooth_recent_relation_score(
+    long_term_score: float, deltas: tuple[int, ...]
+) -> float:
+    """Replay bounded recent evidence without making positive ratings lower affinity.
+
+    Args:
+        long_term_score: Relationship established by all recorded evaluations.
+        deltas: Selected recent ratings in occurrence order, oldest first.
+
+    Returns:
+        Interaction score anchored to the long-term score. Each rating responds
+        at strength / (10 + strength) toward its confidence-weighted target,
+        so later ratings retain more influence.
+        Positive and negative evidence have separate progressive tier budgets,
+        assigned to stronger magnitudes and then newer records first. Overflow
+        cannot buy influence or repair stronger evidence. Total effective
+        strength sets the target share, 0.6 * strength / (10 + strength). Prefix
+        direction guards prevent budget redistribution reversing a new rating.
+    """
+    interaction = long_term_score
+    # At most ten prefixes are replayed; every read remains deterministic.
+    for end, last_delta in enumerate(deltas, start=1):
+        prefix = deltas[:end]
+        directional_weights = [[0.0] * 5 for _ in range(2)]
+        for delta in prefix:
+            direction = 0 if delta > 0 else 1
+            directional_weights[direction][abs(delta) - 1] += delta * delta
+        # Stronger evidence keeps its budget; lower tiers use remaining capacity.
+        for weights in directional_weights:
+            remaining = float("inf")
+            for tier in range(4, -1, -1):
+                remaining = min(remaining, RELATION_TIER_WEIGHT_LIMITS[tier])
+                weights[tier] = min(weights[tier], remaining)
+                remaining -= weights[tier]
+        steps = []
+        for delta in reversed(prefix):
+            direction = 0 if delta > 0 else 1
+            tier = abs(delta) - 1
+            strength = min(delta * delta, directional_weights[direction][tier])
+            directional_weights[direction][tier] -= strength
+            steps.append((delta, tier, strength))
+        smoothed = long_term_score
+        evidence = 0.0
+        for delta, tier, strength in reversed(steps):
+            if strength <= 0:
+                continue
+            evidence += strength
+            recent_share = (
+                0.6 * evidence / (RELATION_RECENT_CONFIDENCE_SCALE + evidence)
+            )
+            limit = RELATION_TIER_SCORE_LIMITS[tier]
+            # Low ratings can repair established affinity without creating
+            # positive inventory that shields the next negative interaction.
+            bound = (
+                max(long_term_score, limit)
+                if delta > 0
+                else min(long_term_score, 100 - limit)
+            )
+            target = long_term_score + recent_share * (bound - long_term_score)
+            target = max(smoothed, target) if delta > 0 else min(smoothed, target)
+            response = strength / (RELATION_RECENT_CONFIDENCE_SCALE + strength)
+            smoothed += response * (target - smoothed)
+        # Reassigning older budgets must not reverse the newest rating's effect.
+        interaction = (
+            max(interaction, smoothed) if last_delta > 0 else min(interaction, smoothed)
         )
-        + major_weight
-    )
+    return interaction
 
 
 class RelationHistoryConflictError(Exception):
@@ -44,7 +121,7 @@ class RelationHistoryStoreMixin:
         connection: aiosqlite.Connection | None = None,
         through_id: int | None = None,
     ) -> dict[str, int | float]:
-        """Calculate affinity from capped ordinary and unrestricted major weights.
+        """Calculate affinity from five progressively limited rating tiers.
 
         Args:
             bot_name: Owning bot configuration.
@@ -55,83 +132,85 @@ class RelationHistoryStoreMixin:
 
         Returns:
             Unrounded final, base, recent, long-term and interaction scores with
-            sample counts. Net ordinary weight is capped before major evidence is
-            added. One continuous curve maps the resulting weight to affinity;
-            major weight first fills the regular range and then carries beyond it.
-            Recent scores use only seven-day evidence and fall back to the
-            long-term score when that window is empty. Recent corrections must
-            agree with the recent net direction, with confidence approaching a
-            sixty-percent share. Ten effective units give a thirty-percent
-            share. Empty history is fifty.
+            sample counts. Each magnitude cancels its own signed squared weights.
+            Accumulated weights are limited to the 80, 85, 90 and 95 score bounds
+            before adding the next tier. Magnitude five can approach 100 or zero.
+            Stronger weights fill lower ranges before carrying into higher ones.
+            Recent scores use at most ten ratings from the past seven days,
+            ordered by occurrence time and ID, and fall back to the long-term
+            score when empty. If recent samples cover all history, the interaction
+            score equals the long-term score; otherwise recent corrections replay
+            the selected ratings in order. Positive ratings never lower the
+            replayed score, and negative ratings never raise it. Effective recent
+            strength sets the share, approaching sixty percent. Empty history is
+            fifty.
         """
         scope = (bot_name, user_id)
         now = datetime.now(timezone.utc)
+        tier_stats = ", ".join(
+            f"COALESCE(SUM(CASE WHEN magnitude={magnitude} THEN weight ELSE 0 END), 0) "
+            f"AS weight_{magnitude}, "
+            f"COALESCE(SUM(CASE WHEN magnitude={magnitude} THEN weight * is_recent "
+            f"ELSE 0 END), 0) AS recent_weight_{magnitude}"
+            for magnitude in range(1, 6)
+        )
         async with (connection or self.conn).execute(
             # Legacy message times are local and naive; explicit offsets already
             # identify instants and must not receive SQLite's local-to-UTC shift.
-            "WITH history AS (SELECT delta, "
-            "MAX(delta, 0) * MAX(delta, 0) AS positive, "
-            "MAX(-delta, 0) * MAX(-delta, 0) AS negative, "
+            "WITH history AS (SELECT id, delta, ABS(delta) AS magnitude, "
+            "delta * ABS(delta) AS weight, "
             "julianday(occurred_at, CASE "
             "WHEN substr(occurred_at, -1)='Z' "
             "OR substr(occurred_at, -6, 1) IN ('+', '-') "
-            "THEN '+0 seconds' ELSE 'utc' END) "
-            "BETWEEN julianday(?) AND julianday(?) AS is_recent "
+            "THEN '+0 seconds' ELSE 'utc' END) AS occurred_time "
             "FROM relation_changes WHERE bot_name=? AND user_id=? "
-            "AND (? IS NULL OR id<=?)) "
+            "AND (? IS NULL OR id<=?)), recent AS ("
+            "SELECT id, delta, occurred_time FROM history "
+            "WHERE occurred_time BETWEEN julianday(?) AND julianday(?) "
+            "ORDER BY occurred_time DESC, id DESC LIMIT ?), scored AS ("
+            "SELECT history.*, recent.id IS NOT NULL AS is_recent "
+            "FROM history LEFT JOIN recent ON recent.id=history.id) "
             "SELECT COUNT(*) AS total_count, "
-            "COALESCE(SUM(positive), 0) AS positive, "
-            "COALESCE(SUM(negative), 0) AS negative, "
             "COALESCE(SUM(is_recent), 0) AS recent_count, "
-            "COALESCE(SUM(positive * is_recent), 0) AS recent_positive, "
-            "COALESCE(SUM(negative * is_recent), 0) AS recent_negative, "
-            "COALESCE(SUM(CASE WHEN delta>=3 THEN positive ELSE 0 END), 0) "
-            "AS major_positive, "
-            "COALESCE(SUM(CASE WHEN delta<=-3 THEN negative ELSE 0 END), 0) "
-            "AS major_negative, "
-            "COALESCE(SUM(CASE WHEN delta>=3 THEN positive * is_recent "
-            "ELSE 0 END), 0) AS recent_major_positive, "
-            "COALESCE(SUM(CASE WHEN delta<=-3 THEN negative * is_recent "
-            "ELSE 0 END), 0) AS recent_major_negative, "
+            f"{tier_stats}, "
+            "(SELECT GROUP_CONCAT(delta) FROM (SELECT delta FROM recent "
+            "ORDER BY occurred_time, id)) AS recent_deltas, "
             "COALESCE((SELECT base_relation FROM user_profiles WHERE bot_name=? "
             "AND user_id=?), 0) AS base_relation "
-            "FROM history",
+            "FROM scored",
             (
-                (now - timedelta(days=7)).isoformat(),
-                now.isoformat(),
                 *scope,
                 through_id,
                 through_id,
+                (now - timedelta(days=7)).isoformat(),
+                now.isoformat(),
+                RELATION_RECENT_SAMPLE_LIMIT,
                 *scope,
             ),
         ) as cursor:
             row = await cursor.fetchone()
-        major_weight = row["major_positive"] - row["major_negative"]
-        regular_weight = row["positive"] - row["negative"] - major_weight
-        recent_major = row["recent_major_positive"] - row["recent_major_negative"]
-        recent_regular = row["recent_positive"] - row["recent_negative"] - recent_major
-        long_term_weight = _allocate_relation_weight(regular_weight, major_weight)
-        # Each window cancels its own evidence before combining the two tiers.
-        recent_weight = _allocate_relation_weight(recent_regular, recent_major)
-        # This scale maps the ordinary limit exactly to 85 (and its inverse to 15).
-        curve_scale = 3 * RELATION_REGULAR_WEIGHT_LIMIT / 7
+        # Each window cancels and limits its own tiers before combining scores.
+        long_term_weight = _allocate_relation_weight(
+            tuple(row[f"weight_{magnitude}"] for magnitude in range(1, 6))
+        )
+        recent_weight = _allocate_relation_weight(
+            tuple(row[f"recent_weight_{magnitude}"] for magnitude in range(1, 6))
+        )
         long_term_score, recent_score = (
-            50 + 50 * weight / (curve_scale + abs(weight))
+            50 + 50 * weight / (RELATION_CURVE_SCALE + abs(weight))
             for weight in (long_term_weight, recent_weight)
         )
         if not row["recent_count"]:
             recent_score = long_term_score
-        # Only amplify score differences that agree with the recent net direction.
-        recent_adjustment = recent_score - long_term_score
-        if recent_weight * recent_adjustment <= 0:
-            recent_adjustment = 0.0
-        # Capped, cancelled evidence prevents ordinary overflow buying more influence.
-        recent_share = (
-            0.6
-            * abs(recent_weight)
-            / (RELATION_RECENT_CONFIDENCE_SCALE + abs(recent_weight))
+        recent_deltas = tuple(
+            int(value) for value in (row["recent_deltas"] or "").split(",") if value
         )
-        interaction_score = long_term_score + recent_share * recent_adjustment
+        # Identical samples have no separate recent evidence to amplify.
+        interaction_score = (
+            long_term_score
+            if row["total_count"] == row["recent_count"]
+            else _smooth_recent_relation_score(long_term_score, recent_deltas)
+        )
         return {
             "base_relation": row["base_relation"],
             "interaction_score": interaction_score,
