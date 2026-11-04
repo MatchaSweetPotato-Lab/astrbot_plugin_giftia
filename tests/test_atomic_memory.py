@@ -358,6 +358,80 @@ async def test_bot_answer_can_establish_interaction_evidence(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "participation",
+    ["absent", "present", "unobserved", "recalled", "operation_log", "other_bot"],
+)
+async def test_observed_batch_requires_own_participation_for_affinity(
+    runtime, participation
+):
+    source = await message(runtime, "今天完成了一幅画")
+    end_id = source.db_id
+    if participation != "absent":
+        own = await message(
+            runtime,
+            "画得真好",
+            user_id="other-bot" if participation == "other_bot" else "self",
+            role="operation_log" if participation == "operation_log" else "message",
+            observed=participation != "unobserved",
+        )
+        end_id = own.db_id
+        if participation == "recalled":
+            await runtime.db.conn.execute(
+                "UPDATE chat_history SET is_recalled=1 WHERE id=?", (own.db_id,)
+            )
+            await runtime.db.conn.commit()
+    runtime.manager._call_summary_llm = AsyncMock(
+        side_effect=[
+            json.dumps({"memories": [atom(source, memory_type="event")]}),
+            '<summary_user_profile user_id="user"><update_relation delta="+2">'
+            "他向我分享了刚完成的画</update_relation></summary_user_profile>",
+        ]
+    )
+
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", source.db_id, end_id
+    )
+
+    saved = await rows(runtime)
+    assert len(saved) == 1
+    assert saved[0]["text"] == source.content
+    assert json.loads(saved[0]["metadata"])["evidence"][0]["source_id"] == source.db_id
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    tasks = [call.args[0] for call in runtime.manager._call_summary_llm.await_args_list]
+    changes = await runtime.db.get_relation_changes("bot", "group", "user")
+    if participation == "present":
+        assert tasks == ["原子记忆归纳", "好感度维护"]
+        assert len(changes) == 1
+        assert changes[0]["delta"] == 2
+    else:
+        assert tasks == ["原子记忆归纳"]
+        assert changes == []
+
+
+@pytest.mark.asyncio
+async def test_own_message_outside_selected_batch_cannot_enable_affinity(
+    runtime, monkeypatch
+):
+    source = await message(runtime, "今天完成了一幅画")
+    own = await message(runtime, "画得真好", user_id="self")
+    monkeypatch.setattr("core.memory.passive_tasks.MEMORY_SUMMARY_BATCH_SIZE", 1)
+
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", source.db_id, own.db_id
+    )
+
+    assert [
+        call.args[0] for call in runtime.manager._call_summary_llm.await_args_list
+    ] == ["原子记忆归纳"]
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (own.db_id, own.db_id, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "call_name,nickname,display_name",
     [
         ("小明", "平台昵称A", "小明"),
@@ -900,6 +974,7 @@ async def test_periodic_tick_closes_window_before_failed_summary_without_status_
 @pytest.mark.asyncio
 async def test_context_failure_keeps_pending_sources_for_periodic_retry(runtime, monkeypatch):
     source = await message(runtime, "以后用中文和我交流")
+    own = await message(runtime, "好的，以后用中文交流", user_id="self")
     await runtime.db.upsert_user_profile(
         "bot", "group", "user", base_relation=12, profile_fields={"attitude": "友好"}
     )
@@ -910,13 +985,13 @@ async def test_context_failure_keeps_pending_sources_for_periodic_retry(runtime,
             Mock(side_effect=TypeError("sequence item 0: expected str instance, list found")),
         )
         assert not await runtime.manager._run_background_summarize(
-            "bot", "group", "self", source.db_id, source.db_id
+            "bot", "group", "self", source.db_id, own.db_id
         )
     runtime.manager._call_summary_llm.assert_not_awaited()
     assert await rows(runtime) == []
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
-    ) == (source.db_id, source.db_id, 1)
+    ) == (source.db_id, own.db_id, 2)
     assert await runtime.db.get_kv_data(
         "passive_memory:last_summarized_id:bot:group", 0
     ) == 0
@@ -935,7 +1010,7 @@ async def test_context_failure_keeps_pending_sources_for_periodic_retry(runtime,
     ) == (0, 0, 0)
     assert await runtime.db.get_kv_data(
         "passive_memory:last_summarized_id:bot:group"
-    ) == source.db_id
+    ) == own.db_id
     profile_prompt = runtime.manager._call_summary_llm.await_args_list[1].args[2]
     assert "好感度:" not in profile_prompt
     assert "互动态度" not in profile_prompt
@@ -1715,7 +1790,7 @@ async def test_repeated_identity_is_not_saved_again_but_sources_are_completed(
     assert "只是在复述已知身份" in call.args[1]
     assert original["indexed_revision"] == 0
     runtime.plugin.ltm.search_memory.assert_not_awaited()
-    runtime.manager._run_profile_summary_task.assert_awaited_once()
+    runtime.manager._run_profile_summary_task.assert_not_awaited()
     runtime.manager._run_attitude_summary_task.assert_awaited_once()
 
 
@@ -2486,6 +2561,7 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
     runtime, monkeypatch
 ):
     msg = await message(runtime, "以后叫我小明")
+    own = await message(runtime, "好的，小明", user_id="self")
     runtime.manager._call_summary_llm = AsyncMock(
         return_value=json.dumps({"memories": [atom(msg)]})
     )
@@ -2500,12 +2576,12 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
 
     monkeypatch.setattr(runtime.db, "upsert_kv_data", fail_counter_reset)
     assert await runtime.manager._run_background_summarize(
-        "bot", "group", "self", msg.db_id, msg.db_id
+        "bot", "group", "self", msg.db_id, own.db_id
     )
     assert len(await rows(runtime)) == 1
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
-        == msg.db_id
+        == own.db_id
     )
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"

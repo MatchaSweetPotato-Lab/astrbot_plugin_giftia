@@ -480,15 +480,22 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     key,
                 )
             if context:
-                try:
-                    await self._run_profile_summary_task(
-                        bot_name, group_or_user_id, nickname, self_id, context
-                    )
-                except Exception:
-                    logger.exception(
-                        "[Giftia Memory] Lightweight relationship update failed for %s",
-                        key,
-                    )
+                # Observation alone does not establish the bot's participation.
+                if self_id and any(
+                    str(msg.user_id) == str(self_id)
+                    and not msg.is_recalled
+                    and msg.role == "message"
+                    for msg in selected
+                ):
+                    try:
+                        await self._run_profile_summary_task(
+                            bot_name, group_or_user_id, nickname, self_id, context
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[Giftia Memory] Lightweight relationship update failed for %s",
+                            key,
+                        )
                 try:
                     await self._run_attitude_summary_task(
                         bot_name, group_or_user_id, nickname, self_id, context

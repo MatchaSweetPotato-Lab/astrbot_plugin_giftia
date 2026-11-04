@@ -1400,7 +1400,16 @@ async def test_background_stages_persist_reason_and_keep_review_failure_retryabl
         time="2026-10-18T12:00:00+08:00",
     )
     await runtime.db.insert_message("bot", source)
-    await runtime.manager.observe_messages("bot", "group", "self", [source])
+    own = MessageData(
+        user_id="self",
+        nickname="Giftia",
+        group_or_user_id="group",
+        message_id="own-reply",
+        content="收到，谢谢你完成约定",
+        time="2026-10-18T12:01:00+08:00",
+    )
+    await runtime.db.insert_message("bot", own)
+    await runtime.manager.observe_messages("bot", "group", "self", [source, own])
     first_id, last_id, _ = await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     )
