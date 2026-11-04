@@ -38,7 +38,7 @@ footer { margin-top: 28px; }
     <div class="metric">
       <span>好感度</span><strong>{{ '%.1f' | format(relation) }}</strong>
       <span>基础 {{ base_relation }} + 互动 {{ '%.1f' | format(interaction_score) }}</span>
-      <span>近期 {{ '%.1f' | format(recent_score) }} · 长期 {{ '%.1f' | format(long_term_score) }} · 共 {{ total_count }} 次评价</span>
+      <span>近期 {{ '%.1f' | format(recent_score) }}（近7天 {{ recent_count }} 次） · 长期 {{ '%.1f' | format(long_term_score) }} · 共 {{ total_count }} 次评价</span>
     </div>
   </section>
   {% endif %}

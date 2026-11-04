@@ -106,7 +106,7 @@ class ReportService:
                             "recent_score": 60,
                             "long_term_score": 67.5,
                             "total_count": 35,
-                            "recent_count": 10,
+                            "recent_count": 14,
                         },
                         recent_relation_changes=[
                             {
@@ -145,10 +145,10 @@ class ReportService:
                     "relation": "最终好感度=基础分+互动分，显示一位小数；0 是有效分值",
                     "base_relation": "管理员设置的基础分，默认0，可为负数",
                     "interaction_score": "互动分，初始50、范围0～100；近期分×60%+长期分×40%",
-                    "recent_score": "最近最多10次互动评价按幅度加权并平滑后的分值",
-                    "long_term_score": "全部已记录互动评价按幅度加权并平滑后的分值",
+                    "recent_score": "近7天全部有效互动评价按幅度平方加权、以长期分平滑后的分值；无近期评价时等于长期分",
+                    "long_term_score": "全部已记录互动评价按幅度平方加权并平滑后的分值",
                     "total_count": "全部互动评价条数",
-                    "recent_count": "近期样本数，最多10条",
+                    "recent_count": "滚动近7天的有效互动评价条数，无条数上限",
                     "profile_fields": "非空画像字段字典（中文标签 → 展示文本）；空字段不包含在内",
                     "recent_relation_changes": "当前会话最近最多三次互动评价，最新在前；包含delta（评价强度）、reason、time、occurred_at和created_at；无历史时为空数组，不包含其他会话记录",
                     "report_type": "报告类型标识",

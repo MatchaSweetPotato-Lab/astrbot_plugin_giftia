@@ -246,9 +246,13 @@ async def test_profile_summary_receives_current_affinity_and_preserves_event_del
     assert "Retired title" not in user_prompt
     assert "Retired personality" not in user_prompt
     relation, _ = await runtime.db.get_relation("bot", "group", "A")
-    assert relation == pytest.approx(
-        (current_score or 0) + 100 * (5 + max(delta, 0)) / (10 + abs(delta))
-    )
+    expected_interaction = {
+        1: 6900 / 121,
+        4: 14850 / 169,
+        -4: 2050 / 169,
+        2: 3450 / 49,
+    }[delta]
+    assert relation == pytest.approx((current_score or 0) + expected_interaction)
 
 
 @pytest.mark.asyncio

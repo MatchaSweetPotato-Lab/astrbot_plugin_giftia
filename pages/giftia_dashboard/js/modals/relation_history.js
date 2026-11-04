@@ -18,7 +18,7 @@ function renderHistoryScore(item) {
         <dl class="relation-score-windows">
             <div>
                 <dt>近期分</dt>
-                <dd>${Number(item.recent_score ?? 50).toFixed(1)}<span>最近 ${Number(item.recent_count ?? 0)} 次评价</span></dd>
+                <dd>${Number(item.recent_score ?? 50).toFixed(1)}<span>近 7 天 ${Number(item.recent_count ?? 0)} 次评价</span></dd>
             </div>
             <div>
                 <dt>长期分</dt>

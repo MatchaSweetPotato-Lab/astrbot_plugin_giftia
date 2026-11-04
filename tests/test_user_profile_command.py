@@ -419,11 +419,11 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
         before = await plugin.data_cache.get_user_profile_record(
             "bot", session_id, "user"
         )
-        expected_recent = 100 * (5 + 9) / (10 + 9 + 14)
-        expected_long_term = 100 * (5 + 17) / (10 + 17 + 14)
+        expected_recent = 132100 / 2187
+        expected_long_term = 1600 / 27
         expected_interaction = 0.6 * expected_recent + 0.4 * expected_long_term
         expected_relation = 7 + expected_interaction
-        assert before["total_count"] == 14 and before["recent_count"] == 10
+        assert before["total_count"] == 14 and before["recent_count"] == 14
         assert before["relation"] == pytest.approx(expected_relation)
         if mode == "图片响应":
             Path(plugin.html_render.return_value).write_bytes(b"rendered image")
@@ -455,7 +455,7 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
             "bot", "foreign-group", "user"
         )
         assert other["relation"] == pytest.approx(expected_relation)
-        assert other["total_count"] == 14 and other["recent_count"] == 10
+        assert other["total_count"] == 14 and other["recent_count"] == 14
     finally:
         await plugin.db.close()
 

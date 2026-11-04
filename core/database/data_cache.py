@@ -644,7 +644,16 @@ class DataCache:
     async def get_user_profile_record(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict | None:
-        """获取用户画像完整记录"""
+        """Read a cached profile with affinity refreshed for the rolling window.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Conversation used to resolve names and aliases.
+            user_id: Member whose profile is requested.
+
+        Returns:
+            Current profile and scores, or None when no profile exists.
+        """
         fmt_key = f"{bot_name}:{user_id}"
         record = self.user_profile_records.get(fmt_key)
         if record is None:
@@ -661,6 +670,10 @@ class DataCache:
                 if key not in ("aliases", "call_name", "local_call_name")
             }
             self.user_profile_records[fmt_key] = record
+        else:
+            record.update(
+                await self.db.get_relation_score(bot_name, group_or_user_id, user_id)
+            )
         return {
             **record,
             **await self.db.get_user_call_names(bot_name, group_or_user_id, user_id),
@@ -825,12 +838,17 @@ class DataCache:
     async def get_user_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> tuple[float, str]:
-        """获取用户关系"""
+        """Read affinity without caching time-dependent scores indefinitely.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_or_user_id: Current conversation.
+            user_id: Member whose affinity is requested.
+
+        Returns:
+            Current affinity and the stored relationship title.
+        """
         fmt_key = f"{bot_name}:{user_id}"
-        relation = self.relations.get(fmt_key)
-        if relation:
-            return relation
-        # 从数据库中获取
         relation_data = await self.db.get_relation(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,

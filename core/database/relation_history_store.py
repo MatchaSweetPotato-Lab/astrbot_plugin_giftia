@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -22,7 +22,7 @@ class RelationHistoryStoreMixin:
         connection: aiosqlite.Connection | None = None,
         through_id: int | None = None,
     ) -> dict[str, int | float]:
-        """Calculate affinity from the manual base and weighted interaction history.
+        """Calculate affinity from all history and a rolling seven-day window.
 
         Args:
             bot_name: Owning bot configuration.
@@ -33,34 +33,51 @@ class RelationHistoryStoreMixin:
 
         Returns:
             Unrounded final, base, recent, long-term and interaction scores with
-            sample counts. An empty history has an interaction score of fifty.
+            sample counts. Each rating contributes its squared magnitude to its
+            direction. Recent scores use the long-term score as their prior; an
+            empty recent window keeps the long-term score. Empty history is fifty.
         """
         scope = (bot_name, user_id)
+        now = datetime.now(timezone.utc)
         async with (connection or self.conn).execute(
-            "WITH recent AS (SELECT delta FROM relation_changes WHERE bot_name=? "
-            "AND user_id=? AND (? IS NULL OR id<=?) "
-            "ORDER BY id DESC LIMIT 10) "
+            # Legacy message times are local and naive; explicit offsets already
+            # identify instants and must not receive SQLite's local-to-UTC shift.
+            "WITH history AS (SELECT "
+            "MAX(delta, 0) * MAX(delta, 0) AS positive, "
+            "MAX(-delta, 0) * MAX(-delta, 0) AS negative, "
+            "julianday(occurred_at, CASE "
+            "WHEN substr(occurred_at, -1)='Z' "
+            "OR substr(occurred_at, -6, 1) IN ('+', '-') "
+            "THEN '+0 seconds' ELSE 'utc' END) "
+            "BETWEEN julianday(?) AND julianday(?) AS is_recent "
+            "FROM relation_changes WHERE bot_name=? AND user_id=? "
+            "AND (? IS NULL OR id<=?)) "
             "SELECT COUNT(*) AS total_count, "
-            "COALESCE(SUM(MAX(delta, 0)), 0) AS positive, "
-            "COALESCE(SUM(MAX(-delta, 0)), 0) AS negative, "
-            "(SELECT COUNT(*) FROM recent) AS recent_count, "
-            "(SELECT COALESCE(SUM(MAX(delta, 0)), 0) FROM recent) AS recent_positive, "
-            "(SELECT COALESCE(SUM(MAX(-delta, 0)), 0) FROM recent) AS recent_negative, "
+            "COALESCE(SUM(positive), 0) AS positive, "
+            "COALESCE(SUM(negative), 0) AS negative, "
+            "COALESCE(SUM(is_recent), 0) AS recent_count, "
+            "COALESCE(SUM(positive * is_recent), 0) AS recent_positive, "
+            "COALESCE(SUM(negative * is_recent), 0) AS recent_negative, "
             "COALESCE((SELECT base_relation FROM user_profiles WHERE bot_name=? "
             "AND user_id=?), 0) AS base_relation "
-            "FROM relation_changes WHERE bot_name=? AND user_id=? "
-            "AND (? IS NULL OR id<=?)",
-            (*scope, through_id, through_id, *scope, *scope, through_id, through_id),
+            "FROM history",
+            (
+                (now - timedelta(days=7)).isoformat(),
+                now.isoformat(),
+                *scope,
+                through_id,
+                through_id,
+                *scope,
+            ),
         ) as cursor:
             row = await cursor.fetchone()
-        # Five positive and five negative prior weight units keep sparse samples neutral.
-        recent_score = (
-            100
-            * (5 + row["recent_positive"])
-            / (10 + row["recent_positive"] + row["recent_negative"])
-        )
+        # All-time evidence retains the neutral prior of five units per direction.
         long_term_score = (
             100 * (5 + row["positive"]) / (10 + row["positive"] + row["negative"])
+        )
+        # Ten prior weight units anchor sparse recent evidence to the relationship.
+        recent_score = (10 * long_term_score + 100 * row["recent_positive"]) / (
+            10 + row["recent_positive"] + row["recent_negative"]
         )
         interaction_score = 0.6 * recent_score + 0.4 * long_term_score
         return {

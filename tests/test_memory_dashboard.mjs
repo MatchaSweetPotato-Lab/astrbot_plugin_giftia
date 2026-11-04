@@ -366,7 +366,7 @@ test('profile scores retain fractions and show components and counts in the affi
     assert.match(summary, /基础 0 \+ 互动 83\.2/);
     assert.match(summary, /75\.0/);
     assert.match(summary, /95\.5/);
-    assert.match(summary, /最近 10 次评价/);
+    assert.match(summary, /近 7 天 10 次评价/);
     assert.match(summary, /累计 100 次评价/);
 });
 

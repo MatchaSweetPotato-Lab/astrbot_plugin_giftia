@@ -1098,7 +1098,7 @@ def build_user_profile_block(
         parts.extend(
             [
                 f"基础分：{relation_score['base_relation']}；互动分：{relation_score['interaction_score']:.1f}",
-                f"近期分：{relation_score['recent_score']:.1f}（最近{relation_score['recent_count']}次）；"
+                f"近期分：{relation_score['recent_score']:.1f}（近7天{relation_score['recent_count']}次）；"
                 f"长期分：{relation_score['long_term_score']:.1f}（共{relation_score['total_count']}次）",
             ]
         )
