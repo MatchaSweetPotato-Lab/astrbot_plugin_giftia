@@ -247,8 +247,8 @@ async def test_recent_samples_are_capped_and_identical_samples_keep_the_same_sco
     ] == pytest.approx(interaction - 20)
     prompt = build_reply_prompt([], [], None, user_id="user", relation_score=score)
     assert f"互动分：{interaction:.1f}" in prompt
-    assert f"近7天{min(10, len(deltas))}次" in prompt
-    assert f"共{len(deltas)}次" in prompt
+    assert f"累计评价：{len(deltas)}次" in prompt
+    assert "近7天" not in prompt
     assert "正向变化占比" not in prompt
 
 
@@ -1362,8 +1362,11 @@ def test_only_reply_speaker_profile_shows_three_escaped_change_reasons(score):
     assert "+2：他主动道谢" in text
     assert "-1：双方发生分歧" in text
     assert "+1：接梗 <玩笑> & 回应" in text
-    assert "近期分：70.0（近7天10次）" in text
-    assert "长期分：72.0（共50次）" in text
+    assert f"基础分：0；互动分：{score:.1f}（近期：{score - 72:+.1f}）" in text
+    assert "累计评价：50次" in text
+    assert "近7天" not in text
+    assert "近期分：" not in text
+    assert "长期分：" not in text
     assert "好感变化" not in root.find("active_user_briefs/user").text
     assert "正向变化占比" not in root.find("active_user_briefs/user").text
     decision = build_decision_prompt(

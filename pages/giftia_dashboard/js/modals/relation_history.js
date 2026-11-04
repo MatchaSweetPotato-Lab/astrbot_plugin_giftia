@@ -9,22 +9,18 @@ let currentEditor = null;
 let mutationPending = false;
 
 function renderHistoryScore(item) {
+    const interaction = Number(item.interaction_score ?? 50);
+    const recentEffect = Number((interaction - Number(item.long_term_score ?? interaction)).toFixed(1));
+    const signedEffect = `${recentEffect >= 0 ? '+' : ''}${recentEffect.toFixed(1)}`;
     document.getElementById('user-relation-history-summary').innerHTML = `
         <div class="relation-score-total">
-            <span class="relation-score-label">当前好感度</span>
-            <strong class="relation-score-value">${Number(item.relation ?? 50).toFixed(1)}</strong>
-            <span class="relation-score-formula">基础 ${Number(item.base_relation ?? 0)} + 互动 ${Number(item.interaction_score ?? 50).toFixed(1)}</span>
+            <div class="relation-score-heading">
+                <span class="relation-score-label">好感度：</span>
+                <strong class="relation-score-value">${Number(item.relation ?? 50).toFixed(1)}</strong>
+            </div>
+            <span class="relation-score-formula">基础分：${Number(item.base_relation ?? 0)}；互动分：${interaction.toFixed(1)}（近期：${signedEffect}）</span>
+            <span class="relation-score-counts">累计评价：${Number(item.total_count ?? 0)}次</span>
         </div>
-        <dl class="relation-score-windows">
-            <div>
-                <dt>近期分</dt>
-                <dd>${Number(item.recent_score ?? 50).toFixed(1)}<span>近 7 天 ${Number(item.recent_count ?? 0)} 次评价</span></dd>
-            </div>
-            <div>
-                <dt>长期分</dt>
-                <dd>${Number(item.long_term_score ?? 50).toFixed(1)}<span>累计 ${Number(item.total_count ?? 0)} 次评价</span></dd>
-            </div>
-        </dl>
     `;
 }
 

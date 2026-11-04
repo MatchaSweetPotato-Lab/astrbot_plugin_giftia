@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from core.reports.service import MAX_TEMPLATE_BYTES, ReportDefinition, ReportService
 from core.reports.status import build_status_report
+from core.reports.user_profile import build_user_profile_report
 from core.utils.schemas import Status
 from PIL import Image
 
@@ -52,6 +53,44 @@ def test_profile_default_hides_legacy_empty_values_without_requiring_history(ser
         '<section class="history">',
     ):
         assert omitted not in rendered
+
+
+@pytest.mark.parametrize(
+    "interaction,long_term,effect",
+    [
+        (84.94, 80.06, "+4.9"),
+        (84.86, 86.44, "-1.6"),
+        (84.86, 84.94, "-0.1"),
+        (84.94, 84.96, "+0.0"),
+    ],
+)
+def test_profile_reports_show_the_actual_recent_effect_before_rounding_scores(
+    service, interaction, long_term, effect
+):
+    data = build_user_profile_report(
+        "bot",
+        "小吉",
+        "group",
+        "user",
+        {
+            "relation": 30 + interaction,
+            "base_relation": 30,
+            "interaction_score": interaction,
+            "long_term_score": long_term,
+            "recent_score": 70,
+            "recent_count": 10,
+            "total_count": 50,
+        },
+    )
+    rendered = service.render_html("user_profile", data)
+    summary = f"基础分：30；互动分：{interaction:.1f}（近期：{effect}）"
+    assert data["relation_components"] == summary
+    assert summary in rendered
+    assert data["recent_effect"] == pytest.approx(float(effect))
+    assert "-0.0" not in rendered
+    assert "近期分" not in rendered and "长期分" not in rendered
+    assert "累计评价：50次" in rendered
+    assert "近7天" not in rendered
 
 
 @pytest.mark.parametrize("memory", [None, "", " \n\t", "<想法> & 灵感\n下一步"])

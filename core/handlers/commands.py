@@ -667,8 +667,8 @@ caption: {media_caption.caption}"""
             lines.extend(
                 [
                     f"好感度：{report['relation']:.1f}",
-                    f"基础分：{report['base_relation']} + 互动分：{report['interaction_score']:.1f}",
-                    f"近期分：{report['recent_score']:.1f}（近7天 {report['recent_count']} 次） · 长期分：{report['long_term_score']:.1f} · 共 {report['total_count']} 次评价",
+                    report["relation_components"],
+                    f"累计评价：{report['total_count']}次",
                 ]
             )
         if report["profile_fields"]:

@@ -11,6 +11,8 @@ h1 { margin: 18px 0 10px; font-size: 44px; }
 .metric { padding: 22px; background: #f1f8f4; border-radius: 18px; }
 .metric span { display: block; color: #49806a; font-size: 18px; margin-bottom: 10px; }
 .metric strong { font-size: 28px; }
+.metric-heading { margin-bottom: 12px; color: #49806a; font-size: 18px; }
+.metric-heading strong { color: #183c32; }
 .field { padding: 22px 0; border-bottom: 1px solid #e6eee9; }
 .field h2 { margin: 0 0 10px; color: #49806a; font-size: 20px; font-weight: 500; }
 .field p { margin: 0; font-size: 23px; line-height: 1.65; white-space: pre-wrap; }
@@ -36,9 +38,9 @@ footer { margin-top: 28px; }
   {% if relation is not none and relation != '' and relation != '暂无记录' %}
   <section class="relationship">
     <div class="metric">
-      <span>好感度</span><strong>{{ '%.1f' | format(relation) }}</strong>
-      <span>基础 {{ base_relation }} + 互动 {{ '%.1f' | format(interaction_score) }}</span>
-      <span>近期 {{ '%.1f' | format(recent_score) }}（近7天 {{ recent_count }} 次） · 长期 {{ '%.1f' | format(long_term_score) }} · 共 {{ total_count }} 次评价</span>
+      <div class="metric-heading">好感度：<strong>{{ '%.1f' | format(relation) }}</strong></div>
+      <span>{{ relation_components }}</span>
+      <span>累计评价：{{ total_count }}次</span>
     </div>
   </section>
   {% endif %}

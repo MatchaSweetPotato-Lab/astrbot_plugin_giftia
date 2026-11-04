@@ -363,11 +363,32 @@ test('profile scores retain fractions and show components and counts in the affi
     await window.openUserRelationHistoryModal(profile);
     const summary = get('user-relation-history-summary').innerHTML;
     assert.match(summary, /83\.2/);
-    assert.match(summary, /基础 0 \+ 互动 83\.2/);
-    assert.match(summary, /75\.0/);
-    assert.match(summary, /95\.5/);
-    assert.match(summary, /近 7 天 10 次评价/);
-    assert.match(summary, /累计 100 次评价/);
+    assert.match(summary, /基础分：0；互动分：83\.2（近期：-12\.3）/);
+    assert.doesNotMatch(summary, /近期分|长期分|75\.0|95\.5/);
+    assert.doesNotMatch(summary, /近\s*7\s*天/);
+    assert.match(summary, /累计评价：100次/);
+});
+
+test('affinity modal derives signed recent effects before rounding component scores', async () => {
+    for (const [interaction, longTerm, effect] of [
+        [84.94, 80.06, '+4.9'],
+        [84.86, 86.44, '-1.6'],
+        [84.86, 84.94, '-0.1'],
+        [84.94, 84.96, '+0.0']
+    ]) {
+        const profile = {
+            user_id: 'friend', relation: 30 + interaction, base_relation: 30,
+            interaction_score: interaction, long_term_score: longTerm,
+            recent_count: 10, total_count: 50
+        };
+        window.apiGet = async () => ({ status: 'success', data: {
+            score: profile, items: [], total: 50, page: 1
+        } });
+        await window.openUserRelationHistoryModal(profile);
+        const summary = get('user-relation-history-summary').innerHTML;
+        assert.ok(summary.includes(`基础分：30；互动分：${interaction.toFixed(1)}（近期：${effect}）`));
+        assert.doesNotMatch(summary, /近期分|长期分|-0\.0/);
+    }
 });
 
 test('editing a fractional base does not submit an update', async () => {

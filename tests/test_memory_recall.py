@@ -195,10 +195,12 @@ async def test_reply_loads_speaker_scoped_affinity_stats_and_keeps_recent_reason
     prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
     profile = fromstring("<context>" + prompt + "</context>").find("user_profile")
     assert profile.attrib["user_id"] == "alice"
-    assert "近期分：70.0（近7天10次）" in profile.text
-    assert "长期分：72.0（共50次）" in profile.text
+    assert "累计评价：50次" in profile.text
+    assert "近7天" not in profile.text
     assert "好感度：75.8" in profile.text
-    assert "基础分：5；互动分：70.8" in profile.text
+    assert "基础分：5；互动分：70.8（近期：-1.2）" in profile.text
+    assert "近期分：" not in profile.text
+    assert "长期分：" not in profile.text
     assert all(f"具体互动 {index}" in profile.text for index in range(3))
 
 
@@ -256,9 +258,11 @@ async def test_reply_includes_each_participant_profile_beyond_brief_limit(
         assert f"你的称呼：称呼-{uid}" in profile.text
         assert f"互动态度：态度-{uid}" in profile.text
         assert f"好感度：{60 + index}.0" in profile.text
-        assert f"基础分：{index}；互动分：60.0" in profile.text
-        assert "近期分：61.0（近7天10次）" in profile.text
-        assert "长期分：62.0（共20次）" in profile.text
+        assert f"基础分：{index}；互动分：60.0（近期：-2.0）" in profile.text
+        assert "累计评价：20次" in profile.text
+        assert "近7天" not in profile.text
+        assert "近期分：" not in profile.text
+        assert "长期分：" not in profile.text
         assert f"{uid} 的评价 <独立> & 明确" in profile.text
         assert all(
             f"{other} 的评价" not in profile.text for other in users if other != uid

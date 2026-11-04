@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape, quoteattr
 from astrbot.api.message_components import At, Plain, Reply
 
 from ..memory.atomic import memory_metadata
+from ..utils.relation_display import build_relation_display
 from ..utils.schemas import (
     ACCOUNT_TYPE_LABELS,
     MediaCaption,
@@ -1097,9 +1098,8 @@ def build_user_profile_block(
     if relation_score:
         parts.extend(
             [
-                f"基础分：{relation_score['base_relation']}；互动分：{relation_score['interaction_score']:.1f}",
-                f"近期分：{relation_score['recent_score']:.1f}（近7天{relation_score['recent_count']}次）；"
-                f"长期分：{relation_score['long_term_score']:.1f}（共{relation_score['total_count']}次）",
+                build_relation_display(relation_score)["relation_components"],
+                f"累计评价：{relation_score['total_count']}次",
             ]
         )
 

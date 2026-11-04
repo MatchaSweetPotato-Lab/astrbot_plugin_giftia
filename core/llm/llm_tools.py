@@ -11,6 +11,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 from ..conversation.media_captioner import MediaCaptioner
 from ..utils.event_utils import resolve_bot_name
+from ..utils.relation_display import build_relation_display
 from ..utils.schemas import (
     ACCOUNT_TYPE_LABELS,
     FORWARD_MEDIA_PATTERN,
@@ -283,9 +284,7 @@ class SearchUserProfileTool(FunctionTool):
         relation = item.get("relation")
         if relation not in (None, ""):
             lines.append(build_user_relation((relation, "")))
-            lines.append(
-                f"基础分：{item['base_relation']}；互动分：{item['interaction_score']:.1f}"
-            )
+            lines.append(build_relation_display(item)["relation_components"])
         for profile_field, label in USER_PROFILE_FIELDS:
             if profile_field == "call_name" and item.get("call_names"):
                 for name in item["call_names"]:
