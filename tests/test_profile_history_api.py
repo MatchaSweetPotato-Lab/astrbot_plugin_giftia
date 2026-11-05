@@ -96,7 +96,9 @@ async def test_account_type_edits_are_shared_cached_and_preserved_by_other_updat
             "/profiles/user/update", json={**scope, "account_type": account_type}
         )
         assert result.json()["status"] == "success"
-        await client.post("/profiles/user/update", json={**scope, "attitude": "熟络"})
+        await client.post(
+            "/profiles/user/update", json={**scope, "avatar_description": "银色猫咪"}
+        )
         for group in ("group-a", "group-b", "user"):
             assert (
                 await plugin.data_cache.get_user_profile_record("bot", group, "user")
@@ -264,6 +266,15 @@ def test_history_route_is_registered_as_read_only():
     )
     assert mutation["methods"] == ["POST"]
     assert mutation["view_handler"] == manager.web_api.save_user_relation_history
+    guide_routes = {
+        tuple(item["methods"]): item["view_handler"]
+        for item in routes
+        if item["route"].endswith("/profiles/user/relation_guide")
+    }
+    assert guide_routes == {
+        ("GET",): manager.web_api.get_relation_score_guide,
+        ("POST",): manager.web_api.save_relation_score_guide,
+    }
 
 
 @pytest.mark.asyncio
@@ -707,7 +718,7 @@ async def test_profile_names_and_search_follow_the_selected_session(profile_api)
             "group_or_user_id": "group-c",
             "user_id": "user",
             "call_name": "",
-            "attitude": "友好",
+            "avatar_description": "白猫",
         },
     )
     await client.post(

@@ -1769,7 +1769,6 @@ async def test_repeated_identity_is_not_saved_again_but_sources_are_completed(
         ]
     )
     runtime.manager._run_profile_summary_task = AsyncMock(return_value=True)
-    runtime.manager._run_attitude_summary_task = AsyncMock()
     assert await runtime.manager._run_background_summarize(
         "bot", "group", "self", latest.db_id, latest.db_id
     )
@@ -1791,7 +1790,6 @@ async def test_repeated_identity_is_not_saved_again_but_sources_are_completed(
     assert original["indexed_revision"] == 0
     runtime.plugin.ltm.search_memory.assert_not_awaited()
     runtime.manager._run_profile_summary_task.assert_not_awaited()
-    runtime.manager._run_attitude_summary_task.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -2566,7 +2564,6 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
         return_value=json.dumps({"memories": [atom(msg)]})
     )
     runtime.manager._run_profile_summary_task = AsyncMock(return_value=True)
-    runtime.manager._run_attitude_summary_task = AsyncMock(return_value=None)
     original_upsert = runtime.db.upsert_kv_data
 
     async def fail_counter_reset(key, value):
@@ -2587,7 +2584,6 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
         "bot", "group"
     ) == (0, 0, 0)
     runtime.manager._run_profile_summary_task.assert_awaited_once()
-    runtime.manager._run_attitude_summary_task.assert_awaited_once()
 
 
 def test_extraction_schema_requests_memory_type_and_evidence():

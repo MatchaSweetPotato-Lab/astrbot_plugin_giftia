@@ -186,7 +186,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 "call_name",
                 "personality",
                 "interests",
-                "attitude",
                 "agreements",
                 "extra",
                 "avatar_description",
@@ -422,7 +421,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.aliases,
                 up.personality,
                 up.interests,
-                up.attitude,
                 up.agreements,
                 up.extra,
                 up.avatar_description,
@@ -484,7 +482,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 up.resolved_call_name AS call_name,
                 up.local_call_name,
                 up.account_type,
-                up.attitude,
                 up.avatar_description,
                 (
                     SELECT ch.nickname
@@ -618,7 +615,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
             "account_type",
             "personality",
             "interests",
-            "attitude",
             "agreements",
             "extra",
             "avatar_description",
@@ -644,7 +640,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 aliases,
                 personality,
                 interests,
-                attitude,
                 agreements,
                 extra,
                 avatar_description,
@@ -653,7 +648,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, bot_name) DO UPDATE SET
                 {update_clause}
             """,
@@ -665,7 +660,6 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
                 None,
                 profile_fields.get("personality"),
                 profile_fields.get("interests"),
-                profile_fields.get("attitude"),
                 profile_fields.get("agreements"),
                 profile_fields.get("extra"),
                 profile_fields.get("avatar_description"),
@@ -878,7 +872,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
 
     @serialized_operation
     async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
-        """Remove a conversation's ratings and invalidate affected shared tone reviews.
+        """Remove a conversation's ratings and advance affected history revisions.
 
         Args:
             bot_name: Owning bot configuration.
@@ -887,8 +881,7 @@ class ProfileStoreMixin(RelationHistoryStoreMixin):
         await self.conn.execute(
             """
             UPDATE user_profiles
-            SET attitude = NULL, attitude_evaluated_change_id = 0,
-                relation_history_revision = relation_history_revision + 1, updated_at = ?
+            SET relation_history_revision = relation_history_revision + 1, updated_at = ?
             WHERE bot_name = ? AND user_id IN (
                 SELECT user_id FROM relation_changes WHERE bot_name = ? AND group_or_user_id = ?
             )

@@ -666,8 +666,8 @@ caption: {media_caption.caption}"""
         if report["relation"] is not None:
             lines.extend(
                 [
-                    f"好感度：{report['relation']:.1f}",
-                    report["relation_components"],
+                    "好感度：",
+                    report["relation_summary"],
                     f"累计评价：{report['total_count']}次",
                 ]
             )

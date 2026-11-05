@@ -371,7 +371,11 @@ class BotApi:
             # 没带这些键时，得先从原记录里取回来，否则在弹窗里保存一次配置就会把
             # 表情包管理页刚打开的开关悄悄关掉。
             # Preserve command-managed blocks when the editor omits them.
-            preserved_keys = ("send_sticker_as_gif", "blocked_users")
+            preserved_keys = (
+                "send_sticker_as_gif",
+                "blocked_users",
+                "relation_score_guide",
+            )
             previous = next(
                 (
                     b

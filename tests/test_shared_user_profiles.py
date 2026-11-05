@@ -1,5 +1,4 @@
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -23,9 +22,7 @@ async def shared_runtime(tmp_path, monkeypatch):
     plugin = SimpleNamespace(db=db)
     plugin.data_cache = DataCache(db, None, None)
     manager = PassiveMemoryManager(plugin)
-    manager._call_summary_llm = AsyncMock(
-        return_value='{"attitude": "熟络，常互相接梗"}'
-    )
+    manager._call_summary_llm = AsyncMock()
     try:
         yield SimpleNamespace(db=db, cache=plugin.data_cache, manager=manager)
     finally:
@@ -121,7 +118,7 @@ async def test_legacy_migration_merges_profiles_and_preserves_every_source_recor
         assert a["call_name"] == b["call_name"] == "新称呼"
         assert a["avatar_description"] == b["avatar_description"] == "银发头像"
         assert a["base_relation"] == b["base_relation"] == max(bases)
-        assert a["attitude"] is None
+        assert "attitude" not in a
         assert a["total_count"] == 2
         assert a["relation"] == pytest.approx(max(bases) + 1700 / 27)
         assert (
@@ -146,18 +143,19 @@ async def test_legacy_migration_merges_profiles_and_preserves_every_source_recor
             "SELECT COUNT(*) FROM user_profile_sessions WHERE bot_name='bot'"
         ) as cursor:
             assert (await cursor.fetchone())[0] == 2
-        await db.upsert_user_profile(
-            "bot", "group-a", "user", profile_fields={"attitude": "新态度"}
+        await conn.execute(
+            "UPDATE user_profiles SET attitude='旧态度', attitude_evaluated_change_id=41 "
+            "WHERE bot_name='bot'"
         )
-        assert await db.save_attitude_evaluation("bot", "group-b", "user", 0, 41)
+        await conn.commit()
         await initialize_database(conn)
-        assert (await db.get_user_profile_record("bot", "group-b", "user"))[
-            "attitude"
-        ] == "新态度"
+        assert "attitude" not in await db.get_user_profile_record(
+            "bot", "group-b", "user"
+        )
         async with conn.execute(
-            "SELECT attitude_evaluated_change_id FROM user_profiles WHERE bot_name='bot'"
+            "SELECT attitude, attitude_evaluated_change_id FROM user_profiles WHERE bot_name='bot'"
         ) as cursor:
-            assert (await cursor.fetchone())[0] == 41
+            assert tuple(await cursor.fetchone()) == ("旧态度", 41)
         async with conn.execute(
             "SELECT seq FROM sqlite_sequence WHERE name='relation_changes'"
         ) as cursor:
@@ -213,40 +211,6 @@ async def test_shared_cache_keeps_aliases_local_and_invalidates_scores_across_gr
     assert (await rt.cache.get_user_relation("bot", "group-a", "user")) == (
         await rt.cache.get_user_relation("bot", "group-b", "user")
     )
-
-
-@pytest.mark.asyncio
-async def test_attitude_review_uses_one_shared_cursor_and_cross_group_reasons(
-    shared_runtime,
-):
-    rt = shared_runtime
-    for index in range(5):
-        await rt.cache.update_relation(
-            "bot", "group-a" if index < 2 else "group-b", "user", 1, f"互动{index}"
-        )
-    await asyncio.gather(
-        rt.manager._run_attitude_summary_task("bot", "group-a", "Giftia", "self"),
-        rt.manager._run_attitude_summary_task("bot", "group-b", "Giftia", "self"),
-    )
-    rt.manager._call_summary_llm.assert_awaited_once()
-    payload = json.loads(rt.manager._call_summary_llm.call_args.args[2])
-    assert len(payload["relation_changes"]) == 5
-    assert [row["reason"] for row in payload["relation_changes"]] == [
-        f"互动{index}" for index in range(5)
-    ]
-    assert all(
-        "group_or_user_id" not in row and "source_label" not in row
-        for row in payload["relation_changes"]
-    )
-    system_prompt = rt.manager._call_summary_llm.call_args.args[1]
-    assert "跨群" not in system_prompt
-    assert "group_or_user_id" not in system_prompt
-    assert "source_label" not in system_prompt
-    assert (await rt.cache.get_user_profile_record("bot", "group-b", "user"))[
-        "attitude"
-    ] == "熟络，常互相接梗"
-    assert await rt.db.get_pending_attitude_evaluations("bot", "group-a") == []
-    assert await rt.db.get_pending_attitude_evaluations("bot", "group-b") == []
 
 
 @pytest.mark.asyncio

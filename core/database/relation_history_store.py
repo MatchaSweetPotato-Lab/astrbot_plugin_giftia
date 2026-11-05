@@ -503,7 +503,7 @@ class RelationHistoryStoreMixin:
                     )
                 await writer.execute(
                     "UPDATE user_profiles SET relation_history_revision="
-                    "relation_history_revision+1, attitude_evaluated_change_id=0, "
+                    "relation_history_revision+1, "
                     "updated_at=? WHERE bot_name=? AND user_id=?",
                     (now, bot_name, user_id),
                 )
@@ -519,87 +519,3 @@ class RelationHistoryStoreMixin:
             finally:
                 if database_file:
                     await writer.close()
-
-    @serialized_operation
-    async def get_pending_attitude_evaluations(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        min_changes: int = 5,
-        major_delta: int = 4,
-    ) -> list[dict]:
-        """Find members whose unevaluated history warrants a review.
-
-        Args:
-            bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
-            min_changes: Number of changes needed for an ordinary review.
-            major_delta: Absolute increment that triggers an early review.
-
-        Returns:
-            Member IDs, their saved cursors, and frozen review boundaries.
-        """
-        async with self.conn.execute(
-            "SELECT rc.user_id, up.attitude_evaluated_change_id AS evaluated_id, "
-            "up.relation_history_revision AS history_revision, "
-            "MAX(rc.id) AS through_id, COUNT(*) AS change_count FROM relation_changes rc "
-            "JOIN user_profiles up ON up.bot_name=rc.bot_name "
-            "AND up.user_id=rc.user_id "
-            "WHERE rc.bot_name=? "
-            "AND rc.id>up.attitude_evaluated_change_id "
-            "GROUP BY rc.user_id, up.attitude_evaluated_change_id, up.relation_history_revision "
-            "HAVING COUNT(*)>=? OR MAX(ABS(rc.delta))>=? ORDER BY MIN(rc.id)",
-            (bot_name, min_changes, major_delta),
-        ) as cursor:
-            return [dict(row) for row in await cursor.fetchall()]
-
-    @serialized_operation
-    async def save_attitude_evaluation(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        user_id: str,
-        expected_cursor: int,
-        through_id: int,
-        attitude: str | None = None,
-        expected_history_revision: int | None = None,
-    ) -> bool:
-        """Save the interaction tone and its exact successful review boundary.
-
-        Args:
-            bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
-            user_id: Evaluated member.
-            expected_cursor: Cursor read before inference.
-            through_id: Last history record actually provided to the model.
-            attitude: New mutual interaction tone, or None to preserve it.
-            expected_history_revision: Reject conclusions based on manually revised history.
-
-        Returns:
-            Whether the unchanged profile generation accepted this evaluation.
-        """
-        cursor = await self.conn.execute(
-            "UPDATE user_profiles SET attitude=COALESCE(?, attitude), "
-            "attitude_evaluated_change_id=?, updated_at=? "
-            "WHERE bot_name=? AND user_id=? "
-            "AND attitude_evaluated_change_id=? AND attitude_evaluated_change_id<? "
-            "AND (? IS NULL OR relation_history_revision=?) "
-            "AND EXISTS (SELECT 1 FROM relation_changes WHERE id=? AND bot_name=? "
-            "AND user_id=?)",
-            (
-                attitude,
-                through_id,
-                datetime.now(timezone.utc).isoformat(),
-                bot_name,
-                user_id,
-                expected_cursor,
-                through_id,
-                expected_history_revision,
-                expected_history_revision,
-                through_id,
-                bot_name,
-                user_id,
-            ),
-        )
-        await self.conn.commit()
-        return cursor.rowcount > 0

@@ -10,7 +10,6 @@ window.openEditUserProfileModal = function(item) {
     const callNameInput = document.getElementById("edit-user-prof-call-name");
     callNameInput.value = item.local_call_name || "";
     callNameInput.placeholder = !item.local_call_name && item.call_name ? `留空时使用：${item.call_name}` : "留空时使用最近设置的称呼";
-    document.getElementById("edit-user-prof-attitude").value = item.attitude || "";
     document.getElementById("edit-user-prof-avatar").value = item.avatar_description || "";
     window.openModal("edit-user-profile-modal");
 };
@@ -22,7 +21,6 @@ window.submitEditUserProfile = async function() {
     const relationVal = document.getElementById("edit-user-prof-base-relation").value;
     const accountType = document.getElementById("edit-user-prof-account-type").value;
     const callName = document.getElementById("edit-user-prof-call-name").value.trim();
-    const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
     const avatarDescription = document.getElementById("edit-user-prof-avatar").value.trim();
 
     const baseRelation = relationVal !== "" ? Number(relationVal) : 0;
@@ -39,7 +37,6 @@ window.submitEditUserProfile = async function() {
             base_relation: baseRelation,
             account_type: accountType,
             call_name: callName,
-            attitude: attitude,
             avatar_description: avatarDescription
         });
         if (res.status === "success") {

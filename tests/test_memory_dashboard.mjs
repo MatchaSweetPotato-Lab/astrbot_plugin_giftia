@@ -40,6 +40,7 @@ const { renderRelationChanges } = await import('../pages/giftia_dashboard/js/mod
 const { renderUserProfiles } = await import('../pages/giftia_dashboard/js/modules/render/profiles.js');
 await import('../pages/giftia_dashboard/js/modals/memory.js');
 await import('../pages/giftia_dashboard/js/modals/profile.js');
+await import('../pages/giftia_dashboard/js/modals/relation_guide.js');
 await import('../pages/giftia_dashboard/js/modals/relation_history.js');
 const get = id => document.getElementById(id);
 
@@ -252,7 +253,7 @@ test('profile rendering and saves exclude retired fields without clearing stored
         agreements: 'retired agreement', extra: 'retired extra', title: 'retired title'
     };
     const html = window.renderProfileCard(profile);
-    assert.doesNotMatch(html, /retired/);
+    assert.doesNotMatch(html, /retired|friendly|互动态度/);
     assert.match(html, /local name/);
     window.openEditUserProfileModal(profile);
     get('edit-user-prof-base-relation').value = '5';
@@ -260,11 +261,89 @@ test('profile rendering and saves exclude retired fields without clearing stored
     window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
     await window.submitEditUserProfile();
     assert.equal(body.call_name, 'local name');
-    assert.equal(body.attitude, 'friendly');
     assert.equal(body.base_relation, 5);
     assert.equal(Object.hasOwn(body, 'relation'), false);
-    for (const retired of ['personality', 'interests', 'agreements', 'extra', 'title']) assert.equal(Object.hasOwn(body, retired), false);
+    for (const retired of ['personality', 'interests', 'attitude', 'agreements', 'extra', 'title']) assert.equal(Object.hasOwn(body, retired), false);
     assert.equal(profile.agreements, 'retired agreement');
+});
+
+test('affinity guidance saves to the bot captured when opening the editor', async () => {
+    get('profile-bot-name').value = 'bot-a';
+    const calls = [];
+    window.apiGet = async (endpoint, params) => {
+        calls.push([endpoint, params]);
+        return { status: 'success', data: { guide: '已保存的说明', default_guide: '默认说明' } };
+    };
+    window.apiPost = async (endpoint, body) => {
+        calls.push([endpoint, body]);
+        return { status: 'success' };
+    };
+    let closed = '';
+    window.closeModal = id => { closed = id; };
+    await window.openRelationScoreGuideModal();
+    assert.equal(get('relation-score-guide-text').value, '已保存的说明');
+    assert.match(get('relation-score-guide-scope').textContent, /bot-a/);
+    get('profile-bot-name').value = 'bot-b';
+    get('relation-score-guide-text').value = '  80以上允许主动接梗\n90以上允许谈心  ';
+    await window.saveRelationScoreGuide();
+    assert.deepEqual(calls, [
+        ['/profiles/user/relation_guide', { bot_name: 'bot-a' }],
+        ['/profiles/user/relation_guide', { bot_name: 'bot-a', guide: '80以上允许主动接梗\n90以上允许谈心' }]
+    ]);
+    assert.equal(closed, 'relation-score-guide-modal');
+});
+
+test('restoring guidance is a draft change and cancel discards it on reopening', async () => {
+    get('profile-bot-name').value = 'bot';
+    window.apiGet = async () => ({ status: 'success', data: { guide: '自定义说明', default_guide: '默认说明' } });
+    window.apiPost = async () => { throw new Error('must not save'); };
+    await window.openRelationScoreGuideModal();
+    window.restoreDefaultRelationScoreGuide();
+    assert.equal(get('relation-score-guide-text').value, '默认说明');
+    window.closeModal('relation-score-guide-modal');
+    await window.openRelationScoreGuideModal();
+    assert.equal(get('relation-score-guide-text').value, '自定义说明');
+});
+
+test('guidance failures preserve drafts and allow retry without duplicate submissions', async () => {
+    get('relation-score-guide-bot').value = 'bot';
+    get('relation-score-guide-text').value = '尚未保存';
+    let finish;
+    let requests = 0;
+    let closed = false;
+    let toast = '';
+    window.closeModal = () => { closed = true; };
+    window.showToast = text => { toast = text; };
+    window.apiPost = () => { requests++; return new Promise(resolve => { finish = resolve; }); };
+    const saving = window.saveRelationScoreGuide();
+    await window.saveRelationScoreGuide();
+    assert.equal(requests, 1);
+    finish({ status: 'error', message: '写入失败' });
+    await saving;
+    assert.equal(get('relation-score-guide-text').value, '尚未保存');
+    assert.equal(get('relation-score-guide-save').disabled, false);
+    assert.equal(closed, false);
+    assert.match(toast, /写入失败/);
+});
+
+test('a late guidance save does not close or overwrite another bot editor', async () => {
+    get('profile-bot-name').value = 'bot-a';
+    window.apiGet = async (endpoint, { bot_name }) => ({
+        status: 'success', data: { guide: `${bot_name} 的说明`, default_guide: '默认说明' }
+    });
+    let finish;
+    window.apiPost = () => new Promise(resolve => { finish = resolve; });
+    let closed = false;
+    window.closeModal = () => { closed = true; };
+    await window.openRelationScoreGuideModal();
+    const saving = window.saveRelationScoreGuide();
+    get('profile-bot-name').value = 'bot-b';
+    await window.openRelationScoreGuideModal();
+    finish({ status: 'success' });
+    await saving;
+    assert.equal(closed, false);
+    assert.equal(get('relation-score-guide-bot').value, 'bot-b');
+    assert.equal(get('relation-score-guide-text').value, 'bot-b 的说明');
 });
 
 test('fallback names are placeholders and are not copied into a local profile on save', async () => {
@@ -349,7 +428,7 @@ test('profile without changes still offers the zero affinity history button', ()
     }
 });
 
-test('profile scores retain fractions and show components and counts in the affinity modal', async () => {
+test('profile scores retain fractions and show final scores with recent effects and counts', async () => {
     const profile = {
         user_id: 'friend', relation: 83.1818, base_relation: 0,
         interaction_score: 83.1818, recent_score: 75, long_term_score: 95.4545,
@@ -364,8 +443,8 @@ test('profile scores retain fractions and show components and counts in the affi
     await window.openUserRelationHistoryModal(profile);
     const summary = get('user-relation-history-summary').innerHTML;
     assert.match(summary, /83\.2/);
-    assert.match(summary, /基础分：0；互动分：83\.2（近期：-12\.3）/);
-    assert.doesNotMatch(summary, /近期分|长期分|75\.0|95\.5/);
+    assert.match(summary, /83\.2<\/strong><span[^>]*>（近期：-12\.3）/);
+    assert.doesNotMatch(summary, /基础分|互动分|近期分|长期分|75\.0|95\.5/);
     assert.doesNotMatch(summary, /近\s*7\s*天/);
     assert.match(summary, /累计评价：100次/);
 });
@@ -389,15 +468,15 @@ test('affinity modal derives signed recent effects before rounding component sco
         } });
         await window.openUserRelationHistoryModal(profile);
         const summary = get('user-relation-history-summary').innerHTML;
-        assert.ok(summary.includes(`基础分：30；互动分：${interaction.toFixed(1)}（近期：${effect}）`));
-        assert.doesNotMatch(summary, /近期分|长期分|-0\.0/);
+        assert.ok(summary.includes(`${(30 + interaction).toFixed(1)}</strong><span class="relation-score-recent">（近期：${effect}）`));
+        assert.doesNotMatch(summary, /基础分|互动分|近期分|长期分|-0\.0/);
     }
 });
 
 test('affinity modal without a recent baseline shows no known recent effect', async () => {
     window.apiGet = async () => ({ status: 'success', data: { items: [], total: 0, page: 1 } });
     await window.openUserRelationHistoryModal({ interaction_score: 80, long_term_score: 75 });
-    assert.match(get('user-relation-history-summary').innerHTML, /互动分：80\.0（近期：\+0\.0）/);
+    assert.match(get('user-relation-history-summary').innerHTML, /50\.0<\/strong><span[^>]*>（近期：\+0\.0）/);
 });
 
 test('editing a fractional base does not submit an update', async () => {

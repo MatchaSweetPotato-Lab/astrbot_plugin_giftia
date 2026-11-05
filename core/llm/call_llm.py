@@ -29,6 +29,7 @@ from .native_tools import (
     NATIVE_TOOL_CONFIG_KEYS,
 )
 from .preset_prompts import (
+    RELATION_SCORE_GUIDE,
     REPLY_CONTEXT_GUIDE,
     REPLY_REVIEW_PROMPT,
     build_xml_instructions,
@@ -124,7 +125,13 @@ class CallLLM:
         use_meme_manager: bool = False,
     ) -> Decision | None:
         """调用LLM进行决策"""
-        decision_rules = get_decision_rules(use_meme_manager=use_meme_manager)
+        bot_config = (
+            self.plugin.bot_map.get(bot_name, {}) if self.plugin is not None else {}
+        )
+        decision_rules = get_decision_rules(
+            use_meme_manager=use_meme_manager,
+            relation_score_guide=bot_config.get("relation_score_guide", ""),
+        )
         if system_prompt:
             actual_system_prompt = system_prompt.strip() + "\n\n" + decision_rules
         else:
@@ -275,11 +282,17 @@ class CallLLM:
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
+        bot_name = (tool_context or {}).get("bot_name") or resolve_bot_name(
+            self.plugin, event
+        )
+        bot_config = (
+            self.plugin.bot_map.get(bot_name, {}) if self.plugin is not None else {}
+        )
         if enabled_features is None and self.plugin is not None:
-            bot_name = resolve_bot_name(self.plugin, event)
-            enabled_features = self.plugin.bot_map.get(bot_name, {}).get(
-                "enabled_interactive_features"
-            )
+            enabled_features = bot_config.get("enabled_interactive_features")
+        relation_score_guide = (
+            bot_config.get("relation_score_guide", "").strip() or RELATION_SCORE_GUIDE
+        )
 
         for provider_id in provider_ids:
             for i in range(self.network_conf["reply_retry_times"]):
@@ -294,7 +307,12 @@ class CallLLM:
                         use_meme_manager=use_meme_manager,
                     )
                     actual_system_prompt = "\n\n".join(
-                        (system_prompt or "", REPLY_CONTEXT_GUIDE, xml_inst)
+                        (
+                            system_prompt or "",
+                            REPLY_CONTEXT_GUIDE,
+                            relation_score_guide,
+                            xml_inst,
+                        )
                     )
                     tools_set = None
                     native_tools = ToolSet()

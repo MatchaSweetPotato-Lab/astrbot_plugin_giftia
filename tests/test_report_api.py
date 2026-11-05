@@ -72,7 +72,6 @@ async def test_editor_save_preview_and_validation(api_app):
         assert set(profile["sample_data"]["profile_fields"]) == {
             "称呼",
             "其他外号",
-            "互动态度",
             "头像描述",
         }
         body = {

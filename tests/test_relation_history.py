@@ -44,7 +44,9 @@ async def runtime(tmp_path, monkeypatch):
     )
     plugin.data_cache = DataCache(db, None, None, plugin=plugin)
     manager = PassiveMemoryManager(plugin)
-    manager._call_summary_llm = AsyncMock(return_value='{"attitude": null}')
+    manager._call_summary_llm = AsyncMock(
+        return_value="<summary_user_profile>无</summary_user_profile>"
+    )
     try:
         yield SimpleNamespace(db=db, cache=plugin.data_cache, manager=manager)
     finally:
@@ -93,7 +95,7 @@ async def test_profile_stage_records_one_reason_per_source_batch_and_ignores_att
     assert json.loads(changes[0]["source_ids"]) == [7]
     assert changes[0]["occurred_at"] == source.time
     profile = await runtime.db.get_user_profile_record("bot", "group", "user")
-    assert profile["attitude"] == "礼貌交流"
+    assert "attitude" not in profile
     assert profile["relation"] == pytest.approx(10 + 725 / 11)
 
 
@@ -247,7 +249,8 @@ async def test_recent_samples_are_capped_and_identical_samples_keep_the_same_sco
         0
     ] == pytest.approx(interaction - 20)
     prompt = build_reply_prompt([], [], None, user_id="user", relation_score=score)
-    assert f"互动分：{interaction:.1f}" in prompt
+    assert f"好感度：\n{interaction - 20:.1f}（近期：" in prompt
+    assert "基础分" not in prompt and "互动分" not in prompt
     assert f"累计评价：{len(deltas)}次" in prompt
     assert "近7天" not in prompt
     assert "正向变化占比" not in prompt
@@ -1067,297 +1070,6 @@ async def test_invalid_ratings_never_create_history(runtime, delta):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("deltas", "expected_calls"),
-    [((1, -1, 1, -1), 0), ((1, -1, 1, -1, 1), 1), ((4,), 1), ((-4,), 1), ((3,), 0)],
-)
-async def test_tone_review_counts_changes_in_both_directions_and_reviews_major_events(
-    runtime, deltas, expected_calls
-):
-    for delta in deltas:
-        await runtime.cache.update_relation("bot", "group", "user", delta, "具体互动")
-    score_before = await runtime.db.get_relation("bot", "group", "user")
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    assert runtime.manager._call_summary_llm.await_count == expected_calls
-    assert await runtime.db.get_relation("bot", "group", "user") == score_before
-    if expected_calls:
-        assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-        await runtime.manager._run_attitude_summary_task(
-            "bot", "group", "Giftia", "self"
-        )
-        assert runtime.manager._call_summary_llm.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_review_sees_fifty_reasons_new_markers_and_only_related_direct_messages(
-    runtime,
-):
-    await runtime.cache.set_user_profile(
-        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
-    )
-    for index in range(60):
-        await runtime.cache.update_relation(
-            "bot", "group", "user", 1, f"互动理由 {index}"
-        )
-    changes = await runtime.db.get_relation_changes("bot", "group", "user")
-    assert await runtime.db.save_attitude_evaluation(
-        "bot", "group", "user", 0, changes[-6]["id"]
-    )
-    await runtime.cache.get_user_profile_record("bot", "group", "user")
-    runtime.manager._call_summary_llm.return_value = '{"attitude": "熟络，常互相接梗"}'
-    await runtime.manager._run_attitude_summary_task(
-        "bot",
-        "group",
-        "Giftia",
-        "self",
-        {
-            "alias_observation_messages": [
-                MessageData(user_id="user", content="共同笑话"),
-                MessageData(user_id="self", content="接梗回应", role="assistant"),
-                MessageData(user_id="other", content="不相关发言"),
-                MessageData(user_id="user", content="已撤回", is_recalled=1),
-                MessageData(user_id="self", content="操作日志", role="operation_log"),
-            ]
-        },
-    )
-    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
-    assert len(payload["relation_changes"]) == 50
-    assert payload["relation_changes"][0]["reason"] == "互动理由 10"
-    assert [item["is_new"] for item in payload["relation_changes"]] == [False] * 45 + [
-        True
-    ] * 5
-    expected_relation = (await runtime.db.get_relation_score("bot", "group", "user"))[
-        "relation"
-    ]
-    assert payload["current_relation"] == expected_relation
-    assert payload["current_attitude"] == "礼貌交流"
-    assert [item["content"] for item in payload["related_chat_history"]] == [
-        "共同笑话",
-        "接梗回应",
-    ]
-    profile = await runtime.cache.get_user_profile_record("bot", "group", "user")
-    assert profile["attitude"] == "熟络，常互相接梗"
-    assert profile["relation"] == expected_relation
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "wrapper",
-    [
-        "```json\n{}\n```",
-        "```\n{}\n```",
-        "```json {} ```",
-        "评估结果：\n```json\n{}\n```",
-    ],
-)
-@pytest.mark.parametrize("attitude", ["欢喜冤家，日常互怼拌嘴，偶尔温馨互动", None])
-async def test_markdown_review_updates_attitude_and_consumes_pending_history(
-    runtime, wrapper, attitude
-):
-    await runtime.cache.set_user_profile(
-        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
-    )
-    for _ in range(5):
-        await runtime.cache.update_relation("bot", "group", "user", 1, "日常互动")
-    profile_before = await runtime.cache.get_user_profile_record("bot", "group", "user")
-    changes_before = await runtime.db.get_relation_changes("bot", "group", "user")
-    runtime.manager._call_summary_llm.return_value = wrapper.format(
-        json.dumps({"attitude": attitude}, ensure_ascii=False)
-    )
-
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-
-    profile = await runtime.cache.get_user_profile_record("bot", "group", "user")
-    assert profile["attitude"] == (attitude or "礼貌交流")
-    assert profile["relation"] == profile_before["relation"]
-    assert (
-        await runtime.db.get_relation_changes("bot", "group", "user") == changes_before
-    )
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    assert runtime.manager._call_summary_llm.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_large_backlog_is_reviewed_in_bounded_windows_without_skipping_changes(
-    runtime,
-):
-    for index in range(55):
-        await runtime.cache.update_relation("bot", "group", "user", 1, f"互动 {index}")
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    calls = runtime.manager._call_summary_llm.call_args_list
-    assert len(calls) == 2
-    payloads = [json.loads(call.args[2]) for call in calls]
-    assert [len(item["relation_changes"]) for item in payloads] == [50, 50]
-    reviewed = [
-        change["id"]
-        for item in payloads
-        for change in item["relation_changes"]
-        if change["is_new"]
-    ]
-    assert reviewed == list(range(1, 56))
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-
-
-@pytest.mark.asyncio
-async def test_failed_small_backlog_tail_remains_eligible_for_periodic_retry(runtime):
-    await runtime.manager._remember_session("bot", "group", "self")
-    for index in range(51):
-        await runtime.cache.update_relation("bot", "group", "user", 1, f"互动 {index}")
-    runtime.manager._call_summary_llm.side_effect = [
-        '{"attitude": null}',
-        None,
-        '{"attitude": null}',
-    ]
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    pending = await runtime.db.get_pending_attitude_evaluations("bot", "group")
-    assert pending[0]["evaluated_id"] == 46
-    assert pending[0]["change_count"] == 5
-    await runtime.manager.maintain_memories()
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-    assert runtime.manager._call_summary_llm.await_count == 3
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "invalid_response",
-    [
-        None,
-        "bad json",
-        "[]",
-        "{}",
-        '{"attitude": 1}',
-        '{"attitude": ""}',
-        '{"attitude": "无"}',
-        json.dumps({"attitude": "长" * 21}),
-        '{"attitude": "友好", "relation": 99}',
-        '```json\n{"attitude": 1}\n```',
-        '```json\n{"attitude": "友好", "relation": 99}\n```',
-        '```json\n{"attitude": "长长长长长长长长长长长长长长长长长长长长长"}\n```',
-    ],
-)
-async def test_invalid_review_preserves_cursor_and_periodic_retry_needs_no_new_messages(
-    runtime, invalid_response
-):
-    await runtime.manager._remember_session("bot", "group", "self")
-    await runtime.cache.set_user_profile(
-        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
-    )
-    for _ in range(5):
-        await runtime.cache.update_relation(
-            "bot", "group", "user", 1, "他分享近况，我认真回应"
-        )
-    runtime.manager._call_summary_llm.side_effect = [
-        invalid_response,
-        '{"attitude": null}',
-    ]
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    pending = await runtime.db.get_pending_attitude_evaluations("bot", "group")
-    assert pending[0]["evaluated_id"] == 0
-    await runtime.manager.maintain_memories()
-    assert runtime.manager._call_summary_llm.await_count == 2
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-    profile = await runtime.db.get_user_profile_record("bot", "group", "user")
-    assert profile["attitude"] == "礼貌交流"
-    assert profile["relation"] == pytest.approx(1300 / 19)
-    reopened = await Database.connect()
-    try:
-        assert len(await reopened.get_relation_changes("bot", "group", "user")) == 5
-        assert await reopened.get_pending_attitude_evaluations("bot", "group") == []
-    finally:
-        await reopened.close()
-
-
-@pytest.mark.asyncio
-async def test_changes_arriving_during_inference_stay_pending(runtime):
-    for _ in range(5):
-        await runtime.cache.update_relation("bot", "group", "user", 1, "日常互动")
-
-    async def arrive_during_review(*args, **kwargs):
-        await runtime.cache.update_relation(
-            "bot", "group", "user", -4, "发生新的明显冲突"
-        )
-        return '{"attitude": null}'
-
-    runtime.manager._call_summary_llm.side_effect = arrive_during_review
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    pending = await runtime.db.get_pending_attitude_evaluations("bot", "group")
-    assert (pending[0]["evaluated_id"], pending[0]["through_id"]) == (5, 6)
-    runtime.manager._call_summary_llm.side_effect = None
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-
-
-@pytest.mark.asyncio
-async def test_manual_history_edit_rejects_inflight_tone_and_recalculates_review_score(
-    runtime,
-):
-    await runtime.cache.set_user_profile(
-        "bot", "group", "user", profile_fields={"attitude": "礼貌交流"}
-    )
-    for _ in range(5):
-        await runtime.cache.update_relation("bot", "group", "user", 1, "原评价")
-    changes = await runtime.db.get_relation_changes("bot", "group", "user")
-
-    async def edit_during_review(*args, **kwargs):
-        await runtime.db.mutate_relation_history(
-            "bot",
-            "group",
-            "user",
-            action="update",
-            expected_revision=0,
-            change_id=changes[0]["id"],
-            delta=-5,
-            reason="修正为严重冒犯",
-        )
-        return '{"attitude": "过期结论"}'
-
-    runtime.manager._call_summary_llm.side_effect = edit_during_review
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    assert (await runtime.db.get_user_profile_record("bot", "group", "user"))[
-        "attitude"
-    ] == "礼貌交流"
-    pending = await runtime.db.get_pending_attitude_evaluations("bot", "group")
-    assert pending[0]["evaluated_id"] == 0
-    assert pending[0]["history_revision"] == 1
-    runtime.manager._call_summary_llm.side_effect = None
-    runtime.manager._call_summary_llm.return_value = '{"attitude": null}'
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    payload = json.loads(runtime.manager._call_summary_llm.call_args.args[2])
-    assert payload["current_relation"] == pytest.approx(1000 / 69)
-    assert payload["current_relation"] < 50
-    assert all(
-        "relation_before" not in row and "relation_after" not in row
-        for row in payload["relation_changes"]
-    )
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
-
-
-@pytest.mark.asyncio
-async def test_deleting_and_recreating_profile_during_review_rejects_stale_result(
-    runtime,
-):
-    await runtime.cache.update_relation("bot", "group", "user", 4, "重要互动")
-
-    async def replace_during_review(*args, **kwargs):
-        await runtime.db.delete_user_profile("bot", "group", "user")
-        await runtime.cache.update_relation("bot", "group", "user", 1, "重新开始互动")
-        return '{"attitude": "过期结论"}'
-
-    runtime.manager._call_summary_llm.side_effect = replace_during_review
-    await runtime.manager._run_attitude_summary_task("bot", "group", "Giftia", "self")
-    profile = await runtime.db.get_user_profile_record("bot", "group", "user")
-    assert profile["attitude"] is None
-    assert profile["relation"] == pytest.approx(3700 / 67)
-    changes = await runtime.db.get_relation_changes("bot", "group", "user")
-    assert [item["reason"] for item in changes] == ["重新开始互动"]
-    async with runtime.db.conn.execute(
-        "SELECT attitude_evaluated_change_id FROM user_profiles"
-    ) as cursor:
-        assert (await cursor.fetchone())[0] == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
     "operation",
     ["delete_user_profile", "delete_group_user_profiles", "delete_all_relations"],
 )
@@ -1437,7 +1149,8 @@ def test_only_reply_speaker_profile_shows_three_escaped_change_reasons(score):
     assert "+2：他主动道谢" in text
     assert "-1：双方发生分歧" in text
     assert "+1：接梗 <玩笑> & 回应" in text
-    assert f"基础分：0；互动分：{score:.1f}（近期：{score - 70:+.1f}）" in text
+    assert f"好感度：\n{score:.1f}（近期：{score - 70:+.1f}）" in text
+    assert "基础分" not in text and "互动分" not in text
     assert "累计评价：50次" in text
     assert "近7天" not in text
     assert "近期分：" not in text
@@ -1460,11 +1173,8 @@ def test_only_reply_speaker_profile_shows_three_escaped_change_reasons(score):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "review_response", [None, '{"attitude": "熟络，认真回应彼此"}']
-)
-async def test_background_stages_persist_reason_and_keep_review_failure_retryable(
-    runtime, review_response
+async def test_background_summary_stops_after_affinity_without_periodic_tone_review(
+    runtime,
 ):
     source = MessageData(
         user_id="user",
@@ -1492,14 +1202,13 @@ async def test_background_stages_persist_reason_and_keep_review_failure_retryabl
         '{"memories": []}',
         '<summary_user_profile user_id="user"><update_relation delta="+4">'
         "他完成重要约定并认真道谢</update_relation></summary_user_profile>",
-        review_response,
     ]
     assert await runtime.manager._run_background_summarize(
         "bot", "group", "self", first_id, last_id
     )
     assert [
         call.args[0] for call in runtime.manager._call_summary_llm.call_args_list
-    ] == ["原子记忆归纳", "好感度维护", "互动态度维护"]
+    ] == ["原子记忆归纳", "好感度维护"]
     assert await runtime.db.chat_history_repo.get_pending_memory_stats(
         "bot", "group"
     ) == (0, 0, 0)
@@ -1509,11 +1218,6 @@ async def test_background_stages_persist_reason_and_keep_review_failure_retryabl
     assert (await runtime.db.get_relation("bot", "group", "user"))[0] == pytest.approx(
         3550 / 43
     )
-    if review_response is None:
-        assert (
-            len(await runtime.db.get_pending_attitude_evaluations("bot", "group")) == 1
-        )
-        runtime.manager._call_summary_llm.side_effect = None
-        runtime.manager._call_summary_llm.return_value = '{"attitude": null}'
-        await runtime.manager.maintain_memories()
-    assert await runtime.db.get_pending_attitude_evaluations("bot", "group") == []
+    await runtime.manager.maintain_memories()
+    assert runtime.manager._call_summary_llm.await_count == 2
+    assert await runtime.db.get_relation_changes("bot", "group", "user") == history

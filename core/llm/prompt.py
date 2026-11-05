@@ -32,7 +32,6 @@ MAX_FORWARDED_INDEX_IN_PROMPT = 20
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
-    ("attitude", "互动态度"),
     ("avatar_description", "头像描述"),
 ]
 
@@ -1090,18 +1089,17 @@ def build_user_profile_block(
         )
 
     if relation_score:
-        user_relation = (relation_score["relation"], "")
-    relation_text = build_user_relation(user_relation)
-    if relation_text:
-        parts.append(relation_text)
-
-    if relation_score:
         parts.extend(
             [
-                build_relation_display(relation_score)["relation_components"],
+                "好感度：",
+                build_relation_display(relation_score)["relation_summary"],
                 f"累计评价：{relation_score['total_count']}次",
             ]
         )
+    else:
+        relation_text = build_user_relation(user_relation)
+        if relation_text:
+            parts.append(relation_text)
 
     changes = []
     for change in (relation_changes or [])[-3:]:

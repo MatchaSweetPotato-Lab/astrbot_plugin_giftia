@@ -453,7 +453,6 @@ class MemoryMaintenanceMixin:
                         continue
                     try:
                         async with lock:
-                            summarized = False
                             if summarize_enabled and self_id:
                                 (
                                     first_id,
@@ -482,7 +481,6 @@ class MemoryMaintenanceMixin:
                                     # do not preserve it and later messages can reactivate.
                                     self.plugin.active_reply_counters[key] = 0
                                     if pending:
-                                        summarized = True
                                         await self._run_background_summarize(
                                             bot_name,
                                             session_id,
@@ -490,13 +488,6 @@ class MemoryMaintenanceMixin:
                                             first_id,
                                             last_id,
                                         )
-                                if not summarized:
-                                    nickname = self.plugin.bot_map[bot_name].get(
-                                        "nickname", bot_name
-                                    )
-                                    await self._run_attitude_summary_task(
-                                        bot_name, session_id, nickname, self_id
-                                    )
                             await self._sync_memory_vectors(bot_name, session_id)
                     except Exception:
                         logger.exception(

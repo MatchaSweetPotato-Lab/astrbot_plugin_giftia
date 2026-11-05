@@ -85,9 +85,11 @@ def test_profile_reports_show_the_actual_recent_effect_before_rounding_scores(
         },
     )
     rendered = service.render_html("user_profile", data)
-    summary = f"基础分：30；互动分：{interaction:.1f}（近期：{effect}）"
-    assert data["relation_components"] == summary
-    assert summary in rendered
+    summary = f"{30 + interaction:.1f}（近期：{effect}）"
+    assert data["relation_summary"] == summary
+    assert f"{30 + interaction:.1f}</strong>" in rendered
+    assert f"（近期：{effect}）" in rendered
+    assert "基础分" not in rendered and "互动分" not in rendered
     assert data["recent_effect"] == pytest.approx(float(effect))
     assert data["recent_baseline_score"] == round(baseline, 1)
     assert data["long_term_score"] == 90

@@ -79,10 +79,11 @@ async def test_profile_id_lookup_is_scoped_and_defaults_to_text(
     assert f"用户 ID：{user_id}" in text
     assert "称呼：小明" in text
     assert "其他外号：阿明" in text
-    assert "互动态度：友好\n认真回应" in text
+    assert "互动态度" not in text
+    assert "认真回应" not in text
     assert "头像描述：蓝天下的白猫" in text
-    assert "好感度：0" in text
-    assert "基础分：-50；互动分：50.0（近期：+0.0）" in text
+    assert "好感度：\n0.0（近期：+0.0）" in text
+    assert "基础分" not in text and "互动分" not in text
     assert "近期分：" not in text
     assert "长期分：" not in text
     for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
@@ -441,7 +442,7 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
             else event.send.call_args.args[0].chain[0].text
         )
         assert f"{expected_relation:.1f}" in rendered
-        assert f"{expected_interaction:.1f}" in rendered
+        assert "基础分" not in rendered and "互动分" not in rendered
         assert f"近期：{expected_interaction - expected_baseline:+.1f}" in rendered
         assert f"{expected_recent:.1f}" not in rendered
         assert "近期分" not in rendered and "长期分" not in rendered
@@ -531,7 +532,7 @@ async def test_profile_text_omits_missing_columns_but_preserves_zero_affinity(co
         assert omitted not in text
     plugin.data_cache.get_user_profile_record.return_value["relation"] = 0
     _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
-    assert "好感度：0" in event.send.call_args.args[0].chain[0].text
+    assert "好感度：\n0.0（近期：+0.0）" in event.send.call_args.args[0].chain[0].text
 
 
 @pytest.mark.asyncio

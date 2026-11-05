@@ -198,8 +198,8 @@ async def test_reply_loads_speaker_scoped_affinity_stats_and_keeps_recent_reason
     assert profile.attrib["user_id"] == "alice"
     assert "累计评价：50次" in profile.text
     assert "近7天" not in profile.text
-    assert "好感度：75.8" in profile.text
-    assert "基础分：5；互动分：70.8（近期：+10.8）" in profile.text
+    assert "好感度：\n75.8（近期：+10.8）" in profile.text
+    assert "基础分" not in profile.text and "互动分" not in profile.text
     assert "近期分：" not in profile.text
     assert "长期分：" not in profile.text
     assert all(f"具体互动 {index}" in profile.text for index in range(3))
@@ -258,9 +258,10 @@ async def test_reply_includes_each_participant_profile_beyond_brief_limit(
         uid = users[index]
         assert "好感度标准：" not in profile.text
         assert f"你的称呼：称呼-{uid}" in profile.text
-        assert f"互动态度：态度-{uid}" in profile.text
-        assert f"好感度：{60 + index}.0" in profile.text
-        assert f"基础分：{index}；互动分：60.0（近期：+2.0）" in profile.text
+        assert "互动态度" not in profile.text
+        assert f"态度-{uid}" not in profile.text
+        assert f"好感度：\n{60 + index}.0（近期：+2.0）" in profile.text
+        assert "基础分" not in profile.text and "互动分" not in profile.text
         assert "累计评价：20次" in profile.text
         assert "近7天" not in profile.text
         assert "近期分：" not in profile.text

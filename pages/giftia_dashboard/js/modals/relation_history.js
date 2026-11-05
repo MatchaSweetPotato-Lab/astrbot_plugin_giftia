@@ -14,11 +14,9 @@ function renderHistoryScore(item) {
     const signedEffect = `${recentEffect >= 0 ? '+' : ''}${recentEffect.toFixed(1)}`;
     document.getElementById('user-relation-history-summary').innerHTML = `
         <div class="relation-score-total">
-            <div class="relation-score-heading">
-                <span class="relation-score-label">好感度：</span>
-                <strong class="relation-score-value">${Number(item.relation ?? 50).toFixed(1)}</strong>
+            <span class="relation-score-label">好感度：</span>
+            <div class="relation-score-heading"><strong class="relation-score-value">${Number(item.relation ?? 50).toFixed(1)}</strong><span class="relation-score-recent">（近期：${signedEffect}）</span>
             </div>
-            <span class="relation-score-formula">基础分：${Number(item.base_relation ?? 0)}；互动分：${interaction.toFixed(1)}（近期：${signedEffect}）</span>
             <span class="relation-score-counts">累计评价：${Number(item.total_count ?? 0)}次</span>
         </div>
     `;

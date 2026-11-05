@@ -51,6 +51,7 @@ DEFAULT_BOT_CONFIG = {
     "name": "Giftia",
     "nickname": "Giftia",
     "adapter_ids": [],
+    "relation_score_guide": "",
     "blocked_users": {},
     "decision_conf": {
         "provider_ids": [],
@@ -256,6 +257,8 @@ class BotConfigManager:
         bot["name"] = str(bot.get("name") or "Giftia").strip()
         bot["nickname"] = str(bot.get("nickname") or bot["name"]).strip()
         bot["adapter_ids"] = [str(a).strip() for a in bot.get("adapter_ids") or [] if a]
+        guide = bot.get("relation_score_guide")
+        bot["relation_score_guide"] = guide.strip() if isinstance(guide, str) else ""
         bot["blocked_users"] = {
             str(session).strip(): list(
                 dict.fromkeys(str(user).strip() for user in users if str(user).strip())

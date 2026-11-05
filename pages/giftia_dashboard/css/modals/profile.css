@@ -4,6 +4,16 @@
     max-width: 800px;
 }
 
+.relation-score-guide-modal-card {
+    max-width: 840px;
+}
+
+#relation-score-guide-text {
+    min-height: 280px;
+    line-height: 1.7;
+    resize: vertical;
+}
+
 .user-aliases-modal-card {
     max-width: 860px;
 }
@@ -37,7 +47,7 @@
 }
 
 .relation-score-label,
-.relation-score-formula,
+.relation-score-recent,
 .relation-score-counts {
     color: var(--font-secondary);
     font-size: 12px;
@@ -51,7 +61,7 @@
 .relation-score-heading {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    flex-wrap: wrap;
 }
 
 #user-relation-history-content {
