@@ -12,6 +12,7 @@ from core.conversation.memory_recall import search_memories_with_rerank
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
 from core.database.database import Database
+from core.handlers.commands import CommandHandler
 from core.llm.native_tools import SearchMemoryTool
 from core.llm.prompt import build_reply_prompt
 from core.memory.memory import LTM, get_memory_schema
@@ -607,17 +608,64 @@ async def test_full_automatic_recall_scores_the_complete_union_with_local_and_ex
 
 
 @pytest.mark.asyncio
-async def test_source_cleanup_removes_foreign_cache_copies_and_keeps_other_sources(
-    runtime,
+@pytest.mark.parametrize("group_id", ["source", ""])
+async def test_clear_command_removes_only_current_source_and_its_recall_copies(
+    runtime, group_id
 ):
     rt = runtime
     await rt.seed("removed", ["alice"], session="source")
     await rt.seed("kept", ["alice"], session="kept-source")
+    await rt.seed("other-bot", ["alice"], session="source", bot="other-bot")
+    await rt.cache.get_memories("bot", "source")
+    kept_memories = await rt.cache.get_memories("bot", "kept-source")
+    other_bot_memories = await rt.cache.get_memories("other-bot", "source")
     result = await rt.manager.search_and_filter_memories(
         "bot", "current", "topic", [], user_ids=["alice"]
     )
     rt.cache.merge_session_recalled_memories("bot", "current", result)
-    await rt.cache.delete_all_memories("bot", "source")
+    rt.cache.merge_session_recalled_memories("bot", "source", result)
+    other_bot_pool = rt.cache.merge_session_recalled_memories(
+        "other-bot",
+        "source",
+        [
+            {
+                "memory_id": "other-bot",
+                "text": "preserved",
+                "metadata": {"source_session_id": "source"},
+            }
+        ],
+    )
+    rt.plugin.adapter_id_map = {"adapter": "bot"}
+    event = SimpleNamespace(
+        platform_meta=SimpleNamespace(id="adapter"),
+        get_group_id=lambda: group_id,
+        get_sender_id=lambda: "source",
+        send=AsyncMock(),
+    )
+
+    _ = [chunk async for chunk in CommandHandler(rt.plugin).delete_all_memories(event)]
+
+    assert "成功" in event.send.call_args.args[0].chain[0].text
+    assert await rt.db.get_memories(bot_name="bot", group_or_user_id="source") == []
+    assert (
+        await rt.db.get_memories(bot_name="bot", group_or_user_id="kept-source")
+        == kept_memories
+    )
+    assert (
+        await rt.db.get_memories(bot_name="other-bot", group_or_user_id="source")
+        == other_bot_memories
+    )
+    assert {row["id"] for row in rt.ltm.table.to_arrow().to_pylist()} == {
+        "kept",
+        "other-bot",
+    }
+    assert "bot:source" not in rt.cache.memories
+    assert "bot:source" not in rt.cache.session_recalled_memories
+    assert list(rt.cache.memories["bot:kept-source"]) == kept_memories
+    assert list(rt.cache.memories["other-bot:source"]) == other_bot_memories
+    assert (
+        rt.cache.get_session_recalled_memories("other-bot", "source") == other_bot_pool
+    )
     assert [
         item.memory_id
         for item in rt.cache.get_session_recalled_memories("bot", "current")

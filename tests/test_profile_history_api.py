@@ -96,7 +96,9 @@ async def test_account_type_edits_are_shared_cached_and_preserved_by_other_updat
             "/profiles/user/update", json={**scope, "account_type": account_type}
         )
         assert result.json()["status"] == "success"
-        await client.post("/profiles/user/update", json={**scope, "attitude": "熟络"})
+        await client.post(
+            "/profiles/user/update", json={**scope, "avatar_description": "银色猫咪"}
+        )
         for group in ("group-a", "group-b", "user"):
             assert (
                 await plugin.data_cache.get_user_profile_record("bot", group, "user")
@@ -264,6 +266,15 @@ def test_history_route_is_registered_as_read_only():
     )
     assert mutation["methods"] == ["POST"]
     assert mutation["view_handler"] == manager.web_api.save_user_relation_history
+    guide_routes = {
+        tuple(item["methods"]): item["view_handler"]
+        for item in routes
+        if item["route"].endswith("/profiles/user/relation_guide")
+    }
+    assert guide_routes == {
+        ("GET",): manager.web_api.get_relation_score_guide,
+        ("POST",): manager.web_api.save_relation_score_guide,
+    }
 
 
 @pytest.mark.asyncio
@@ -284,8 +295,9 @@ async def test_manual_base_updates_derived_scores_and_keeps_interaction_history(
         "items"
     ][0]
     assert profile["base_relation"] == -70
-    assert profile["interaction_score"] == pytest.approx(600 / 11)
-    assert profile["relation"] == pytest.approx(-70 + 600 / 11)
+    assert profile["interaction_score"] == pytest.approx(3700 / 67)
+    assert profile["recent_baseline_score"] == 50
+    assert profile["relation"] == pytest.approx(-70 + 3700 / 67)
     cached = await plugin.data_cache.get_user_profile_record("bot", "group", "user")
     assert cached["relation"] == profile["relation"]
     assert (await plugin.data_cache.get_user_relation("bot", "group", "user"))[
@@ -327,7 +339,12 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     ).json()["data"]
     target = original["items"][1]
     operations = [
-        ({"action": "add", "delta": 5, "reason": "手动记录的帮助"}, 3 + 1300 / 18, 4),
+        (
+            {"action": "add", "delta": 5, "reason": "手动记录的帮助"},
+            3 + 72025 / 784,
+            4,
+            1700 / 27,
+        ),
         (
             {
                 "action": "update",
@@ -335,12 +352,13 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
                 "delta": -4,
                 "reason": "修正为明显冒犯",
             },
-            3 + 1200 / 21,
+            3 + 569300 / 6713,
             4,
+            1500 / 79,
         ),
     ]
     created_id = None
-    for revision, (operation, expected, count) in enumerate(operations):
+    for revision, (operation, expected, count, baseline) in enumerate(operations):
         await plugin.data_cache.get_user_profile("bot", "group", "user")
         await plugin.data_cache.get_user_profile_record("bot", "group", "user")
         await plugin.data_cache.get_user_relation("bot", "group", "user")
@@ -354,7 +372,9 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
             created_id = result["id"]
         assert result["revision"] == revision + 1
         assert result["score"]["relation"] == pytest.approx(expected)
+        assert result["score"]["recent_score"] == pytest.approx(4100 / 47)
         assert result["score"]["total_count"] == count
+        assert result["score"]["recent_baseline_score"] == pytest.approx(baseline)
         for cache in (
             plugin.data_cache.user_profiles,
             plugin.data_cache.user_profile_records,
@@ -376,7 +396,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
         "/profiles/user/relation_history/save",
         json={**scope, "action": "delete", "id": created_id, "revision": 2},
     )
-    assert response.json()["data"]["score"]["relation"] == pytest.approx(46.75)
+    assert response.json()["data"]["score"]["relation"] == pytest.approx(3 + 1500 / 79)
     revision = 3
     for item in original["items"]:
         response = await client.post(
@@ -388,6 +408,7 @@ async def test_history_create_edit_delete_recalculates_scores_and_invalidates_ca
     score = response.json()["data"]["score"]
     assert score["base_relation"] == 3
     assert score["interaction_score"] == 50
+    assert score["recent_baseline_score"] == 50
     assert score["relation"] == 53
     assert score["total_count"] == 0
 
@@ -697,7 +718,7 @@ async def test_profile_names_and_search_follow_the_selected_session(profile_api)
             "group_or_user_id": "group-c",
             "user_id": "user",
             "call_name": "",
-            "attitude": "友好",
+            "avatar_description": "白猫",
         },
     )
     await client.post(

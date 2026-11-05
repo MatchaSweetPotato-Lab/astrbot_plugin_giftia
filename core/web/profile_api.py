@@ -1,11 +1,13 @@
 import json
 import re
+from copy import deepcopy
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 from ..database.profile_store import PROFILE_NAMES_CTE
 from ..database.relation_history_store import RelationHistoryConflictError
+from ..llm.preset_prompts import RELATION_SCORE_GUIDE
 from ..utils.schemas import ACCOUNT_TYPE_LABELS
 from .web_helpers import USER_PROFILE_FIELD_KEYS
 
@@ -19,6 +21,66 @@ class ProfileApi:
         self.giftia.data_cache.invalidate_user_profile(bot_name, user_id)
 
     # ── User Profile APIs ───────────────────────────────────────────────
+
+    async def get_relation_score_guide(self):
+        """Read effective and default affinity guidance for one bot.
+
+        Returns:
+            Bot-scoped guidance, or a validation or storage error response.
+        """
+        bot_name = (request.query.get("bot_name") or "").strip()
+        if not bot_name:
+            return error_response("请选择 Bot")
+        try:
+            bots = self.giftia.bot_config_manager.load_bots()
+            bot = next((bot for bot in bots if bot["name"] == bot_name), None)
+            if bot is None:
+                return error_response("Bot 不存在", status_code=404)
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bot_name": bot_name,
+                        "guide": bot["relation_score_guide"] or RELATION_SCORE_GUIDE,
+                        "default_guide": RELATION_SCORE_GUIDE,
+                    },
+                }
+            )
+        except Exception:
+            logger.exception("[Giftia API] Failed to read affinity guidance")
+            return error_response("读取好感度说明失败", status_code=500)
+
+    async def save_relation_score_guide(self):
+        """Persist one bot's guidance before refreshing the live configuration.
+
+        Returns:
+            A success response, or a validation or storage error response.
+        """
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return error_response("请求内容必须是对象")
+            bot_name = body.get("bot_name")
+            guide = body.get("guide")
+            if not isinstance(bot_name, str) or not bot_name.strip():
+                return error_response("请选择 Bot")
+            if not isinstance(guide, str) or len(guide) > 12000:
+                return error_response("好感度说明必须为文本，最多 12000 字")
+            bot_name = bot_name.strip()
+            manager = self.giftia.bot_config_manager
+            bots = deepcopy(manager.load_bots())
+            bot = next((bot for bot in bots if bot["name"] == bot_name), None)
+            if bot is None:
+                return error_response("Bot 不存在", status_code=404)
+            guide = guide.strip()
+            bot["relation_score_guide"] = "" if guide == RELATION_SCORE_GUIDE else guide
+            if not manager.save_bots(bots):
+                return error_response("保存好感度说明失败", status_code=500)
+            self.giftia.sync_bot_maps()
+            return json_response({"status": "success", "message": "好感度说明已保存"})
+        except Exception:
+            logger.exception("[Giftia API] Failed to save affinity guidance")
+            return error_response("保存好感度说明失败", status_code=500)
 
     async def get_user_profiles(self):
         """Get user profiles with pagination and filters."""
@@ -97,7 +159,7 @@ class ProfileApi:
                 SELECT up.id, up.bot_name, up.user_id,
                        ? AS group_or_user_id,
                        up.resolved_call_name AS call_name, up.local_call_name, up.personality,
-                       up.interests, up.attitude, up.agreements, up.extra,
+                       up.interests, up.agreements, up.extra,
                        up.avatar_description, up.account_type,
                        up.created_at, up.updated_at,
                        up.title
@@ -129,7 +191,6 @@ class ProfileApi:
                             ),
                             "personality": r["personality"] or "",
                             "interests": r["interests"] or "",
-                            "attitude": r["attitude"] or "",
                             "agreements": r["agreements"] or "",
                             "extra": r["extra"] or "",
                             "avatar_description": r["avatar_description"] or "",

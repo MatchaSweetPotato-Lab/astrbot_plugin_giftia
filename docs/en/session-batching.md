@@ -21,15 +21,6 @@ Batch starts in the same session are at least **2 seconds** apart. Each batch ho
 
 A decision against replying completes only its own batch. Arrivals during that decision form the next batch. When a decision allows a reply, ready messages arriving before the reply starts can join it, up to the same 50-message limit. Arrivals after the reply starts remain for the next round. Separate sessions can run independently.
 
-Select an optional review model under **正式回复 → 复审模型（可选）** in the bot editor (`llm_reply_conf.review_provider_id`); leaving it empty disables review. If new conversation messages arrive after the input is frozen, the first unsent draft can receive one consistency review before state changes or action dispatch. Only `message` content is reviewed, excluding speech, images and stickers. Approval sends the original draft and leaves arrivals queued. Rejection restores the original batch's undecided and pending states, preserves its order, merges arrivals within the 50-message limit, and reruns decision and generation. The regenerated reply is sent without another review; overflow stays queued. Each logical reply has its own single review opportunity. Actual native tool execution or later tool turns skip review. Timeouts (5 seconds) and invalid review output allow the original draft through.
+Select an optional review model under **正式回复 → 复审模型（可选）** in the bot editor (`llm_reply_conf.review_provider_id`); leaving it empty disables review. If new conversation messages arrive after the input is frozen, the first unsent draft can receive one consistency review before state changes or action dispatch. Only `message` content is reviewed, excluding speech, images and stickers. Approval sends the original draft and leaves arrivals queued. Rejection restores the original batch's undecided and pending states, preserves its order, merges arrivals within the 50-message limit, and reruns decision and generation. The regenerated reply is sent without another review; overflow stays queued. Each logical reply has its own single review opportunity. Actual native tool execution or later tool turns skip review. Timeouts (10 seconds) and invalid review output allow the original draft through.
 
-The “会话批处理” (session batching) settings group, stored as `concurrent_config`, has been removed:
-
-| Former setting (stored key) | Current behavior |
-| --- | --- |
-| Minimum decision interval (`group_throttle_time`) | Fixed at 2 seconds |
-| Message debounce (`user_debounce_time`) | Automatic 0.8–15 seconds based on message and character counts |
-| Maximum aggregation wait (`user_max_debounce_time`) | Up to 15 additional seconds from the first ready message; later arrivals never extend the deadline |
-| Maximum messages per batch (`batch_max_messages`) | Fixed at 50; overflow stays queued |
-
-Saved legacy values are ignored and require no migration. To reduce proactive replies, lower the proactive trigger probability or shorten the active decision window in the bot settings. See the [detailed usage guide](../../DETAIL.md#会话批处理与消息边界) for message boundaries and failure handling.
+To reduce proactive replies, lower the proactive trigger probability or shorten the active decision window in the bot settings. See the [detailed usage guide](../../DETAIL.md#会话批处理与消息边界) for message boundaries and failure handling.

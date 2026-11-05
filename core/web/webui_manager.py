@@ -323,6 +323,18 @@ class WebUIManager:
             desc="Get user profiles list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/relation_guide",
+            view_handler=self.web_api.get_relation_score_guide,
+            methods=["GET"],
+            desc="Get bot affinity guidance",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/relation_guide",
+            view_handler=self.web_api.save_relation_score_guide,
+            methods=["POST"],
+            desc="Save bot affinity guidance",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user/relation_history",
             view_handler=self.web_api.get_user_relation_history,
             methods=["GET"],

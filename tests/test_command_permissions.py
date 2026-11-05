@@ -116,6 +116,7 @@ def event(request):
     event.get_sender_id.return_value = "member"
     event.get_self_id.return_value = "bot"
     event.get_group_id.return_value = "" if request.param else "group"
+    event.is_button_interaction.return_value = False
     event.get_platform_name.return_value = "aiocqhttp"
     event.get_message_type.return_value = (
         MessageType.FRIEND_MESSAGE if request.param else MessageType.GROUP_MESSAGE
@@ -161,6 +162,7 @@ async def test_denied_commands_are_silent_and_continue_to_listeners(
         ("状态", "get_bot_status", {}),
         ("媒体转述", "get_media_caption", {}),
         ("用户画像 @小 明", "get_user_profile", {"target": "@小 明"}),
+        ("清空记忆", "delete_all_memories", {}),
         ("休眠", "silence", {}),
     ],
 )

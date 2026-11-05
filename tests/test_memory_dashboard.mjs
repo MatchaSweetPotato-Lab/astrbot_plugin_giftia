@@ -15,6 +15,7 @@ class Field {
         if (!this.children.has(selector)) this.children.set(selector, new Field());
         return this.children.get(selector);
     }
+    querySelectorAll() { return []; }
     replaceChildren(...options) { this.options = options; this.value = options[0]?.value || ''; }
     append(...options) { this.options.push(...options); }
 }
@@ -23,6 +24,7 @@ globalThis.Option = class {
 };
 globalThis.document = {
     addEventListener() {},
+    querySelectorAll() { return []; },
     getElementById(id) {
         if (!fields.has(id)) fields.set(id, new Field());
         return fields.get(id);
@@ -31,12 +33,14 @@ globalThis.document = {
 globalThis.window = {};
 await import('../pages/giftia_dashboard/js/utils.js');
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
+const { getScopedFilterParams } = await import('../pages/giftia_dashboard/js/modules/filters.js');
 const { loadMemories, renderMemories } = await import('../pages/giftia_dashboard/js/modules/render/memories.js');
 const { renderChatHistory } = await import('../pages/giftia_dashboard/js/modules/render/history.js');
 const { renderRelationChanges } = await import('../pages/giftia_dashboard/js/modules/render/relation_history.js');
 const { renderUserProfiles } = await import('../pages/giftia_dashboard/js/modules/render/profiles.js');
 await import('../pages/giftia_dashboard/js/modals/memory.js');
 await import('../pages/giftia_dashboard/js/modals/profile.js');
+await import('../pages/giftia_dashboard/js/modals/relation_guide.js');
 await import('../pages/giftia_dashboard/js/modals/relation_history.js');
 const get = id => document.getElementById(id);
 
@@ -51,9 +55,7 @@ beforeEach(() => {
     window.closeModal = () => {};
     window.showToast = () => {};
     window.GiftiaApp = {
-        getScopedFilterParams: () => ({
-            bot_name: get('memory-bot-name').value
-        }),
+        getScopedFilterParams,
         resetPagination: () => {},
         refreshScopedFilters: async () => {},
         loadMemories: async () => {},
@@ -140,7 +142,7 @@ test('slower responses cannot replace the newly selected conversation', async ()
     assert.equal(state.pagination.memories.total, 1);
 });
 
-test('fact edits preserve revision and source evidence without classification fields', async () => {
+test('fact edits preserve revision and source evidence while setting memory type', async () => {
     const item = {
         memory_id: 'fact', bot_name: 'bot', group_or_user_id: 'group', revision: 7,
         text: 'original text', metadata: { topic: '角色喜好', evidence: [{ quote: 'original' }] }
@@ -149,13 +151,85 @@ test('fact edits preserve revision and source evidence without classification fi
     let body;
     window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
     get('edit-mem-text').value = 'corrected text';
+    assert.equal(get('edit-mem-type').value, '');
+    get('edit-mem-type').value = 'event';
     await window.submitEditMemory();
     assert.equal(body.revision, 7);
     assert.equal(body.text, 'corrected text');
+    assert.equal(body.memory_type, 'event');
     for (const immutable of ['status', 'expires_at', 'evidence', 'user_id', 'kind', 'subject_id']) {
         assert.equal(Object.hasOwn(body, immutable), false);
     }
     assert.deepEqual(item.metadata.evidence, [{ quote: 'original' }]);
+});
+
+test('memory cards display fact, event and unclassified types', () => {
+    renderMemories([
+        { text: 'background', metadata: { memory_type: 'fact' } },
+        { text: 'occasion', metadata: { memory_type: 'event' } },
+        { text: 'legacy', metadata: {} },
+        { text: 'invalid legacy type', metadata: { memory_type: '__proto__' } },
+    ]);
+    const html = get('memory-list').innerHTML;
+    for (const label of ['事实', '具体事件', '未分类']) assert.ok(html.includes(label));
+    assert.equal((html.match(/未分类/g) || []).length, 2);
+});
+
+test('memory type filter is included in list and scoped filter requests', async () => {
+    get('memory-type').value = 'unclassified';
+    assert.equal(getScopedFilterParams('memories').memory_type, 'unclassified');
+    let params;
+    window.apiGet = async (path, value) => {
+        params = value;
+        return { status: 'success', data: { items: [], total: 0 } };
+    };
+    await loadMemories();
+    assert.equal(params.memory_type, 'unclassified');
+});
+
+test('older type filter responses cannot replace the newly selected type', async () => {
+    const pending = [];
+    window.apiGet = () => new Promise(resolve => pending.push(resolve));
+    get('memory-type').value = 'fact';
+    const first = loadMemories();
+    get('memory-type').value = 'event';
+    const second = loadMemories();
+    pending[1]({ status: 'success', data: { total: 1, items: [{ text: 'selected event', metadata: { memory_type: 'event' } }] } });
+    await second;
+    pending[0]({ status: 'success', data: { total: 9, items: [{ text: 'stale fact', metadata: { memory_type: 'fact' } }] } });
+    await first;
+    assert.match(get('memory-list').innerHTML, /selected event/);
+    assert.doesNotMatch(get('memory-list').innerHTML, /stale fact/);
+    assert.equal(state.pagination.memories.total, 1);
+});
+
+test('manual creation inherits and keeps the selected event type', async () => {
+    get('memory-type').value = 'event';
+    window.openAddMemoryModal();
+    assert.equal(get('add-mem-type').value, 'event');
+    for (const [field, value] of Object.entries({ bot: 'bot', group: 'group', 'associated-ids': 'A', topic: 'occasion', text: 'A attended an event' })) {
+        get(`add-mem-${field}`).value = value;
+    }
+    let body;
+    window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
+    await window.submitAddMemory();
+    assert.equal(body.memory_type, 'event');
+    assert.equal(get('memory-type').value, 'event');
+});
+
+test('memory cleanup inherits the selected type and submits it with its criteria', async () => {
+    get('memory-type').value = 'unclassified';
+    window.openMemoryCleanModal();
+    assert.equal(get('clean-mem-type').value, 'unclassified');
+    let body;
+    window.apiPost = async (path, value) => {
+        body = value;
+        return { status: 'success', data: { items: [], total: 0 } };
+    };
+    await window.loadMemoryCleanCandidates();
+    assert.equal(body.memory_type, 'unclassified');
+    assert.equal(body.bot_name, 'bot');
+    assert.equal(body.group_or_user_id, 'group');
 });
 
 test('manual creation saves all participants and selects the saved conversation', async () => {
@@ -179,7 +253,7 @@ test('profile rendering and saves exclude retired fields without clearing stored
         agreements: 'retired agreement', extra: 'retired extra', title: 'retired title'
     };
     const html = window.renderProfileCard(profile);
-    assert.doesNotMatch(html, /retired/);
+    assert.doesNotMatch(html, /retired|friendly|互动态度/);
     assert.match(html, /local name/);
     window.openEditUserProfileModal(profile);
     get('edit-user-prof-base-relation').value = '5';
@@ -187,11 +261,89 @@ test('profile rendering and saves exclude retired fields without clearing stored
     window.apiPost = async (path, value) => { body = value; return { status: 'success' }; };
     await window.submitEditUserProfile();
     assert.equal(body.call_name, 'local name');
-    assert.equal(body.attitude, 'friendly');
     assert.equal(body.base_relation, 5);
     assert.equal(Object.hasOwn(body, 'relation'), false);
-    for (const retired of ['personality', 'interests', 'agreements', 'extra', 'title']) assert.equal(Object.hasOwn(body, retired), false);
+    for (const retired of ['personality', 'interests', 'attitude', 'agreements', 'extra', 'title']) assert.equal(Object.hasOwn(body, retired), false);
     assert.equal(profile.agreements, 'retired agreement');
+});
+
+test('affinity guidance saves to the bot captured when opening the editor', async () => {
+    get('profile-bot-name').value = 'bot-a';
+    const calls = [];
+    window.apiGet = async (endpoint, params) => {
+        calls.push([endpoint, params]);
+        return { status: 'success', data: { guide: '已保存的说明', default_guide: '默认说明' } };
+    };
+    window.apiPost = async (endpoint, body) => {
+        calls.push([endpoint, body]);
+        return { status: 'success' };
+    };
+    let closed = '';
+    window.closeModal = id => { closed = id; };
+    await window.openRelationScoreGuideModal();
+    assert.equal(get('relation-score-guide-text').value, '已保存的说明');
+    assert.match(get('relation-score-guide-scope').textContent, /bot-a/);
+    get('profile-bot-name').value = 'bot-b';
+    get('relation-score-guide-text').value = '  80以上允许主动接梗\n90以上允许谈心  ';
+    await window.saveRelationScoreGuide();
+    assert.deepEqual(calls, [
+        ['/profiles/user/relation_guide', { bot_name: 'bot-a' }],
+        ['/profiles/user/relation_guide', { bot_name: 'bot-a', guide: '80以上允许主动接梗\n90以上允许谈心' }]
+    ]);
+    assert.equal(closed, 'relation-score-guide-modal');
+});
+
+test('restoring guidance is a draft change and cancel discards it on reopening', async () => {
+    get('profile-bot-name').value = 'bot';
+    window.apiGet = async () => ({ status: 'success', data: { guide: '自定义说明', default_guide: '默认说明' } });
+    window.apiPost = async () => { throw new Error('must not save'); };
+    await window.openRelationScoreGuideModal();
+    window.restoreDefaultRelationScoreGuide();
+    assert.equal(get('relation-score-guide-text').value, '默认说明');
+    window.closeModal('relation-score-guide-modal');
+    await window.openRelationScoreGuideModal();
+    assert.equal(get('relation-score-guide-text').value, '自定义说明');
+});
+
+test('guidance failures preserve drafts and allow retry without duplicate submissions', async () => {
+    get('relation-score-guide-bot').value = 'bot';
+    get('relation-score-guide-text').value = '尚未保存';
+    let finish;
+    let requests = 0;
+    let closed = false;
+    let toast = '';
+    window.closeModal = () => { closed = true; };
+    window.showToast = text => { toast = text; };
+    window.apiPost = () => { requests++; return new Promise(resolve => { finish = resolve; }); };
+    const saving = window.saveRelationScoreGuide();
+    await window.saveRelationScoreGuide();
+    assert.equal(requests, 1);
+    finish({ status: 'error', message: '写入失败' });
+    await saving;
+    assert.equal(get('relation-score-guide-text').value, '尚未保存');
+    assert.equal(get('relation-score-guide-save').disabled, false);
+    assert.equal(closed, false);
+    assert.match(toast, /写入失败/);
+});
+
+test('a late guidance save does not close or overwrite another bot editor', async () => {
+    get('profile-bot-name').value = 'bot-a';
+    window.apiGet = async (endpoint, { bot_name }) => ({
+        status: 'success', data: { guide: `${bot_name} 的说明`, default_guide: '默认说明' }
+    });
+    let finish;
+    window.apiPost = () => new Promise(resolve => { finish = resolve; });
+    let closed = false;
+    window.closeModal = () => { closed = true; };
+    await window.openRelationScoreGuideModal();
+    const saving = window.saveRelationScoreGuide();
+    get('profile-bot-name').value = 'bot-b';
+    await window.openRelationScoreGuideModal();
+    finish({ status: 'success' });
+    await saving;
+    assert.equal(closed, false);
+    assert.equal(get('relation-score-guide-bot').value, 'bot-b');
+    assert.equal(get('relation-score-guide-text').value, 'bot-b 的说明');
 });
 
 test('fallback names are placeholders and are not copied into a local profile on save', async () => {
@@ -276,10 +428,11 @@ test('profile without changes still offers the zero affinity history button', ()
     }
 });
 
-test('profile scores retain fractions and show components and counts in the affinity modal', async () => {
+test('profile scores retain fractions and show final scores with recent effects and counts', async () => {
     const profile = {
         user_id: 'friend', relation: 83.1818, base_relation: 0,
         interaction_score: 83.1818, recent_score: 75, long_term_score: 95.4545,
+        recent_baseline_score: 95.4545,
         recent_count: 10, total_count: 100
     };
     renderUserProfiles([profile]);
@@ -290,11 +443,40 @@ test('profile scores retain fractions and show components and counts in the affi
     await window.openUserRelationHistoryModal(profile);
     const summary = get('user-relation-history-summary').innerHTML;
     assert.match(summary, /83\.2/);
-    assert.match(summary, /基础 0 \+ 互动 83\.2/);
-    assert.match(summary, /75\.0/);
-    assert.match(summary, /95\.5/);
-    assert.match(summary, /最近 10 次评价/);
-    assert.match(summary, /累计 100 次评价/);
+    assert.match(summary, /83\.2<\/strong><span[^>]*>（近期：-12\.3）/);
+    assert.doesNotMatch(summary, /基础分|互动分|近期分|长期分|75\.0|95\.5/);
+    assert.doesNotMatch(summary, /近\s*7\s*天/);
+    assert.match(summary, /累计评价：100次/);
+});
+
+test('affinity modal derives signed recent effects before rounding component scores', async () => {
+    for (const [interaction, baseline, effect] of [
+        [84.94, 80.06, '+4.9'],
+        [84.86, 86.44, '-1.6'],
+        [84.86, 84.94, '-0.1'],
+        [84.94, 84.96, '+0.0'],
+        [3, 0, '+3.0']
+    ]) {
+        const profile = {
+            user_id: 'friend', relation: 30 + interaction, base_relation: 30,
+            interaction_score: interaction, long_term_score: 90,
+            recent_baseline_score: baseline,
+            recent_count: 10, total_count: 50
+        };
+        window.apiGet = async () => ({ status: 'success', data: {
+            score: profile, items: [], total: 50, page: 1
+        } });
+        await window.openUserRelationHistoryModal(profile);
+        const summary = get('user-relation-history-summary').innerHTML;
+        assert.ok(summary.includes(`${(30 + interaction).toFixed(1)}</strong><span class="relation-score-recent">（近期：${effect}）`));
+        assert.doesNotMatch(summary, /基础分|互动分|近期分|长期分|-0\.0/);
+    }
+});
+
+test('affinity modal without a recent baseline shows no known recent effect', async () => {
+    window.apiGet = async () => ({ status: 'success', data: { items: [], total: 0, page: 1 } });
+    await window.openUserRelationHistoryModal({ interaction_score: 80, long_term_score: 75 });
+    assert.match(get('user-relation-history-summary').innerHTML, /50\.0<\/strong><span[^>]*>（近期：\+0\.0）/);
 });
 
 test('editing a fractional base does not submit an update', async () => {

@@ -11,11 +11,11 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.plugin = plugin
         self.passive_memory_locks: dict[str, asyncio.Lock] = {}
         self.summary_tasks: dict[str, asyncio.Task] = {}
-        self.attitude_review_locks: dict[str, asyncio.Lock] = {}
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()
         self.vector_locks: dict[str, asyncio.Lock] = {}
+        self.novelty_locks: dict[str, asyncio.Lock] = {}
         self._closed = False
 
     def register_jobs(self) -> None:
@@ -128,8 +128,9 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         filter_active_users: bool = True,
         *,
         user_ids: list[str] | None = None,
+        raise_errors: bool = False,
     ) -> list[dict]:
-        """Recall indexed facts within the configured recall scope.
+        """Recall indexed memories within the configured recall scope.
 
         Args:
             bot_name: Owning bot configuration.
@@ -142,9 +143,13 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
                 without explicit users, keep administrative searches session-local.
             user_ids: Target accounts in user scope, or an explicit narrowing
                 filter in session and all scopes. None uses the configured scope.
+            raise_errors: Propagate vector search failures for retryable maintenance.
 
         Returns:
             Factual memories with matching index revisions.
+
+        Raises:
+            Exception: A vector search failed while raise_errors is true.
         """
         recall_scope = resolve_memory_recall_scope(self.plugin)
         if not filter_active_users and user_ids is None:
@@ -203,6 +208,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             limit=limit,
             threshold=threshold,
             include_ids=eligible_ids,
+            raise_errors=raise_errors,
         )
         if not embedding_memories:
             return []

@@ -1,10 +1,11 @@
-"""Factual memory records and verified source evidence."""
+"""Typed memory records and verified source evidence."""
 
 import hashlib
 import json
 import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -76,14 +77,20 @@ class MemoryEvidence(BaseModel):
 class MemoryRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
+    memory_type: Literal["fact", "event"] = Field(
+        description="fact 为被提及的持续信息或既往经历，需去重整理；event 为本批新近发生的事件或互动，含本次讲述旧事的动作，直接保存。同段聊天可拆成两类记忆。"
+    )
     associated_user_ids: list[str] = Field(min_length=1, max_length=20)
     topic: str = Field(min_length=1, max_length=80)
     text: str = Field(
         min_length=1,
         max_length=300,
-        description="简明陈述事实，每条记忆只表达一个事实。",
+        description="简明陈述一个事实，自身用我；每位群友首次出现时用称呼（完整 user_id），无称呼时用完整 user_id。",
     )
-    occurred_at: str = ""
+    occurred_at: str = Field(
+        default="",
+        description="仅 event 可填写明确的实际发生时间（带时区的 ISO 格式），不明确时留空；fact 留空，记录时间由程序保存。",
+    )
     importance: StrictInt = Field(
         default=5,
         ge=1,
@@ -97,6 +104,31 @@ class MemoryRecords(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     memories: list[MemoryRecord] = Field(max_length=50)
+
+
+class MemoryNoveltyDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    candidate_id: StrictInt = Field(ge=1)
+    is_new: bool
+    text: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+        description="仅保留本批新增信息的完整事实正文，保留涉及群友的称呼、完整账号锚定及必要的时间限定；无需修改或丢弃时为 null。",
+    )
+    topic: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        description="需要修改时输出候选的新主题；无需修改或丢弃时为 null。",
+    )
+
+
+class MemoryNoveltyReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decisions: list[MemoryNoveltyDecision] = Field(min_length=1, max_length=50)
 
 
 def memory_metadata(memory: dict) -> dict:
@@ -204,7 +236,9 @@ def validate_memory_records(
             evidence.append(verified)
         item["evidence"] = list({ref["source_id"]: ref for ref in evidence}.values())
         item["new_source_ids"] = sorted({ref.source_id for ref in record.evidence})
-        if item["occurred_at"]:
+        if item["memory_type"] == "fact":
+            item["occurred_at"] = ""
+        elif item["occurred_at"]:
             try:
                 timestamp = datetime.fromisoformat(
                     item["occurred_at"].replace("Z", "+00:00")
@@ -214,10 +248,12 @@ def validate_memory_records(
                 raise ValueError("Invalid occurred_at") from error
         fingerprint = json.dumps(
             [
+                item["memory_type"],
                 item["associated_user_ids"],
                 record.topic,
                 " ".join(record.text.split()),
                 item["new_source_ids"],
+                item["occurred_at"] if item["memory_type"] == "event" else "",
             ],
             ensure_ascii=False,
         )

@@ -240,21 +240,36 @@ class CommandHandler:
         await self.plugin.data_cache.delete_memory(memory_id)
         yield await event.send(MessageChain([Plain("删除记忆成功")]))
 
-    async def delete_all_memories(
-        self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
-    ):
-        """删除全部记忆"""
-        if not self.plugin.embedding_conf.get("enabled", False):
-            logger.error("未启用embedding功能")
-            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
+    async def delete_all_memories(self, event: AstrMessageEvent):
+        """Clear only the current bot's factual memories in this conversation.
+
+        Args:
+            event: Command event identifying the bot and conversation.
+
+        Yields:
+            A success or failure response after the deletion finishes.
+        """
+        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("当前适配器未绑定机器人")]))
+            return
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        if not group_or_user_id:
+            yield await event.send(MessageChain([Plain("无法确定当前会话")]))
             return
         try:
             await self.plugin.data_cache.delete_all_memories(
                 bot_name=bot_name, group_or_user_id=group_or_user_id
             )
-        except Exception:
-            logger.error("删除全部记忆失败")
-        yield await event.send(MessageChain([Plain("删除全部记忆成功")]))
+        except Exception as error:
+            logger.error(
+                f"Failed to clear conversation memories ({bot_name}:{group_or_user_id}): {error}"
+            )
+            yield await event.send(
+                MessageChain([Plain("清空当前会话记忆失败，请重试")])
+            )
+            return
+        yield await event.send(MessageChain([Plain("清空当前会话记忆成功")]))
 
     async def fill_energy(self, event: AstrMessageEvent, bot_name: str):
         """给当前群的指定机器人加满能量"""
@@ -651,9 +666,9 @@ caption: {media_caption.caption}"""
         if report["relation"] is not None:
             lines.extend(
                 [
-                    f"好感度：{report['relation']:.1f}",
-                    f"基础分：{report['base_relation']} + 互动分：{report['interaction_score']:.1f}",
-                    f"近期分：{report['recent_score']:.1f} · 长期分：{report['long_term_score']:.1f} · 共 {report['total_count']} 次评价",
+                    "好感度：",
+                    report["relation_summary"],
+                    f"累计评价：{report['total_count']}次",
                 ]
             )
         if report["profile_fields"]:
@@ -912,25 +927,11 @@ caption: {media_caption.caption}"""
         nickname = bot_conf.get("nickname", bot_name)
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
-        # 1. 重置当前群/会话的接话活跃分析窗口为 0
         fmt_key = f"{bot_name}:{group_or_user_id}"
         self.plugin.active_reply_counters[fmt_key] = 0
 
-        # 2. 将当前会话 Bot 的临时状态更新为「不活跃」并持久化
-        await self.plugin.data_cache.set_bot_status(
-            bot_name=bot_name,
-            group_id=group_or_user_id,
-            status=Status(state="不活跃"),
-        )
-
         yield await event.send(
-            MessageChain(
-                [
-                    Plain(
-                        f"已将【{nickname}】在当前会话的状态设置为「不活跃」，接话分析窗口已重置。"
-                    )
-                ]
-            )
+            MessageChain([Plain(f"已重置【{nickname}】在当前会话的接话分析窗口。")])
         )
 
     async def force_summarize(

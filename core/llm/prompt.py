@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape, quoteattr
 from astrbot.api.message_components import At, Plain, Reply
 
 from ..memory.atomic import memory_metadata
+from ..utils.relation_display import build_relation_display
 from ..utils.schemas import (
     ACCOUNT_TYPE_LABELS,
     MediaCaption,
@@ -31,7 +32,6 @@ MAX_FORWARDED_INDEX_IN_PROMPT = 20
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
-    ("attitude", "互动态度"),
     ("avatar_description", "头像描述"),
 ]
 
@@ -902,7 +902,7 @@ def build_memory_items(
         current_session_id: Requesting conversation used to identify external sources.
 
     Returns:
-        Escaped memory XML with factual text, times and at most one source locator.
+        Escaped memory XML with type-specific times and at most one source locator.
     """
     if seen_ids is None:
         seen_ids = set()
@@ -924,7 +924,10 @@ def build_memory_items(
         if not text or key in seen_ids:
             continue
         metadata = memory_metadata(item)
-        attrs = []
+        memory_type = metadata.get("memory_type")
+        if memory_type not in ("fact", "event"):
+            memory_type = "unclassified"
+        attrs = [f"memory_type={quoteattr(memory_type)}"]
         source_label = str(metadata.get("source_label") or "").strip()
         source_session_id = metadata.get("source_session_id") or item.get(
             "group_or_user_id"
@@ -984,18 +987,19 @@ def build_memory_items(
                 attrs.append(
                     f"message_id={quoteattr(message_ids[len(message_ids) // 2])}"
                 )
-        times = {
-            field: item.get(field) or metadata.get(field)
-            for field in (
-                "occurred_at",
-                "observed_from",
-                "observed_until",
-            )
-        }
-        if not any(
-            times[field] for field in ("occurred_at", "observed_from", "observed_until")
-        ):
-            times["recorded_at"] = item.get("created_at")
+        if memory_type == "fact":
+            times = {"recorded_at": item.get("created_at")}
+        elif memory_type == "event":
+            times = {
+                "occurred_at": item.get("occurred_at") or metadata.get("occurred_at")
+            }
+        else:
+            times = {
+                field: item.get(field) or metadata.get(field)
+                for field in ("occurred_at", "observed_from", "observed_until")
+            }
+            if not any(times.values()):
+                times["recorded_at"] = item.get("created_at")
         for field, value in times.items():
             if isinstance(value, str) and value.strip():
                 attrs.append(f"{field}={quoteattr(format_memory_time(value))}")
@@ -1085,19 +1089,17 @@ def build_user_profile_block(
         )
 
     if relation_score:
-        user_relation = (relation_score["relation"], "")
-    relation_text = build_user_relation(user_relation)
-    if relation_text:
-        parts.append(relation_text)
-
-    if relation_score:
         parts.extend(
             [
-                f"基础分：{relation_score['base_relation']}；互动分：{relation_score['interaction_score']:.1f}",
-                f"近期分：{relation_score['recent_score']:.1f}（最近{relation_score['recent_count']}次）；"
-                f"长期分：{relation_score['long_term_score']:.1f}（共{relation_score['total_count']}次）",
+                "好感度：",
+                build_relation_display(relation_score)["relation_summary"],
+                f"累计评价：{relation_score['total_count']}次",
             ]
         )
+    else:
+        relation_text = build_user_relation(user_relation)
+        if relation_text:
+            parts.append(relation_text)
 
     changes = []
     for change in (relation_changes or [])[-3:]:

@@ -7,7 +7,6 @@ USER_PROFILE_FIELD_KEYS = (
     "call_name",
     "personality",
     "interests",
-    "attitude",
     "agreements",
     "extra",
     "avatar_description",

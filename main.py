@@ -437,13 +437,9 @@ class Giftia(Star):
 
     @admin_permission
     @filter.command("清空记忆")
-    async def delete_all_memories(
-        self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
-    ):
-        """删除全部记忆"""
-        async for chunk in self.cmd_handler.delete_all_memories(
-            event, bot_name, group_or_user_id
-        ):
+    async def delete_all_memories(self, event: AstrMessageEvent):
+        """清空当前会话的长期记忆"""
+        async for chunk in self.cmd_handler.delete_all_memories(event):
             yield chunk
 
     @admin_permission

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from aiocqhttp import Event
 from core.conversation import chat_manager as chat_module
 from core.conversation.chat_manager import ChatManager
 from core.utils.schemas import MessageData, XmlLlmResult
@@ -291,6 +292,75 @@ async def test_ignored_message_keeps_default_llm_behavior(runtime, reason):
     assert plugin.running_tasks == {}
     event.should_call_llm.assert_not_called()
     event.stop_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_format", ["dict", "object", "onebot", "name"])
+@pytest.mark.parametrize(
+    "notice_type,sub_type", [("notify", "input_status"), ("input_status", "")]
+)
+@pytest.mark.parametrize("status_text", ["对方正在输入...", ""])
+async def test_private_typing_notice_is_ignored(
+    runtime, raw_format, notice_type, sub_type, status_text
+):
+    plugin, manager, event = runtime
+    plugin.passive_memory_enabled = True
+    manager.job = AsyncMock()
+    event.get_group_id = lambda: ""
+    event.unified_msg_origin = "adapter:FriendMessage:200"
+    payload = {
+        "post_type": "notice",
+        "notice_type": notice_type,
+        "sub_type": sub_type,
+        "self_id": 999,
+        "user_id": 200,
+        "status_text": status_text,
+    }
+    if raw_format == "object":
+        raw_message = SimpleNamespace(**payload)
+    elif raw_format == "onebot":
+        raw_message = Event.from_payload(payload)
+    elif raw_format == "name":
+        name = f"notice.{notice_type}" + (f".{sub_type}" if sub_type else "")
+        raw_message = SimpleNamespace(name=name, status_text=status_text)
+    else:
+        raw_message = payload
+    event.message_obj.raw_message = raw_message
+    original_send = event.send
+
+    await manager.handle_message(event)
+    await asyncio.gather(*list(plugin.running_tasks.values()))
+
+    manager.job.assert_not_awaited()
+    plugin.data_cache.add_message.assert_not_awaited()
+    plugin.passive_memory_manager.check_and_trigger_passive_memory.assert_not_awaited()
+    assert plugin.running_tasks == {}
+    assert event.send is original_send
+    event.should_call_llm.assert_not_called()
+    event.stop_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"post_type": "message", "message": "对方正在输入..."},
+        {"post_type": "notice", "notice_type": "notify", "sub_type": "poke"},
+        {"post_type": "notice", "notice_type": "friend_msg_emoji_like"},
+    ],
+)
+async def test_private_messages_and_interactions_are_processed(runtime, payload):
+    plugin, manager, event = runtime
+    manager.job = AsyncMock()
+    event.get_group_id = lambda: ""
+    event.unified_msg_origin = "adapter:FriendMessage:200"
+    event.message_obj.raw_message = payload
+
+    await manager.handle_message(event)
+    await asyncio.gather(*list(plugin.running_tasks.values()))
+
+    manager.job.assert_awaited_once_with(event)
+    assert plugin.running_tasks == {}
 
 
 @pytest.mark.asyncio

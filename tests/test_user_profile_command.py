@@ -39,6 +39,7 @@ def command(tmp_path):
                     "interaction_score": 50,
                     "recent_score": 50,
                     "long_term_score": 50,
+                    "recent_baseline_score": 50,
                     "total_count": 0,
                     "recent_count": 0,
                     "title": "朋友",
@@ -78,9 +79,13 @@ async def test_profile_id_lookup_is_scoped_and_defaults_to_text(
     assert f"用户 ID：{user_id}" in text
     assert "称呼：小明" in text
     assert "其他外号：阿明" in text
-    assert "互动态度：友好\n认真回应" in text
+    assert "互动态度" not in text
+    assert "认真回应" not in text
     assert "头像描述：蓝天下的白猫" in text
-    assert "好感度：0" in text
+    assert "好感度：\n0.0（近期：+0.0）" in text
+    assert "基础分" not in text and "互动分" not in text
+    assert "近期分：" not in text
+    assert "长期分：" not in text
     for label in ("性格风格", "兴趣话题", "其他补充", "关键约定", "关系称谓"):
         assert label not in text
     plugin.html_render.assert_not_awaited()
@@ -419,12 +424,15 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
         before = await plugin.data_cache.get_user_profile_record(
             "bot", session_id, "user"
         )
-        expected_recent = 100 * (5 + 9) / (10 + 9 + 14)
-        expected_long_term = 100 * (5 + 17) / (10 + 17 + 14)
-        expected_interaction = 0.6 * expected_recent + 0.4 * expected_long_term
+        expected_recent = 7900 / 109
+        expected_long_term = 900 / 11
+        expected_baseline = 3550 / 43
+        expected_interaction = 82.476615361989
         expected_relation = 7 + expected_interaction
         assert before["total_count"] == 14 and before["recent_count"] == 10
         assert before["relation"] == pytest.approx(expected_relation)
+        assert before["long_term_score"] == pytest.approx(expected_long_term)
+        assert before["recent_baseline_score"] == pytest.approx(expected_baseline)
         if mode == "图片响应":
             Path(plugin.html_render.return_value).write_bytes(b"rendered image")
         _ = [chunk async for chunk in handler.get_user_profile(event, "user")]
@@ -434,10 +442,12 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
             else event.send.call_args.args[0].chain[0].text
         )
         assert f"{expected_relation:.1f}" in rendered
-        assert f"{expected_interaction:.1f}" in rendered
-        assert f"{expected_recent:.1f}" in rendered
-        assert f"{expected_long_term:.1f}" in rendered
-        assert "共 14 次评价" in rendered
+        assert "基础分" not in rendered and "互动分" not in rendered
+        assert f"近期：{expected_interaction - expected_baseline:+.1f}" in rendered
+        assert f"{expected_recent:.1f}" not in rendered
+        assert "近期分" not in rendered and "长期分" not in rendered
+        assert "累计评价：14次" in rendered
+        assert "近7天" not in rendered
         assert "foreign-group" not in rendered
         assert "user interaction" not in rendered
         if session_id == "group":
@@ -455,6 +465,7 @@ async def test_profile_display_filter_preserves_shared_scores_and_counts(
             "bot", "foreign-group", "user"
         )
         assert other["relation"] == pytest.approx(expected_relation)
+        assert other["recent_baseline_score"] == pytest.approx(expected_baseline)
         assert other["total_count"] == 14 and other["recent_count"] == 10
     finally:
         await plugin.db.close()
@@ -521,7 +532,7 @@ async def test_profile_text_omits_missing_columns_but_preserves_zero_affinity(co
         assert omitted not in text
     plugin.data_cache.get_user_profile_record.return_value["relation"] = 0
     _ = [chunk async for chunk in handler.get_user_profile(event, "123")]
-    assert "好感度：0" in event.send.call_args.args[0].chain[0].text
+    assert "好感度：\n0.0（近期：+0.0）" in event.send.call_args.args[0].chain[0].text
 
 
 @pytest.mark.asyncio

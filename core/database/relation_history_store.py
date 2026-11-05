@@ -1,10 +1,109 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
 from .operations import serialized_operation
+
+RELATION_CURVE_SCALE = 60 / 7
+RELATION_TIER_SCORE_LIMITS = (80, 85, 90, 95, 100)
+RELATION_TIER_WEIGHT_LIMITS = tuple(
+    RELATION_CURVE_SCALE * (score - 50) / (100 - score) if score < 100 else float("inf")
+    for score in RELATION_TIER_SCORE_LIMITS
+)
+RELATION_RECENT_CONFIDENCE_SCALE = 10
+RELATION_RECENT_SAMPLE_LIMIT = 10
+
+
+def _allocate_relation_weight(rating_weights: tuple[float, ...]) -> float:
+    """Limit accumulated evidence before adding each stronger rating tier.
+
+    Args:
+        rating_weights: Signed net squared weights for magnitudes one through five.
+
+    Returns:
+        Effective signed weight after applying each tier's symmetric score limits.
+        Lower-tier overflow cannot cancel stronger evidence.
+
+    Raises:
+        ValueError: The number of tier weights is not five.
+    """
+    weight = 0.0
+    for tier_weight, limit in zip(
+        rating_weights, RELATION_TIER_WEIGHT_LIMITS, strict=True
+    ):
+        weight = max(-limit, min(limit, weight + tier_weight))
+    return weight
+
+
+def _smooth_recent_relation_score(
+    long_term_score: float, deltas: tuple[int, ...]
+) -> float:
+    """Replay bounded recent evidence without making positive ratings lower affinity.
+
+    Args:
+        long_term_score: Relationship established by all recorded evaluations.
+        deltas: Selected recent ratings in occurrence order, oldest first.
+
+    Returns:
+        Interaction score anchored to the long-term score. Each rating responds
+        at strength / (10 + strength) toward its confidence-weighted target,
+        so later ratings retain more influence.
+        Positive and negative evidence have separate progressive tier budgets,
+        assigned to stronger magnitudes and then newer records first. Overflow
+        cannot buy influence or repair stronger evidence. Total effective
+        strength sets the target share, 0.6 * strength / (10 + strength). Prefix
+        direction guards prevent budget redistribution reversing a new rating.
+    """
+    interaction = long_term_score
+    # At most ten prefixes are replayed; every read remains deterministic.
+    for end, last_delta in enumerate(deltas, start=1):
+        prefix = deltas[:end]
+        directional_weights = [[0.0] * 5 for _ in range(2)]
+        for delta in prefix:
+            direction = 0 if delta > 0 else 1
+            directional_weights[direction][abs(delta) - 1] += delta * delta
+        # Stronger evidence keeps its budget; lower tiers use remaining capacity.
+        for weights in directional_weights:
+            remaining = float("inf")
+            for tier in range(4, -1, -1):
+                remaining = min(remaining, RELATION_TIER_WEIGHT_LIMITS[tier])
+                weights[tier] = min(weights[tier], remaining)
+                remaining -= weights[tier]
+        steps = []
+        for delta in reversed(prefix):
+            direction = 0 if delta > 0 else 1
+            tier = abs(delta) - 1
+            strength = min(delta * delta, directional_weights[direction][tier])
+            directional_weights[direction][tier] -= strength
+            steps.append((delta, tier, strength))
+        smoothed = long_term_score
+        evidence = 0.0
+        for delta, tier, strength in reversed(steps):
+            if strength <= 0:
+                continue
+            evidence += strength
+            recent_share = (
+                0.6 * evidence / (RELATION_RECENT_CONFIDENCE_SCALE + evidence)
+            )
+            limit = RELATION_TIER_SCORE_LIMITS[tier]
+            # Low ratings can repair established affinity without creating
+            # positive inventory that shields the next negative interaction.
+            bound = (
+                max(long_term_score, limit)
+                if delta > 0
+                else min(long_term_score, 100 - limit)
+            )
+            target = long_term_score + recent_share * (bound - long_term_score)
+            target = max(smoothed, target) if delta > 0 else min(smoothed, target)
+            response = strength / (RELATION_RECENT_CONFIDENCE_SCALE + strength)
+            smoothed += response * (target - smoothed)
+        # Reassigning older budgets must not reverse the newest rating's effect.
+        interaction = (
+            max(interaction, smoothed) if last_delta > 0 else min(interaction, smoothed)
+        )
+    return interaction
 
 
 class RelationHistoryConflictError(Exception):
@@ -22,7 +121,7 @@ class RelationHistoryStoreMixin:
         connection: aiosqlite.Connection | None = None,
         through_id: int | None = None,
     ) -> dict[str, int | float]:
-        """Calculate affinity from the manual base and weighted interaction history.
+        """Calculate affinity from five progressively limited rating tiers.
 
         Args:
             bot_name: Owning bot configuration.
@@ -33,41 +132,100 @@ class RelationHistoryStoreMixin:
 
         Returns:
             Unrounded final, base, recent, long-term and interaction scores with
-            sample counts. An empty history has an interaction score of fifty.
+            sample counts. The recent baseline excludes the selected recent
+            ratings and applies the same historical aggregation without replaying
+            or replacing them. Each magnitude cancels its own signed squared weights.
+            Accumulated weights are limited to the 80, 85, 90 and 95 score bounds
+            before adding the next tier. Magnitude five can approach 100 or zero.
+            Stronger weights fill lower ranges before carrying into higher ones.
+            Recent scores use at most ten ratings from the past seven days,
+            ordered by occurrence time and ID, and fall back to the long-term
+            score when empty. If recent samples cover all history, the interaction
+            score equals the long-term score; otherwise recent corrections replay
+            the selected ratings in order. Positive ratings never lower the
+            replayed score, and negative ratings never raise it. Effective recent
+            strength sets the share, approaching sixty percent. Empty history is
+            fifty.
         """
         scope = (bot_name, user_id)
+        now = datetime.now(timezone.utc)
+        tier_stats = ", ".join(
+            f"COALESCE(SUM(CASE WHEN magnitude={magnitude} THEN weight ELSE 0 END), 0) "
+            f"AS weight_{magnitude}, "
+            f"COALESCE(SUM(CASE WHEN magnitude={magnitude} THEN weight * is_recent "
+            f"ELSE 0 END), 0) AS recent_weight_{magnitude}"
+            for magnitude in range(1, 6)
+        )
         async with (connection or self.conn).execute(
-            "WITH recent AS (SELECT delta FROM relation_changes WHERE bot_name=? "
-            "AND user_id=? AND (? IS NULL OR id<=?) "
-            "ORDER BY id DESC LIMIT 10) "
+            # Legacy message times are local and naive; explicit offsets already
+            # identify instants and must not receive SQLite's local-to-UTC shift.
+            "WITH history AS (SELECT id, delta, ABS(delta) AS magnitude, "
+            "delta * ABS(delta) AS weight, "
+            "julianday(occurred_at, CASE "
+            "WHEN substr(occurred_at, -1)='Z' "
+            "OR substr(occurred_at, -6, 1) IN ('+', '-') "
+            "THEN '+0 seconds' ELSE 'utc' END) AS occurred_time "
+            "FROM relation_changes WHERE bot_name=? AND user_id=? "
+            "AND (? IS NULL OR id<=?)), recent AS ("
+            "SELECT id, delta, occurred_time FROM history "
+            "WHERE occurred_time BETWEEN julianday(?) AND julianday(?) "
+            "ORDER BY occurred_time DESC, id DESC LIMIT ?), scored AS ("
+            "SELECT history.*, recent.id IS NOT NULL AS is_recent "
+            "FROM history LEFT JOIN recent ON recent.id=history.id) "
             "SELECT COUNT(*) AS total_count, "
-            "COALESCE(SUM(MAX(delta, 0)), 0) AS positive, "
-            "COALESCE(SUM(MAX(-delta, 0)), 0) AS negative, "
-            "(SELECT COUNT(*) FROM recent) AS recent_count, "
-            "(SELECT COALESCE(SUM(MAX(delta, 0)), 0) FROM recent) AS recent_positive, "
-            "(SELECT COALESCE(SUM(MAX(-delta, 0)), 0) FROM recent) AS recent_negative, "
+            "COALESCE(SUM(is_recent), 0) AS recent_count, "
+            f"{tier_stats}, "
+            "(SELECT GROUP_CONCAT(delta) FROM (SELECT delta FROM recent "
+            "ORDER BY occurred_time, id)) AS recent_deltas, "
             "COALESCE((SELECT base_relation FROM user_profiles WHERE bot_name=? "
             "AND user_id=?), 0) AS base_relation "
-            "FROM relation_changes WHERE bot_name=? AND user_id=? "
-            "AND (? IS NULL OR id<=?)",
-            (*scope, through_id, through_id, *scope, *scope, through_id, through_id),
+            "FROM scored",
+            (
+                *scope,
+                through_id,
+                through_id,
+                (now - timedelta(days=7)).isoformat(),
+                now.isoformat(),
+                RELATION_RECENT_SAMPLE_LIMIT,
+                *scope,
+            ),
         ) as cursor:
             row = await cursor.fetchone()
-        # Five positive and five negative prior weight units keep sparse samples neutral.
-        recent_score = (
-            100
-            * (5 + row["recent_positive"])
-            / (10 + row["recent_positive"] + row["recent_negative"])
+        # Each window cancels and limits its own tiers before combining scores.
+        long_term_weight = _allocate_relation_weight(
+            tuple(row[f"weight_{magnitude}"] for magnitude in range(1, 6))
         )
-        long_term_score = (
-            100 * (5 + row["positive"]) / (10 + row["positive"] + row["negative"])
+        recent_weight = _allocate_relation_weight(
+            tuple(row[f"recent_weight_{magnitude}"] for magnitude in range(1, 6))
         )
-        interaction_score = 0.6 * recent_score + 0.4 * long_term_score
+        # Remove raw tier weights before cancellation and limits are reapplied.
+        recent_baseline_weight = _allocate_relation_weight(
+            tuple(
+                row[f"weight_{magnitude}"] - row[f"recent_weight_{magnitude}"]
+                for magnitude in range(1, 6)
+            )
+        )
+        long_term_score, recent_score, recent_baseline_score = (
+            50 + 50 * weight / (RELATION_CURVE_SCALE + abs(weight))
+            for weight in (long_term_weight, recent_weight, recent_baseline_weight)
+        )
+        if not row["recent_count"]:
+            recent_score = long_term_score
+        recent_deltas = tuple(
+            int(value) for value in (row["recent_deltas"] or "").split(",") if value
+        )
+        # Identical samples have no separate recent evidence to amplify.
+        interaction_score = (
+            long_term_score
+            if row["total_count"] == row["recent_count"]
+            else _smooth_recent_relation_score(long_term_score, recent_deltas)
+        )
         return {
             "base_relation": row["base_relation"],
             "interaction_score": interaction_score,
             "recent_score": recent_score,
             "long_term_score": long_term_score,
+            "recent_baseline_score": recent_baseline_score,
             "relation": row["base_relation"] + interaction_score,
             "total_count": row["total_count"],
             "recent_count": row["recent_count"],
@@ -345,7 +503,7 @@ class RelationHistoryStoreMixin:
                     )
                 await writer.execute(
                     "UPDATE user_profiles SET relation_history_revision="
-                    "relation_history_revision+1, attitude_evaluated_change_id=0, "
+                    "relation_history_revision+1, "
                     "updated_at=? WHERE bot_name=? AND user_id=?",
                     (now, bot_name, user_id),
                 )
@@ -361,87 +519,3 @@ class RelationHistoryStoreMixin:
             finally:
                 if database_file:
                     await writer.close()
-
-    @serialized_operation
-    async def get_pending_attitude_evaluations(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        min_changes: int = 5,
-        major_delta: int = 4,
-    ) -> list[dict]:
-        """Find members whose unevaluated history warrants a review.
-
-        Args:
-            bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
-            min_changes: Number of changes needed for an ordinary review.
-            major_delta: Absolute increment that triggers an early review.
-
-        Returns:
-            Member IDs, their saved cursors, and frozen review boundaries.
-        """
-        async with self.conn.execute(
-            "SELECT rc.user_id, up.attitude_evaluated_change_id AS evaluated_id, "
-            "up.relation_history_revision AS history_revision, "
-            "MAX(rc.id) AS through_id, COUNT(*) AS change_count FROM relation_changes rc "
-            "JOIN user_profiles up ON up.bot_name=rc.bot_name "
-            "AND up.user_id=rc.user_id "
-            "WHERE rc.bot_name=? "
-            "AND rc.id>up.attitude_evaluated_change_id "
-            "GROUP BY rc.user_id, up.attitude_evaluated_change_id, up.relation_history_revision "
-            "HAVING COUNT(*)>=? OR MAX(ABS(rc.delta))>=? ORDER BY MIN(rc.id)",
-            (bot_name, min_changes, major_delta),
-        ) as cursor:
-            return [dict(row) for row in await cursor.fetchall()]
-
-    @serialized_operation
-    async def save_attitude_evaluation(
-        self,
-        bot_name: str,
-        group_or_user_id: str,
-        user_id: str,
-        expected_cursor: int,
-        through_id: int,
-        attitude: str | None = None,
-        expected_history_revision: int | None = None,
-    ) -> bool:
-        """Save the interaction tone and its exact successful review boundary.
-
-        Args:
-            bot_name: Owning bot configuration.
-            group_or_user_id: Owning conversation.
-            user_id: Evaluated member.
-            expected_cursor: Cursor read before inference.
-            through_id: Last history record actually provided to the model.
-            attitude: New mutual interaction tone, or None to preserve it.
-            expected_history_revision: Reject conclusions based on manually revised history.
-
-        Returns:
-            Whether the unchanged profile generation accepted this evaluation.
-        """
-        cursor = await self.conn.execute(
-            "UPDATE user_profiles SET attitude=COALESCE(?, attitude), "
-            "attitude_evaluated_change_id=?, updated_at=? "
-            "WHERE bot_name=? AND user_id=? "
-            "AND attitude_evaluated_change_id=? AND attitude_evaluated_change_id<? "
-            "AND (? IS NULL OR relation_history_revision=?) "
-            "AND EXISTS (SELECT 1 FROM relation_changes WHERE id=? AND bot_name=? "
-            "AND user_id=?)",
-            (
-                attitude,
-                through_id,
-                datetime.now(timezone.utc).isoformat(),
-                bot_name,
-                user_id,
-                expected_cursor,
-                through_id,
-                expected_history_revision,
-                expected_history_revision,
-                through_id,
-                bot_name,
-                user_id,
-            ),
-        )
-        await self.conn.commit()
-        return cursor.rowcount > 0

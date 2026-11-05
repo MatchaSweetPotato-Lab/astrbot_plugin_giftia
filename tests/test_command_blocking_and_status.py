@@ -752,30 +752,23 @@ class CommandBlockingAndStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("• 能量：100.0%", reply_text)
 
     async def test_silence_session_command(self):
-        """测试 /静默 指令将接话活跃窗口重置为 0 并将状态更新为「不活跃」"""
+        """Verify the silence command resets only the current reply window."""
         from core.handlers.commands import CommandHandler
 
         cmd_handler = CommandHandler(self.plugin)
-        self.plugin.active_reply_counters = {"Giftia:10001": 10}
+        self.plugin.active_reply_counters = {"Giftia:10001": 10, "Giftia:other": 6}
         self.plugin.data_cache.set_bot_status = AsyncMock()
 
         event = self._create_mock_event()
         chunks = [c async for c in cmd_handler.silence_session(event)]
 
-        # 1. 活跃窗口计数重置为 0
-        self.assertEqual(self.plugin.active_reply_counters["Giftia:10001"], 0)
+        self.assertEqual(
+            self.plugin.active_reply_counters, {"Giftia:10001": 0, "Giftia:other": 6}
+        )
+        self.plugin.data_cache.set_bot_status.assert_not_awaited()
 
-        # 2. data_cache.set_bot_status 被调用且传入 state="不活跃"
-        self.plugin.data_cache.set_bot_status.assert_called_once()
-        call_kwargs = self.plugin.data_cache.set_bot_status.call_args[1]
-        self.assertEqual(call_kwargs["bot_name"], "Giftia")
-        self.assertEqual(call_kwargs["group_id"], "10001")
-        self.assertEqual(call_kwargs["status"].state, "不活跃")
-
-        # 3. 回复文案包含提示
         reply_text = chunks[0].chain[0].text
-        self.assertIn("设置为「不活跃」", reply_text)
-        self.assertIn("接话分析窗口已重置", reply_text)
+        self.assertIn("已重置【小吉】在当前会话的接话分析窗口", reply_text)
 
 
 if __name__ == "__main__":

@@ -57,7 +57,8 @@ export function renderMemories(items, userIdToName = {}) {
             ...(!meta.associated_user_ids?.length ? [meta.user_id] : [])
         ].filter(Boolean).map(String))];
         const topic = String(meta.topic || '').trim();
-        const notes = [meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : ''].filter(Boolean);
+        const typeLabel = meta.memory_type === 'fact' ? '事实' : meta.memory_type === 'event' ? '具体事件' : '未分类';
+        const notes = [typeLabel, meta.manual_entry ? '人工录入' : '', meta.manually_edited ? '人工修订' : ''].filter(Boolean);
         const participant = uid => escape(userIdToName[uid] || String(uid));
         const importance = Number(item.importance || 5);
         const importanceCategory = importance <= 3 ? 'low' : importance >= 8 ? 'high' : 'medium';

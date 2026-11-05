@@ -1,9 +1,10 @@
 from datetime import datetime
 
+from ..utils.relation_display import build_relation_display
+
 USER_PROFILE_FIELDS = {
     "call_name": "称呼",
     "aliases": "其他外号",
-    "attitude": "互动态度",
     "avatar_description": "头像描述",
 }
 
@@ -83,9 +84,16 @@ def build_user_profile_report(
         **fields,
         "relation": relation,
         "base_relation": record.get("base_relation", 0),
+        **build_relation_display({**record, "relation": relation}),
         "interaction_score": round(float(record.get("interaction_score", 50)), 1),
         "recent_score": round(float(record.get("recent_score", 50)), 1),
         "long_term_score": round(float(record.get("long_term_score", 50)), 1),
+        "recent_baseline_score": round(
+            float(
+                record.get("recent_baseline_score", record.get("interaction_score", 50))
+            ),
+            1,
+        ),
         "total_count": record.get("total_count", 0),
         "recent_count": record.get("recent_count", 0),
         "profile_fields": {

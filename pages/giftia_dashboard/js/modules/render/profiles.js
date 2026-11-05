@@ -19,6 +19,7 @@ export function updateProfileFilterVisibility() {
     const userPanel = document.getElementById("subpanel-user-profiles");
     const groupPanel = document.getElementById("subpanel-group-profiles");
     const addGroupButton = document.getElementById("add-group-profile-btn");
+    const relationGuideButton = document.getElementById("relation-score-guide-btn");
     const isUserProfiles = state.activeSubTab === "user-profiles";
     if (userFilterGroup) {
         userFilterGroup.style.display = isUserProfiles ? "" : "none";
@@ -31,6 +32,9 @@ export function updateProfileFilterVisibility() {
     }
     if (addGroupButton) {
         addGroupButton.style.display = isUserProfiles ? "none" : "";
+    }
+    if (relationGuideButton) {
+        relationGuideButton.style.display = isUserProfiles ? "" : "none";
     }
     if (userPanel) {
         userPanel.classList.toggle("active", isUserProfiles);
@@ -87,7 +91,6 @@ export function renderUserProfiles(items) {
             account_type: item.account_type,
             call_name: item.call_name,
             aliases: item.aliases,
-            attitude: item.attitude,
             avatar_description: item.avatar_description
         });
 

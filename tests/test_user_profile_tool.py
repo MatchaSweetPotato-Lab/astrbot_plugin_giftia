@@ -170,6 +170,9 @@ async def test_tool_pages_complete_history_newest_first_without_changing_scores(
     result = await runtime.tool.call(runtime.context, "123", limit=1, **arguments)
     assert "用户 123" in result
     assert "你的称呼：小明" in result
+    assert f"好感度：\n{score['relation']:.1f}（近期：" in result
+    assert "累计评价：55次" in result
+    assert "基础分" not in result and "互动分" not in result
     assert f"第 {page}/6 页；每页 10 条，共 55 条" in result
     assert "评价值不等于最终好感度增减" in result
     assert "2026-10-18" in result
@@ -296,7 +299,8 @@ async def test_tool_without_history_keeps_profile_and_shows_empty_state(runtime)
     await seed_history(runtime, 0)
     result = await runtime.tool.call(runtime.context, "123", page=3)
     assert "你的称呼：小明" in result
-    assert "好感度：50.0" in result
+    assert "好感度：\n50.0（近期：+0.0）\n累计评价：0次" in result
+    assert "基础分" not in result and "互动分" not in result
     assert "第 1/1 页；每页 10 条，共 0 条" in result
     assert "暂无互动评价记录" in result
 

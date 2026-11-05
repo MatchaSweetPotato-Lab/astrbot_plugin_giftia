@@ -31,7 +31,13 @@ from ..llm.prompt import parse_message_to_str, truncate_message_content
 from ..utils.event_utils import bind_fake_event_extras, build_fake_event, get_adapter_id
 from ..utils.message_markdown import normalize_qq_markdown_chain
 from ..utils.message_media import format_node_components
-from ..utils.notice_parse import NoticeParseResult
+from ..utils.notice_parse import (
+    GROUP_STATE_NOTICE_TYPES,
+    GROUP_STATE_NOTIFY_SUBTYPES,
+    REACTION_NOTICE_TYPES,
+    NoticeParser,
+    NoticeParseResult,
+)
 from ..utils.schemas import MessageData, XmlLlmResult
 from .action_dispatcher import ActionDispatcher
 from .decision_engine import DecisionEngine
@@ -221,6 +227,38 @@ class ChatManager:
         if getattr(self.plugin, "_terminated", False):
             return
 
+        msg_obj = getattr(event, "message_obj", None)
+        raw_message = getattr(msg_obj, "raw_message", None) if msg_obj else None
+        post_type, notice_type, sub_type = NoticeParser.get_event_types(raw_message)
+        group_id = str(event.get_group_id() or "").strip()
+        sender_id = str(event.get_sender_id() or "").strip()
+        if group_id in ("0", "None"):
+            group_id = ""
+        is_state_notice = (
+            post_type == "notice"
+            and bool(group_id)
+            and (
+                notice_type in GROUP_STATE_NOTICE_TYPES
+                or (notice_type == "notify" and sub_type in GROUP_STATE_NOTIFY_SUBTYPES)
+            )
+        )
+        # Only conversation events may install logging, schedule replies, or update memory.
+        if post_type in ("request", "meta_event"):
+            return
+        if post_type == "notice":
+            supported = (
+                is_state_notice
+                or (
+                    notice_type in REACTION_NOTICE_TYPES
+                    and (group_id or not notice_type.startswith("group_"))
+                )
+                or (notice_type in ("group_upload", "group_recall") and group_id)
+                or (notice_type in ("friend_recall", "offline_file") and not group_id)
+                or (notice_type == "notify" and sub_type == "poke")
+            )
+            if not supported or (not group_id and sender_id in ("", "0", "None")):
+                return
+
         # 1. 检查白名单拦截
         if not self.decision_engine.check_whitelists(event):
             return
@@ -232,12 +270,14 @@ class ChatManager:
             event._giftia_bypass_logging = True
 
         # 2. 处理撤回消息通知
-        msg_obj = getattr(event, "message_obj", None)
-        raw_message = getattr(msg_obj, "raw_message", None) if msg_obj else None
         if raw_message:
-            message_name = getattr(raw_message, "name", "")
-            if message_name in ["notice.group_recall", "notice.friend_recall"]:
-                recalled_message_id = str(getattr(raw_message, "message_id", ""))
+            if post_type == "notice" and notice_type in (
+                "group_recall",
+                "friend_recall",
+            ):
+                recalled_message_id = str(
+                    NoticeParser.get_event_field(raw_message, "message_id", "") or ""
+                )
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
                 if bot_name and recalled_message_id:
                     group_or_user_id = event.get_group_id() or event.get_sender_id()
@@ -253,30 +293,8 @@ class ChatManager:
                 return
 
         # 3. 跳过机器人自己的发言与自身主动发起的交互通知（如自身发出的普通消息、自身戳一戳、自身贴表情等）
-        raw_msg = getattr(msg_obj, "raw_message", None) if msg_obj else None
-        post_type = (
-            (
-                raw_msg.get("post_type", "")
-                if hasattr(raw_msg, "get")
-                else getattr(raw_msg, "post_type", "")
-            )
-            if raw_msg
-            else ""
-        )
         self_id = str(event.get_self_id() or "").strip()
-        sender_id = str(event.get_sender_id() or "").strip()
         if self_id and sender_id and sender_id == self_id:
-            # 仅放行可能影响机器人自身状态的系统通知事件（如群禁言、管理员变更、退群等）
-            is_state_notice = False
-            if raw_msg and post_type == "notice":
-                notice_type = (
-                    raw_msg.get("notice_type", "")
-                    if hasattr(raw_msg, "get")
-                    else getattr(raw_msg, "notice_type", "")
-                )
-                if notice_type in ("group_ban", "group_admin", "group_decrease"):
-                    is_state_notice = True
-
             if not is_state_notice:
                 logger.debug(
                     f"{event.platform_meta.id} 消息/通知为机器人自身发起 (sender={sender_id})，跳过处理"
@@ -371,7 +389,8 @@ class ChatManager:
             event.should_call_llm(True)
 
         async def process_message():
-            await self.job(event)
+            if await self.job(event) is False:
+                return
 
             if self.plugin.passive_memory_enabled:
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
@@ -461,6 +480,8 @@ class ChatManager:
             ) = await self.plugin.message_parser.parse_user_message(
                 event, bot_name, defer_caption=should_defer
             )
+            if current_message is None:
+                return False
 
             # 检查是否为系统通知类事件，若是则统一在此处更新禁言状态，并跳过 LLM 回复（贴表情除外）
             notice_result: NoticeParseResult | None = getattr(

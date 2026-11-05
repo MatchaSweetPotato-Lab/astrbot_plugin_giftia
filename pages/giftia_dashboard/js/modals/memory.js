@@ -19,6 +19,8 @@ window.openAddMemoryModal = function() {
         document.getElementById(`add-mem-${field}`).value = '';
     }
     document.getElementById('add-mem-importance').value = '5';
+    const selectedType = document.getElementById('memory-type').value;
+    document.getElementById('add-mem-type').value = ['fact', 'event'].includes(selectedType) ? selectedType : 'fact';
     window.openModal('add-memory-modal');
 };
 
@@ -27,6 +29,7 @@ window.submitAddMemory = async function() {
         bot_name: document.getElementById('add-mem-bot').value.trim(),
         group_or_user_id: document.getElementById('add-mem-group').value.trim(),
         topic: document.getElementById('add-mem-topic').value.trim(),
+        memory_type: document.getElementById('add-mem-type').value,
         associated_user_ids: document.getElementById('add-mem-associated-ids').value.trim(),
         importance: normalizeMemoryImportance(document.getElementById('add-mem-importance').value),
         text: document.getElementById('add-mem-text').value.trim()
@@ -49,6 +52,7 @@ window.submitAddMemory = async function() {
         }
         document.getElementById('memory-search').value = '';
         document.getElementById('memory-associated-user-id').value = '';
+        document.getElementById('memory-type').value = body.memory_type;
         window.GiftiaApp.resetPagination('memories');
         await window.GiftiaApp.refreshScopedFilters('memories', true);
         await window.GiftiaApp.loadMemories();
@@ -75,6 +79,7 @@ window.openEditMemoryModal = function(item) {
         ? meta.associated_user_ids.join(',') : (meta.user_id || '');
     document.getElementById('edit-mem-importance').value = normalizeMemoryImportance(item.importance);
     document.getElementById('edit-mem-text').value = item.text;
+    document.getElementById('edit-mem-type').value = ['fact', 'event'].includes(meta.memory_type) ? meta.memory_type : '';
     window.openModal('edit-memory-modal');
 };
 
@@ -85,6 +90,7 @@ window.submitEditMemory = async function() {
         bot_name: document.getElementById('edit-mem-bot').value,
         group_or_user_id: document.getElementById('edit-mem-group').value,
         revision: Number(document.getElementById('edit-mem-revision').value),
+        memory_type: document.getElementById('edit-mem-type').value,
         associated_user_ids: document.getElementById('edit-mem-associated-ids').value.trim(),
         importance: normalizeMemoryImportance(document.getElementById('edit-mem-importance').value),
         text: document.getElementById('edit-mem-text').value.trim()
@@ -135,6 +141,7 @@ window.openMemoryCleanModal = function() {
     document.getElementById("clean-mem-group").value = groupSelect ? groupSelect.value : "";
     document.getElementById("clean-mem-associated-user-id").value = document.getElementById("memory-associated-user-id")?.value || "";
     document.getElementById("clean-mem-search").value = document.getElementById("memory-search")?.value || "";
+    document.getElementById("clean-mem-type").value = document.getElementById("memory-type")?.value || "";
     document.getElementById("clean-mem-max-importance").value = "3";
     document.getElementById("clean-mem-max-hit-count").value = "1";
     document.getElementById("clean-mem-min-age-days").value = "60";
@@ -195,6 +202,7 @@ function collectMemoryCleanCriteria() {
         bot_name: document.getElementById("clean-mem-bot").value.trim(),
         group_or_user_id: document.getElementById("clean-mem-group").value.trim(),
         associated_user_id: document.getElementById("clean-mem-associated-user-id").value.trim(),
+        memory_type: document.getElementById("clean-mem-type").value,
         search: document.getElementById("clean-mem-search").value.trim(),
         max_importance: normalizeMemoryCleanNumber(document.getElementById("clean-mem-max-importance").value, 3, 1, 10),
         max_hit_count: normalizeMemoryCleanNumber(document.getElementById("clean-mem-max-hit-count").value, 1, 0),

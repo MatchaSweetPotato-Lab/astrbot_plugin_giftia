@@ -19,6 +19,7 @@ from core.llm.prompt import (
     build_memory_items,
     build_reply_prompt,
     build_user_profile_block,
+    format_memory_time,
 )
 from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
@@ -77,11 +78,14 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
     assert len(root.findall(".//memory")) == 3
     relevant = root.find("relevant_memories/memory")
     assert relevant.text == current["text"]
-    assert set(relevant.attrib) == {"occurred_at"}
+    assert set(relevant.attrib) == {"memory_type", "occurred_at"}
+    assert relevant.attrib["memory_type"] == "unclassified"
     habit = root.find("session_recalled_memories/memory")
-    assert set(habit.attrib) == {"observed_from", "observed_until"}
+    assert set(habit.attrib) == {"memory_type", "observed_from", "observed_until"}
+    assert habit.attrib["memory_type"] == "unclassified"
     old = root.findall("session_recalled_memories/memory")[-1]
-    assert set(old.attrib) == {"recorded_at"}
+    assert set(old.attrib) == {"memory_type", "recorded_at"}
+    assert old.attrib["memory_type"] == "unclassified"
     assert old.attrib["recorded_at"].startswith("2020-01-01")
     assert old.text == legacy.text
     for omitted in (
@@ -96,7 +100,8 @@ def test_all_recall_sources_share_compact_context_and_current_results_win():
         assert omitted not in prompt
 
 
-def test_legacy_classification_does_not_enter_context_or_invent_event_time():
+@pytest.mark.parametrize("memory_type", [None, "retired", ["fact"]])
+def test_legacy_classification_does_not_enter_context_or_invent_event_time(memory_type):
     prompt = build_reply_prompt(
         recent_messages=[],
         media_captions=[],
@@ -107,6 +112,7 @@ def test_legacy_classification_does_not_enter_context_or_invent_event_time():
                 "text": "我和甲约好周末一起观星。",
                 "created_at": "2026-10-10T12:00:00+08:00",
                 "metadata": {
+                    "memory_type": memory_type,
                     "kind": "agreement",
                     "expires_at": "2026-10-18T23:00:00+08:00",
                 },
@@ -116,7 +122,53 @@ def test_legacy_classification_does_not_enter_context_or_invent_event_time():
     memory = fromstring("<context>" + prompt + "</context>").find(
         "relevant_memories/memory"
     )
-    assert set(memory.attrib) == {"recorded_at"}
+    assert set(memory.attrib) == {"memory_type", "recorded_at"}
+    assert memory.attrib["memory_type"] == "unclassified"
+
+
+@pytest.mark.parametrize(
+    "memory_type,created_at,occurred_at,expected",
+    [
+        (
+            "fact",
+            "2026-10-20T12:00:00+08:00",
+            "2026-10-10T12:00:00+08:00",
+            {"recorded_at": "2026-10-20T12:00:00+08:00"},
+        ),
+        ("fact", "", "2026-10-10T12:00:00+08:00", {}),
+        (
+            "event",
+            "2026-10-20T12:00:00+08:00",
+            "2026-10-10T12:00:00+08:00",
+            {"occurred_at": "2026-10-10T12:00:00+08:00"},
+        ),
+        ("event", "2026-10-20T12:00:00+08:00", "", {}),
+    ],
+)
+def test_typed_memory_times_do_not_fall_back_to_other_time_kinds(
+    memory_type, created_at, occurred_at, expected
+):
+    rendered = fromstring(
+        build_memory_items(
+            [
+                {
+                    "text": "明确时间含义的记忆",
+                    "created_at": created_at,
+                    "updated_at": "2099-01-01T00:00:00+00:00",
+                    "metadata": {
+                        "memory_type": memory_type,
+                        "occurred_at": occurred_at,
+                        "observed_from": "2026-10-01",
+                        "observed_until": "2026-10-12",
+                    },
+                }
+            ]
+        )
+    )
+    assert rendered.attrib == {
+        "memory_type": memory_type,
+        **{field: format_memory_time(value) for field, value in expected.items()},
+    }
 
 
 @pytest.mark.parametrize("cached", [False, True])
@@ -160,6 +212,7 @@ def test_memory_context_keeps_one_chronological_source_locator(cached):
     root = fromstring("<context>" + prompt + "</context>")
     [rendered] = root.findall(".//memory")
     assert rendered.attrib == {
+        "memory_type": "unclassified",
         "source": '来源群聊：other&"group',
         "message_id": '-9007199254740993&"',
     }
@@ -206,7 +259,7 @@ def test_memory_source_is_relative_to_current_session_and_kept_only_once(
     )
     root = fromstring("<context>" + prompt + "</context>")
     [memory] = root.findall(".//memory")
-    expected = {"message_id": "original"}
+    expected = {"memory_type": "unclassified", "message_id": "original"}
     if current_session != "200":
         expected["source"] = f"来源{'私聊' if private else '群聊'}：200"
     assert memory.attrib == expected
@@ -307,7 +360,7 @@ def test_legacy_memory_locators_require_real_message_ids_and_known_sessions(
             current_session_id="300",
         )
     )
-    assert rendered.attrib == expected
+    assert rendered.attrib == {"memory_type": "unclassified", **expected}
 
 
 @pytest.mark.asyncio

@@ -202,21 +202,22 @@ class MessageParser:
 
     async def parse_user_message(
         self, event: AstrMessageEvent, bot_name: str, defer_caption: bool = False
-    ) -> tuple[MessageData, list[str], list[str]]:
-        """解析用户发送的消息"""
-        # 获取时间
-        iso_string = datetime.fromtimestamp(event.message_obj.timestamp).isoformat()
-        # 获取消息内容
-        parsed = await self.chain_to_result(
-            event.get_messages(), defer_caption, event=event
-        )
-        msg = parsed.content
-        media_id_list = parsed.media_id_list
-        group_or_user_id = event.get_group_id() or event.get_sender_id()
-        sender_id = event.get_sender_id()
-        has_poke = any(isinstance(comp, Poke) for comp in event.get_messages())
+    ) -> tuple[MessageData | None, list[str], list[str]]:
+        """Parse and store a conversation message, skipping unsupported events.
 
+        Args:
+            event: Incoming conversation event.
+            bot_name: Owning bot configuration.
+            defer_caption: Whether media descriptions may be deferred.
+
+        Returns:
+            Stored message and media URLs, or an empty result for ignored events.
+        """
+        has_poke = any(isinstance(comp, Poke) for comp in event.get_messages())
         raw_message = getattr(event.message_obj, "raw_message", None)
+        post_type, notice_type, _ = self.notice_parser.get_event_types(raw_message)
+        if post_type in ("request", "meta_event"):
+            return None, [], []
         is_system_notice = False
         notice_result: NoticeParseResult | None = None
 
@@ -229,11 +230,45 @@ class MessageParser:
             # 将解析结果附加至 event 便于下游消费
             setattr(event, "_notice_result", notice_result)
 
-            if notice_result.is_notice:
-                msg = notice_result.content
-                if notice_result.role == "system":
-                    is_system_notice = True
+            if post_type == "notice" and (
+                not notice_result.is_notice or not notice_result.content.strip()
+            ):
+                return None, [], []
+            if notice_result.is_notice and notice_result.role == "system":
+                is_system_notice = True
 
+        group_id = str(event.get_group_id() or "").strip()
+        if group_id in ("0", "None"):
+            group_id = ""
+        sender_id = str(event.get_sender_id() or "").strip()
+        if (
+            notice_result
+            and notice_result.is_notice
+            and notice_result.role == "message"
+        ):
+            sender_id = str(notice_result.sender_id or sender_id).strip()
+        if sender_id in ("0", "None"):
+            sender_id = ""
+        group_or_user_id = group_id or sender_id
+        if not group_or_user_id:
+            return None, [], []
+
+        iso_string = datetime.fromtimestamp(event.message_obj.timestamp).isoformat()
+        parsed = await self.chain_to_result(
+            event.get_messages(), defer_caption, event=event
+        )
+        msg = (
+            notice_result.content
+            if notice_result and notice_result.is_notice
+            else parsed.content
+        )
+        media_id_list = parsed.media_id_list
+
+        if notice_result and notice_result.is_notice and not sender_id:
+            is_system_notice = True
+            notice_result.role = "system"
+            notice_result.sender_id = "system"
+            notice_result.sender_name = "系统"
         if is_system_notice and notice_result:
             sender_id = notice_result.sender_id or sender_id
             sender_name = notice_result.sender_name or sender_id
@@ -254,6 +289,9 @@ class MessageParser:
             if poke_msg:
                 msg = poke_msg
 
+        if not msg.strip() and not media_id_list and not parsed.forward_messages:
+            return None, [], []
+
         msg_data = MessageData(
             nickname=sender_name,
             user_id=sender_id,
@@ -267,7 +305,44 @@ class MessageParser:
             role="system" if is_system_notice else "message",
         )
         # 将消息写入缓存
-        await self.data_cache.add_message(bot_name, group_or_user_id, msg_data)
+        file_delivery = None
+        if raw_message:
+            file_info = None
+            if post_type == "notice" and notice_type in (
+                "group_upload",
+                "offline_file",
+            ):
+                file_info = self._get_event_field(raw_message, "file", {})
+            elif post_type == "message":
+                segments = self._get_event_field(raw_message, "message", [])
+                if (
+                    isinstance(segments, list)
+                    and len(segments) == 1
+                    and self._get_event_field(segments[0], "type") == "file"
+                ):
+                    file_info = self._get_event_field(segments[0], "data", {})
+            if file_info:
+                filename = str(
+                    self._get_event_field(file_info, "name", "")
+                    or self._get_event_field(file_info, "file_name", "")
+                    or self._get_event_field(file_info, "file", "")
+                    or ""
+                )
+                size = self._get_event_field(file_info, "size", None)
+                if size is None:
+                    size = self._get_event_field(file_info, "file_size", None)
+                if filename and size is not None:
+                    file_delivery = (post_type, filename, str(size))
+        if file_delivery:
+            stored = await self.data_cache.add_message(
+                bot_name, group_or_user_id, msg_data, file_delivery=file_delivery
+            )
+        else:
+            stored = await self.data_cache.add_message(
+                bot_name, group_or_user_id, msg_data
+            )
+        if stored is False:
+            return None, [], []
         return msg_data, parsed.image_urls, parsed.audio_urls
 
     async def chain_to_str(

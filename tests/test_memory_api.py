@@ -95,7 +95,7 @@ async def seed_memory(plugin, memory_id, **fields):
 
 
 @pytest.mark.asyncio
-async def test_memory_names_use_shared_user_call_names(memory_api):
+async def test_memory_names_use_local_call_names_then_latest_fallback(memory_api):
     client, plugin = memory_api
     await seed_memory(plugin, "event")
     await plugin.db.upsert_user_profile(
@@ -113,6 +113,13 @@ async def test_memory_names_use_shared_user_call_names(memory_api):
     data = (
         await client.get(
             "/memories", params={"bot_name": "bot", "group_or_user_id": "group"}
+        )
+    ).json()["data"]
+    assert data["user_id_to_name"] == {"1": "local name"}
+    await seed_memory(plugin, "fallback", group_or_user_id="third")
+    data = (
+        await client.get(
+            "/memories", params={"bot_name": "bot", "group_or_user_id": "third"}
         )
     ).json()["data"]
     assert data["user_id_to_name"] == {"1": "shared name"}
@@ -280,6 +287,133 @@ async def test_fact_edit_preserves_identity_evidence_and_checks_revision(memory_
     assert (await client.get("/memories")).json()["data"]["items"][0][
         "revision"
     ] == after["revision"]
+
+
+@pytest.mark.asyncio
+async def test_memory_type_filters_lists_counts_and_cleanup_include_unclassified(
+    memory_api,
+):
+    client, plugin = memory_api
+    for name, memory_type in [
+        ("fact", "fact"),
+        ("event", "event"),
+        ("legacy", None),
+        ("invalid", "old-kind"),
+    ]:
+        metadata = {"associated_user_ids": ["1"], "topic": "example"}
+        if memory_type is not None:
+            metadata["memory_type"] = memory_type
+        await seed_memory(plugin, name, metadata=json.dumps(metadata))
+    await seed_memory(plugin, "malformed", metadata="{malformed")
+    await seed_memory(
+        plugin,
+        "foreign",
+        bot_name="other",
+        metadata=json.dumps({"memory_type": "fact"}),
+    )
+    for memory_type, expected in [
+        ("fact", {"fact"}),
+        ("event", {"event"}),
+        ("unclassified", {"legacy", "invalid", "malformed"}),
+        ("", {"fact", "event", "legacy", "invalid", "malformed"}),
+    ]:
+        filters = {
+            "bot_name": "bot",
+            "group_or_user_id": "group",
+            "memory_type": memory_type,
+        }
+        data = (await client.get("/memories", params=filters)).json()["data"]
+        assert {item["memory_id"] for item in data["items"]} == expected
+        assert data["total"] == len(expected)
+        counts = (await client.get("/memories/filter_options", params=filters)).json()[
+            "data"
+        ]
+        assert counts["sessions"] == [
+            {"group_or_user_id": "group", "total": len(expected)}
+        ]
+        clean = (
+            await client.post(
+                "/memories/clean/candidates",
+                json={
+                    **filters,
+                    "min_age_days": 0,
+                    "last_hit_before_days": 0,
+                },
+            )
+        ).json()["data"]
+        assert {item["memory_id"] for item in clean["items"]} == expected
+    assert (
+        await client.get("/memories", params={"memory_type": "bad"})
+    ).status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("memory_type", ["fact", "event"])
+async def test_manual_memory_creation_accepts_type(memory_api, memory_type):
+    client, plugin = memory_api
+    response = await client.post(
+        "/memories/add",
+        json={
+            "bot_name": "bot",
+            "group_or_user_id": "group",
+            "memory_type": memory_type,
+            "topic": "例子",
+            "text": "管理员保存的记忆",
+            "associated_user_ids": ["1"],
+        },
+    )
+    assert response.status_code == 200
+    item = (await client.get("/memories")).json()["data"]["items"][0]
+    assert item["metadata"]["memory_type"] == memory_type
+    assert item["metadata"]["evidence"] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_memory_can_change_type_without_replacing_sources(memory_api):
+    client, plugin = memory_api
+    await seed_memory(plugin, "legacy")
+    item = (await client.get("/memories")).json()["data"]["items"][0]
+    original = item
+    for memory_type in ["fact", "event", ""]:
+        response = await client.post(
+            "/memories/update",
+            json={
+                "memory_id": item["memory_id"],
+                "bot_name": "bot",
+                "group_or_user_id": "group",
+                "revision": item["revision"],
+                "text": item["text"],
+                "memory_type": memory_type,
+            },
+        )
+        assert response.status_code == 200
+        after = (await client.get("/memories")).json()["data"]["items"][0]
+        assert after["metadata"].get("memory_type", "") == memory_type
+        assert after["metadata"]["evidence"] == original["metadata"]["evidence"]
+        assert after["metadata"]["topic"] == original["metadata"]["topic"]
+        assert after["created_at"] == original["created_at"]
+        assert after["memory_id"] == original["memory_id"]
+        assert after["revision"] == item["revision"] + 1
+        item = after
+    assert plugin.passive_memory_manager._sync_memory_vectors.await_count == 3
+    bad = {
+        "memory_id": "legacy",
+        "bot_name": "bot",
+        "group_or_user_id": "group",
+        "text": item["text"],
+        "revision": item["revision"],
+    }
+    assert (
+        await client.post("/memories/update", json={**bad, "memory_type": "invalid"})
+    ).status_code == 400
+    assert (
+        await client.post(
+            "/memories/update", json={**bad, "memory_type": "fact", "revision": 1}
+        )
+    ).status_code == 400
+    assert (await client.get("/memories")).json()["data"]["items"][0][
+        "revision"
+    ] == item["revision"]
 
 
 @pytest.mark.asyncio
