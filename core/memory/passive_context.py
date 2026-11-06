@@ -15,6 +15,7 @@ from ..llm.prompt import (
     process_media_captions_for_prompt,
     truncate_message_content,
 )
+from ..utils.relation_display import build_relation_display
 
 SESSION_PROFILE_FIELDS = {"aliases"}
 
@@ -207,6 +208,20 @@ class PassiveContextMixin:
                     profile_record,
                     allowed_fields=SESSION_PROFILE_FIELDS,
                 )
+            )
+            relation_score = {
+                "relation": 50.0,
+                "total_count": 0,
+                **(profile_record or {}),
+            }
+            if relation_score["relation"] is None:
+                relation_score["relation"] = 50.0
+            block_lines.extend(
+                [
+                    "好感度：",
+                    build_relation_display(relation_score)["relation_summary"],
+                    f"累计评价：{relation_score['total_count']}次",
+                ]
             )
             user_profile_blocks.append("\n".join(block_lines))
 

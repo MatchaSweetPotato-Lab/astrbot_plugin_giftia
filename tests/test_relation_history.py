@@ -11,7 +11,11 @@ import pytest_asyncio
 from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
-from core.llm.prompt import build_decision_prompt, build_reply_prompt
+from core.llm.prompt import (
+    build_decision_prompt,
+    build_reply_prompt,
+    build_user_profile_block,
+)
 from core.llm.preset_prompts import RELATION_DELTA_GUIDE
 from core.memory.passive_memory import PassiveMemoryManager
 from core.utils.relation_display import build_relation_display
@@ -155,10 +159,72 @@ async def test_affinity_context_does_not_change_when_long_term_tone_changes(runt
         )
     assert contexts[0]["user_profiles_text"] == contexts[1]["user_profiles_text"]
     prompt = runtime.manager._build_profile_user_prompt("group", contexts[0])
-    assert "好感度:" not in prompt
+    assert "好感度：\n62.0（近期：+0.0）\n累计评价：0次" in prompt
     assert source.content in prompt
     for omitted in ("互动态度", "长期亲近", "长期疏远", "长期性格"):
         assert omitted not in prompt
+
+
+@pytest.mark.asyncio
+async def test_maintenance_relation_context_shares_counts_across_groups_and_isolates_bots(
+    runtime,
+):
+    old_time = "2020-01-01T00:00:00+00:00"
+    await runtime.cache.set_user_profile("bot", "group", "user", base_relation=10)
+    await runtime.db.apply_relation_change(
+        "bot", "group", "user", 2, "历史关心", occurred_at=old_time
+    )
+    await runtime.db.apply_relation_change(
+        "bot", "other-group", "user", -1, "历史轻慢", occurred_at=old_time
+    )
+    await runtime.db.apply_relation_change(
+        "another-bot", "group", "user", -5, "另一 Bot 的评价", occurred_at=old_time
+    )
+    source = MessageData(user_id="user", nickname="User", content="这次聊点新鲜事")
+    context = await runtime.manager._build_summary_context(
+        "bot", "group", "self", [source]
+    )
+    prompt = runtime.manager._build_profile_user_prompt("group", context)
+    assert "好感度：\n73.0（近期：+0.0）\n累计评价：2次" in prompt
+    assert "历史关心" not in prompt
+    assert "历史轻慢" not in prompt
+    other_context = await runtime.manager._build_summary_context(
+        "another-bot", "group", "self", [source]
+    )
+    other_prompt = runtime.manager._build_profile_user_prompt("group", other_context)
+    assert "好感度：\n12.8（近期：+0.0）\n累计评价：1次" in other_prompt
+    runtime.manager._call_summary_llm.return_value = (
+        '<summary_user_profile user_id="user"><update_relation delta="+1">'
+        "他友好地开启新话题</update_relation></summary_user_profile>"
+    )
+    assert await runtime.manager._run_profile_summary_task(
+        "bot", "group", "小吉", "self", context
+    )
+    sent_prompt = runtime.manager._call_summary_llm.call_args.args[2]
+    assert sent_prompt == prompt
+    assert (await runtime.db.get_relation_score("bot", "group", "user"))[
+        "total_count"
+    ] == 3
+
+
+@pytest.mark.asyncio
+async def test_maintenance_and_reply_share_the_same_affinity_summary(runtime):
+    old_time = "2020-01-01T00:00:00+00:00"
+    for _ in range(40):
+        await runtime.db.apply_relation_change(
+            "bot", "group", "user", 1, "历史友好交流", occurred_at=old_time
+        )
+    await runtime.db.apply_relation_change("bot", "group", "user", -1, "本次轻慢")
+    context = await runtime.manager._build_summary_context(
+        "bot", "group", "self", [MessageData(user_id="user", content="你好")]
+    )
+    prompt = runtime.manager._build_profile_user_prompt("group", context)
+    profile = await runtime.cache.get_user_profile_record("bot", "group", "user")
+    reply_profile = build_user_profile_block(
+        "user", profile, None, relation_score=profile
+    )
+    for text in (prompt, reply_profile):
+        assert "好感度：\n79.7（近期：-0.3）\n累计评价：41次" in text
 
 
 @pytest.mark.asyncio

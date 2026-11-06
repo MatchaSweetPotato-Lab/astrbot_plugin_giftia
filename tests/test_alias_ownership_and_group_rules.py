@@ -202,6 +202,7 @@ async def test_only_current_model_confirmed_alias_observations_count_once(
         pytest.param(False, None, 1, id="new-profile"),
         pytest.param(True, None, 1, id="unscored-profile"),
         pytest.param(True, 0, 1, id="zero-score"),
+        pytest.param(True, -50, 1, id="zero-final-score"),
         pytest.param(True, 9, 4, id="cross-ten"),
         pytest.param(True, 29, 4, id="cross-thirty"),
         pytest.param(True, 40, 4, id="high-score"),
@@ -242,7 +243,10 @@ async def test_profile_summary_receives_current_affinity_and_preserves_event_del
     )
 
     user_prompt = manager._call_summary_llm.call_args.args[2]
-    assert "好感度:" not in user_prompt
+    assert (
+        f"好感度：\n{(current_score or 0) + 50:.1f}（近期：+0.0）\n累计评价：0次"
+        in user_prompt
+    )
     assert "Retired title" not in user_prompt
     assert "Retired personality" not in user_prompt
     relation, _ = await runtime.db.get_relation("bot", "group", "A")

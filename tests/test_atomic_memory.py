@@ -1012,7 +1012,7 @@ async def test_context_failure_keeps_pending_sources_for_periodic_retry(runtime,
         "passive_memory:last_summarized_id:bot:group"
     ) == own.db_id
     profile_prompt = runtime.manager._call_summary_llm.await_args_list[1].args[2]
-    assert "好感度:" not in profile_prompt
+    assert "好感度：\n62.0（近期：+0.0）\n累计评价：0次" in profile_prompt
     assert "互动态度" not in profile_prompt
     assert "友好" not in profile_prompt
 
