@@ -4,11 +4,17 @@
         "type": "object",
         "hint": "",
         "items": {
-            "msg_number": {
-                "description": "消息历史数量",
+            "min_msg_number": {
+                "description": "唤醒时最低上下文条数",
                 "type": "int",
-                "default": 50,
-                "hint": "消息历史数量"
+                "default": 20,
+                "hint": "首次唤醒或不活跃后重新唤醒时，回溯最近多少条消息；持续活跃时保留起点并自动增长。包含用户和 Bot 消息，最低为 1，不能超过最高上下文条数。当前待处理批次较大时会完整带入批次。"
+            },
+            "msg_number": {
+                "description": "最高上下文条数",
+                "type": "int",
+                "default": 200,
+                "hint": "持续活跃时上下文自动增长至此上限，然后保留最近的这些消息滑动。记忆整理和好感度维护共用此条数上限，不再额外按字符数切批。"
             },
             "block_command_messages": {
                 "description": "指令消息入库屏蔽",
@@ -428,7 +434,7 @@
                 "description": "启用被动状态维护",
                 "type": "bool",
                 "default": true,
-                "hint": "只归纳已见且尚未处理的消息，区分持续事实 fact 与具体事件 event；仅对 fact 召回旧事实并去重整理，event 按时间节点直接保存。保留关联群友、时间、重要度和原话证据，同时维护外号和好感度。"
+                "hint": "只归纳已见且尚未处理的消息。活跃期间达到最高上下文条数时分段维护，进入不活跃后处理剩余片段；记忆和好感度共用同一片段及条数上限。区分持续事实 fact 与具体事件 event，保留关联群友、时间、重要度和原话证据，同时维护外号和好感度。"
             },
             "passive_memory_provider_ids": {
                 "type": "list",
@@ -436,18 +442,6 @@
                 "_special": "select_providers",
                 "default": [],
                 "hint": "选择用于后台长期记忆提炼与画像维护的 LLM 提供商。如果不配置，将跳过后台总结。"
-            },
-            "passive_memory_silence_threshold": {
-                "description": "被动总结静默触发阈值",
-                "type": "int",
-                "default": 10,
-                "hint": "接话分析窗口耗尽后，累计收到该数量的消息时，后台归纳已见且未处理的消息。接话窗口按决策批次消耗；不活跃期间未进入模型上下文的消息不会因此获得总结资格。"
-            },
-            "passive_memory_overflow_threshold": {
-                "description": "被动总结溢出触发阈值",
-                "type": "int",
-                "default": 100,
-                "hint": "已见、未归纳且已离开上下文窗口的消息达到该数量时，触发后台归纳。该值控制触发时机，实际批次由插件自动划分。"
             },
             "ignore_avx2_check": {
                 "description": "强制跳过 AVX2 指令集检测",

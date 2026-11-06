@@ -163,6 +163,128 @@ async def runtime(monkeypatch, tmp_path):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@pytest.mark.asyncio
+async def test_reply_context_grows_slides_and_restarts_after_inactivity(runtime):
+    plugin = runtime.plugin
+    plugin.min_msg_number = 3
+    plugin.msg_number = 8
+    for index in range(15):
+        await runtime.send(f"history-{index}", enqueue=False)
+
+    expected = ["history-13", "history-14", "wake"]
+    await runtime.send("wake")
+    await runtime.drain()
+    for index in range(7):
+        prompt = plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+        root = fromstring(f"<context>{prompt}</context>")
+        visible = root.findall("recent_messages/message") + root.findall(
+            "reply_messages/message"
+        )
+        assert [msg.get("message_id") for msg in visible] == expected[-8:]
+        # Bot output and renewed wakeups both extend the existing period.
+        await runtime.send(f"own-{index}", user="self", enqueue=False)
+        await runtime.send(f"followup-{index}")
+        await runtime.drain()
+        expected.extend([f"own-{index}", f"followup-{index}"])
+
+    async def stop(**kwargs):
+        plugin.active_reply_counters["bot:group"] = 0
+        return False, None, None, None
+
+    runtime.manager.decision_engine.evaluate_decision.side_effect = stop
+    await runtime.send("last-decision")
+    await runtime.drain()
+    assert not plugin.context_windows.windows
+    runtime.manager.decision_engine.evaluate_decision.side_effect = runtime.decide
+    for index in range(6):
+        await runtime.send(f"idle-{index}", enqueue=False)
+    await runtime.send("rewake")
+    await runtime.drain()
+    prompt = plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    root = fromstring(f"<context>{prompt}</context>")
+    visible = root.findall("recent_messages/message") + root.findall(
+        "reply_messages/message"
+    )
+    assert [msg.get("message_id") for msg in visible] == ["idle-4", "idle-5", "rewake"]
+
+
+@pytest.mark.asyncio
+async def test_small_reply_window_keeps_twelve_decision_history_messages(runtime):
+    runtime.plugin.min_msg_number = 2
+    runtime.plugin.msg_number = 5
+    for index in range(30):
+        await runtime.send(f"history-{index}", enqueue=False)
+    await runtime.send("wake")
+    await runtime.drain()
+    decision = runtime.manager.decision_engine.evaluate_decision.call_args.kwargs
+    assert [msg.message_id for msg in decision["recent_messages"]] == [
+        f"history-{index}" for index in range(18, 30)
+    ]
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    root = fromstring(f"<context>{prompt}</context>")
+    assert [
+        msg.get("message_id") for msg in root.findall("recent_messages/message")
+    ] == ["history-29"]
+
+
+@pytest.mark.asyncio
+async def test_slow_decision_cannot_reset_a_growing_reply_context(runtime):
+    runtime.plugin.min_msg_number = 2
+    await runtime.send("history", enqueue=False)
+    await runtime.send("wake")
+    await runtime.drain()
+    await runtime.send("followup")
+    await runtime.drain()
+
+    async def slow_decision(**kwargs):
+        window = runtime.plugin.context_windows.windows[("bot", "group")]
+        window.last_activity -= 301
+        return await runtime.decide(**kwargs)
+
+    runtime.manager.decision_engine.evaluate_decision.side_effect = slow_decision
+    await runtime.send("next")
+    await runtime.drain()
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    root = fromstring(f"<context>{prompt}</context>")
+    visible = root.findall("recent_messages/message") + root.findall(
+        "reply_messages/message"
+    )
+    assert [msg.get("message_id") for msg in visible] == [
+        "history",
+        "wake",
+        "followup",
+        "next",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_large_backlog_preserves_decision_history_and_all_bounded_reply_targets(
+    runtime,
+):
+    runtime.plugin.min_msg_number = 2
+    runtime.plugin.msg_number = 5
+    for index in range(30):
+        await runtime.send(f"history-{index}", enqueue=False)
+    async with chat_module.session_lock_manager.acquire_lock(
+        "adapter:GroupMessage:group"
+    ):
+        for index in range(30):
+            await runtime.send(f"queued-{index}")
+    await runtime.drain()
+    decisions = runtime.manager.decision_engine.evaluate_decision.call_args_list
+    assert [msg.message_id for msg in decisions[0].kwargs["recent_messages"]] == [
+        f"history-{index}" for index in range(18, 30)
+    ]
+    targets = []
+    for call in runtime.plugin.call_llm.call_llm_reply.call_args_list:
+        root = fromstring(f"<context>{call.kwargs['user_prompt']}</context>")
+        history = root.findall("recent_messages/message")
+        current = root.findall("reply_messages/message")
+        assert len(history) + len(current) <= 5
+        targets.extend(msg.get("message_id") for msg in current)
+    assert targets == [f"queued-{index}" for index in range(30)]
+
+
 @pytest.mark.parametrize(
     "value,expected", [(None, ""), ("", ""), (" review ", "review")]
 )

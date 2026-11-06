@@ -11,6 +11,7 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         self.plugin = plugin
         self.passive_memory_locks: dict[str, asyncio.Lock] = {}
         self.summary_tasks: dict[str, asyncio.Task] = {}
+        self.summary_requests: dict[str, list[tuple[int, int]]] = {}
         self.maintenance_lock = asyncio.Lock()
         self.maintenance_tasks: set[asyncio.Task] = set()
         self.registered_sessions = set()
@@ -80,9 +81,30 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         key = f"{bot_name}:{session_id}"
         try:
             async with self.passive_memory_locks[key]:
-                await self._run_background_summarize(
-                    bot_name, session_id, self_id, start_id, end_id
-                )
+                requests = self.summary_requests[key]
+                while requests and not self._closed:
+                    start_id, end_id = requests[0]
+                    while True:
+                        (
+                            first,
+                            last,
+                            count,
+                        ) = await self.plugin.db.chat_history_repo.get_pending_memory_stats(
+                            bot_name, session_id, end_id=end_id
+                        )
+                        if not count:
+                            break
+                        if not await self._run_background_summarize(
+                            bot_name, session_id, self_id, first, last
+                        ):
+                            return
+                    requests.pop(0)
+                    if not requests:
+                        await self.check_and_trigger_passive_memory(
+                            bot_name, session_id, self_id
+                        )
+                if not requests:
+                    self.summary_requests.pop(key, None)
         finally:
             self.summary_tasks.pop(key, None)
 
@@ -101,9 +123,11 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             return
         # Register the route first so a crash cannot strand newly queued messages.
         await self._remember_session(bot_name, session_id, self_id)
-        await self.plugin.db.chat_history_repo.mark_messages_observed(
+        changed = await self.plugin.db.chat_history_repo.mark_messages_observed(
             bot_name, session_id, [msg.message_id for msg in messages]
         )
+        if changed:
+            await self.check_and_trigger_passive_memory(bot_name, session_id, self_id)
 
     async def reset_silence_counter(self, bot_name: str, session_id: str) -> None:
         """Restart silence counting after bot output without changing source eligibility.
@@ -251,6 +275,8 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
         bot_name: str,
         group_or_user_id: str,
         self_id: str,
+        *,
+        force: bool = False,
     ) -> None:
         """Schedule one pending source interval without advancing its cursor.
 
@@ -258,57 +284,45 @@ class PassiveMemoryManager(PassiveSummaryTaskMixin):
             bot_name: Owning bot configuration.
             group_or_user_id: Owning conversation.
             self_id: Observing bot account.
+            force: Seal the remaining observed messages when a period ends.
         """
         if self._closed or not self.plugin.passive_memory_enabled:
             return
         key = f"{bot_name}:{group_or_user_id}"
-        if key in self.summary_tasks:
-            return
         lock = self.passive_memory_locks.setdefault(key, asyncio.Lock())
-        if lock.locked():
+        repo = self.plugin.db.chat_history_repo
+        first_id, last_id, pending_count = await repo.get_pending_memory_stats(
+            bot_name, group_or_user_id
+        )
+        if not pending_count:
             return
-        async with lock:
-            repo = self.plugin.db.chat_history_repo
-            first_id, last_id, pending_count = await repo.get_pending_memory_stats(
-                bot_name, group_or_user_id
+        maximum = max(1, int(self.plugin.msg_number))
+        if not force and pending_count < maximum:
+            return
+        if not self_id:
+            route = await self.plugin.db.get_kv_data(f"atomic_memory:session:{key}")
+            self_id = json.loads(route).get("self_id", "") if route else ""
+        if not self_id:
+            return
+        if force:
+            end_id = last_id
+        else:
+            full_batch = await repo.get_pending_memory_messages(
+                bot_name, group_or_user_id, first_id, last_id, limit=maximum
             )
-            if not pending_count:
+            # Another worker may commit sources between the stats and this read.
+            if len(full_batch) < maximum:
                 return
-            active = self.plugin.active_reply_counters.get(key, 0)
-            boundary = await self.plugin.db.get_boundary_message_id(
-                bot_name, group_or_user_id, self.plugin.msg_number
+            end_id = full_batch[-1].db_id
+        requests = self.summary_requests.setdefault(key, [])
+        if not requests or requests[-1][1] < end_id:
+            requests.append((first_id, end_id))
+        if key not in self.summary_tasks and not lock.locked():
+            self.summary_tasks[key] = asyncio.create_task(
+                self._summarize_session(
+                    bot_name, group_or_user_id, str(self_id), first_id, end_id
+                )
             )
-            end_id = 0
-            if boundary > first_id:
-                _, overflow_end, overflow = await repo.get_pending_memory_stats(
-                    bot_name, group_or_user_id, end_id=boundary - 1
-                )
-                if overflow >= self.plugin.passive_memory_overflow_threshold:
-                    end_id = overflow_end
-            if not end_id and not active:
-                silent_count = (
-                    int(
-                        await self.plugin.db.get_kv_data(
-                            f"passive_memory:silent_count:{key}", 0
-                        )
-                    )
-                    + 1
-                )
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:silent_count:{key}", silent_count
-                )
-                if silent_count >= self.plugin.passive_memory_silence_threshold:
-                    end_id = last_id
-            elif active:
-                await self.plugin.db.upsert_kv_data(
-                    f"passive_memory:silent_count:{key}", 0
-                )
-            if end_id:
-                self.summary_tasks[key] = asyncio.create_task(
-                    self._summarize_session(
-                        bot_name, group_or_user_id, str(self_id), first_id, end_id
-                    )
-                )
 
     async def force_trigger_passive_memory(
         self,

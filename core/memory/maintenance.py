@@ -438,6 +438,10 @@ class MemoryMaintenanceMixin:
                     (route["bot_name"], route["session_id"]): route.get("self_id", "")
                     for route in routes
                 }
+                windows = getattr(self.plugin, "context_windows", None)
+                if windows is not None:
+                    for scope in list(windows.windows):
+                        scopes.setdefault(scope, "")
                 async with self.plugin.db.query(
                     "SELECT DISTINCT bot_name, group_or_user_id FROM memories "
                     "WHERE revision>indexed_revision"
@@ -448,47 +452,56 @@ class MemoryMaintenanceMixin:
                     if bot_name not in self.plugin.bot_map:
                         continue
                     key = f"{bot_name}:{session_id}"
-                    lock = self.passive_memory_locks.setdefault(key, asyncio.Lock())
-                    if lock.locked() or key in self.summary_tasks:
-                        continue
                     try:
-                        async with lock:
-                            if summarize_enabled and self_id:
-                                (
-                                    first_id,
-                                    last_id,
-                                    pending,
-                                ) = await self.plugin.db.chat_history_repo.get_pending_memory_stats(
-                                    bot_name, session_id
+                        pending = 0
+                        if summarize_enabled and self_id:
+                            (
+                                _,
+                                _,
+                                pending,
+                            ) = await self.plugin.db.chat_history_repo.get_pending_memory_stats(
+                                bot_name, session_id
+                            )
+                        recent = (
+                            await self.plugin.db.get_messages(
+                                session_id, bot_name, limit=1
+                            )
+                            if pending
+                            or self.plugin.active_reply_counters.get(key, 0) > 0
+                            or (
+                                windows is not None
+                                and (bot_name, session_id) in windows.windows
+                            )
+                            else []
+                        )
+                        busy = windows is not None and windows.is_busy(
+                            bot_name, session_id
+                        )
+                        if (
+                            recent
+                            and not busy
+                            and not getattr(self.plugin, "replying_status", {}).get(
+                                key, 0
+                            )
+                            and datetime.now().timestamp()
+                            - datetime.fromisoformat(
+                                recent[-1].time.replace("Z", "+00:00")
+                            ).timestamp()
+                            >= 300
+                        ):
+                            # Close before summarizing so provider failures cannot
+                            # preserve a stale period or its reply-analysis counter.
+                            self.plugin.active_reply_counters[key] = 0
+                            if windows is not None:
+                                windows.close(bot_name, session_id)
+                            if pending:
+                                await self.check_and_trigger_passive_memory(
+                                    bot_name, session_id, self_id, force=True
                                 )
-                                recent = (
-                                    await self.plugin.db.get_messages(
-                                        session_id, bot_name, limit=1
-                                    )
-                                    if pending
-                                    or self.plugin.active_reply_counters.get(key, 0) > 0
-                                    else []
-                                )
-                                if (
-                                    recent
-                                    and datetime.now().timestamp()
-                                    - datetime.fromisoformat(
-                                        recent[-1].time.replace("Z", "+00:00")
-                                    ).timestamp()
-                                    >= 300
-                                ):
-                                    # Close the reply window before the model call so failures
-                                    # do not preserve it and later messages can reactivate.
-                                    self.plugin.active_reply_counters[key] = 0
-                                    if pending:
-                                        await self._run_background_summarize(
-                                            bot_name,
-                                            session_id,
-                                            self_id,
-                                            first_id,
-                                            last_id,
-                                        )
-                            await self._sync_memory_vectors(bot_name, session_id)
+                                summary = self.summary_tasks.get(key)
+                                if summary is not None:
+                                    await summary
+                        await self._sync_memory_vectors(bot_name, session_id)
                     except Exception:
                         logger.exception(
                             "[Giftia Memory] Maintenance failed for %s", key

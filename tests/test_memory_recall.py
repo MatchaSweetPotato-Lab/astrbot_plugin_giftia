@@ -458,7 +458,7 @@ async def test_reply_observes_configured_backfill_and_current_batch(runtime):
     ):
         pass
     runtime.cache.get_recent_message.assert_awaited_once_with("bot", "group", 20)
-    observe.assert_awaited_once_with("bot", "group", "self", [*backfill, wakeup])
+    observe.assert_awaited_once_with("bot", "group", "self", [*backfill[1:], wakeup])
 
 
 @pytest.mark.asyncio

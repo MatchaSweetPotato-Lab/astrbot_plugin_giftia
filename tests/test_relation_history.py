@@ -44,6 +44,7 @@ async def runtime(tmp_path, monkeypatch):
         embedding_conf={"enabled": False},
         passive_memory_enabled=True,
         passive_memory_provider_ids=["summary"],
+        msg_number=200,
         active_reply_counters={},
         bot_map={"bot": {"nickname": "Giftia"}},
     )

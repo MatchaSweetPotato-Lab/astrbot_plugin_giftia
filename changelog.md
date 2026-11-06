@@ -1,3 +1,10 @@
+## [Unreleased]
+
+### Improvements
+
+- 正式回复上下文改为随活跃周期动态增长：最低窗口默认 20 条、最高默认 200 条，达到上限后滑动，不活跃后重新唤醒回到最低窗口。
+- 消息历史配置新增 `min_msg_number`；原 `msg_number` 作为回复上下文与记忆、好感度维护共用的最高条数，保留已有配置值。移除固定 100 条／16000 字符维护切批限制，以及 `passive_memory_silence_threshold`、`passive_memory_overflow_threshold` 配置，改为满窗异步维护、周期结束处理剩余片段。
+
 ## [v0.5.1] - 2026-11-06
 
 ### Features
