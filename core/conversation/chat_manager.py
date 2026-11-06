@@ -679,6 +679,7 @@ class ChatManager:
             state: Queue and timing state owned by this worker.
         """
         review_retry: int | None = None
+        batch_limit = min(SESSION_BATCH_LIMIT, getattr(self.plugin, "msg_number", 200))
         try:
             while state.pending and not getattr(self.plugin, "_terminated", False):
                 state.wake.clear()
@@ -726,16 +727,19 @@ class ChatManager:
                     )
                     try:
                         async with self.plugin.parse_locks[parse_key]:
+                            batch_size = min(batch_limit, len(state.pending))
                             recent = await self.plugin.data_cache.get_recent_message(
                                 bot_name,
                                 group_or_user_id,
-                                getattr(self.plugin, "msg_number", 300),
+                                max(
+                                    12 + batch_size,
+                                    getattr(self.plugin, "msg_number", 200),
+                                )
+                                + len(state.pending)
+                                - batch_size,
                             )
                             state.current = [
-                                state.pending.popleft()
-                                for _ in range(
-                                    min(SESSION_BATCH_LIMIT, len(state.pending))
-                                )
+                                state.pending.popleft() for _ in range(batch_size)
                             ]
                             later_ids = {
                                 item.message.message_id for item in state.pending
@@ -830,6 +834,12 @@ class ChatManager:
                             item.message.message_id
                             for item in [*state.current, *blocked]
                         }
+                        self.plugin.context_windows.select(
+                            bot_name,
+                            group_or_user_id,
+                            recent,
+                            [item.message for item in state.current],
+                        )
                         history = [
                             msg for msg in recent if msg.message_id not in batch_ids
                         ][-12:]
@@ -860,19 +870,18 @@ class ChatManager:
                         # parse lock. Messages still being parsed cannot be consumed.
                         review_after_id = None
                         async with self.plugin.parse_locks[parse_key]:
+                            absorb_count = min(
+                                batch_limit - len(state.current), len(state.pending)
+                            )
                             recent = await self.plugin.data_cache.get_recent_message(
                                 bot_name,
                                 group_or_user_id,
-                                getattr(self.plugin, "msg_number", 300),
+                                getattr(self.plugin, "msg_number", 200)
+                                + len(state.pending)
+                                - absorb_count,
                             )
                             absorbed = [
-                                state.pending.popleft()
-                                for _ in range(
-                                    min(
-                                        SESSION_BATCH_LIMIT - len(state.current),
-                                        len(state.pending),
-                                    )
-                                )
+                                state.pending.popleft() for _ in range(absorb_count)
                             ]
                             state.current.extend(absorbed)
                             later_ids = {
@@ -975,9 +984,7 @@ class ChatManager:
                         if not state.current:
                             state.current = [
                                 state.pending.popleft()
-                                for _ in range(
-                                    min(SESSION_BATCH_LIMIT, len(state.pending))
-                                )
+                                for _ in range(min(batch_limit, len(state.pending)))
                             ]
                         await self._set_batch_status(
                             bot_name,
@@ -993,6 +1000,21 @@ class ChatManager:
                         )
                     finally:
                         state.current = []
+                        inactive = (
+                            self.plugin.active_reply_counters.get(reply_key, 0) <= 0
+                            and not state.pending
+                        )
+                        if inactive:
+                            self.plugin.context_windows.close(
+                                bot_name, group_or_user_id
+                            )
+                        if getattr(self.plugin, "passive_memory_enabled", False):
+                            await self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
+                                bot_name,
+                                group_or_user_id,
+                                event.get_self_id(),
+                                force=inactive,
+                            )
         finally:
             unfinished = [*state.current, *state.pending]
             state.current = []
@@ -1396,6 +1418,12 @@ class ChatManager:
                 self.plugin.replying_status[reply_key] = max(
                     0, self.plugin.replying_status.get(reply_key, 0) - 1
                 )
+                if self.plugin.active_reply_counters.get(reply_key, 0) <= 0:
+                    self.plugin.context_windows.close(bot_name, group_or_user_id)
+                    if getattr(self.plugin, "passive_memory_enabled", False):
+                        await self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
+                            bot_name, group_or_user_id, self_id, force=True
+                        )
 
     def build_fake_message_obj(
         self,

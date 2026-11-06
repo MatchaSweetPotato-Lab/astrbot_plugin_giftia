@@ -514,10 +514,10 @@ async def test_xml_tool_outputs_and_results_follow_order(
         setattr(plugin.data_cache, name, AsyncMock(return_value=[]))
     prompt = Mock(return_value="prompt")
     monkeypatch.setattr("core.conversation.reply_pipeline.build_reply_prompt", prompt)
-    pipeline = ReplyPipeline.__new__(ReplyPipeline)
-    pipeline.plugin = plugin
+    pipeline = ReplyPipeline(plugin)
     pipeline.media_captioner = SimpleNamespace(
-        get_cached_media_captions=AsyncMock(return_value=[])
+        get_cached_media_captions=AsyncMock(return_value=[]),
+        get_image_metadata=AsyncMock(return_value={}),
     )
     pipeline.tool_executor = runtime.dispatcher.tool_executor
     async for chunk in pipeline.dispatch_llm_reply_loop(

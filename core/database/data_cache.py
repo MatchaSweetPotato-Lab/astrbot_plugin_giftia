@@ -111,7 +111,7 @@ class DataCache:
         fmt_key = f"{bot_name}:{group_id}"
         messages = self.recent_messages.get(fmt_key)
         # 只有在缓存满足需求量时，才直接使用缓存
-        if messages and (len(messages) >= limit or len(messages) == self.msg_number):
+        if messages and len(messages) >= limit:
             return list(messages)[-limit:]
         # 否则从数据库中获取
         fetch_limit = max(limit, self.msg_number)
@@ -252,6 +252,14 @@ class DataCache:
 
             msg_data.message_id = f"local_{uuid.uuid4().hex}"
         fmt_key = f"{bot_name}:{group_id}"
+        windows = getattr(self.plugin, "context_windows", None)
+        if windows is not None and windows.note_message(bot_name, group_id):
+            if getattr(self.plugin, "passive_memory_enabled", False):
+                await (
+                    self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
+                        bot_name, group_id, "", force=True
+                    )
+                )
         self.recent_messages[fmt_key].append(msg_data)
         observe_output = (
             observed_by_bot

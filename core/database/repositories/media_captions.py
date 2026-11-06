@@ -14,8 +14,8 @@ class MediaCaptionsRepository(BaseRepository):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, width, height, query_times, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(hash_val) DO UPDATE SET
                 file_name = excluded.file_name,
                 url = excluded.url,
@@ -28,6 +28,8 @@ class MediaCaptionsRepository(BaseRepository):
                 is_captioned = excluded.is_captioned,
                 duration = excluded.duration,
                 file_size = excluded.file_size,
+                width = excluded.width,
+                height = excluded.height,
                 updated_at = excluded.updated_at
             """,
             (
@@ -43,6 +45,8 @@ class MediaCaptionsRepository(BaseRepository):
                 1 if media_caption.is_captioned else 0,
                 float(getattr(media_caption, "duration", 0.0) or 0.0),
                 int(getattr(media_caption, "file_size", 0) or 0),
+                int(media_caption.width or 0),
+                int(media_caption.height or 0),
                 0,
                 update_time,
                 update_time,
@@ -54,7 +58,7 @@ class MediaCaptionsRepository(BaseRepository):
     async def get_media_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times FROM media_caption WHERE hash_val = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, width, height, query_times FROM media_caption WHERE hash_val = ?
             """,
             (hash_val,),
         ) as cursor:
@@ -85,6 +89,8 @@ class MediaCaptionsRepository(BaseRepository):
                 is_captioned=bool(row["is_captioned"]),
                 duration=duration,
                 file_size=file_size,
+                width=int(row["width"] or 0),
+                height=int(row["height"] or 0),
             )
             return caption
         return None
@@ -95,7 +101,7 @@ class MediaCaptionsRepository(BaseRepository):
     ) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times FROM media_caption WHERE file_name = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, width, height, query_times FROM media_caption WHERE file_name = ?
             """,
             (file_name,),
         ) as cursor:
@@ -126,6 +132,8 @@ class MediaCaptionsRepository(BaseRepository):
                 is_captioned=bool(row["is_captioned"]),
                 duration=duration,
                 file_size=file_size,
+                width=int(row["width"] or 0),
+                height=int(row["height"] or 0),
             )
             return caption
         return None
@@ -139,7 +147,7 @@ class MediaCaptionsRepository(BaseRepository):
         await self.conn.execute(
             """
             UPDATE media_caption
-            SET genre = ?, character = ?, source = ?, text = ?, caption = ?, is_captioned = ?, duration = ?, file_size = ?, updated_at = ?
+            SET genre = ?, character = ?, source = ?, text = ?, caption = ?, is_captioned = ?, duration = ?, file_size = ?, width = ?, height = ?, updated_at = ?
             WHERE hash_val = ?
             """,
             (
@@ -151,6 +159,8 @@ class MediaCaptionsRepository(BaseRepository):
                 1 if media_caption.is_captioned else 0,
                 float(getattr(media_caption, "duration", 0.0) or 0.0),
                 int(getattr(media_caption, "file_size", 0) or 0),
+                int(media_caption.width or 0),
+                int(media_caption.height or 0),
                 update_time,
                 media_caption.hash_val,
             ),

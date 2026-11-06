@@ -90,6 +90,35 @@ async def test_account_type_upgrade_defaults_to_unknown_and_preserves_manual_edi
 
 
 @pytest.mark.asyncio
+async def test_image_metadata_upgrade_preserves_existing_captions_and_size(database):
+    await database.execute("BEGIN")
+    for version, migration in migrations.MIGRATIONS:
+        if version >= 5:
+            break
+        await migration(database)
+        await database.execute(f"PRAGMA user_version={version}")
+    await database.execute(
+        "INSERT INTO media_caption (hash_val, media_type, caption, file_size) "
+        "VALUES ('0123456789abcdef', 'image', 'Existing caption', 2048)"
+    )
+    await database.commit()
+
+    await schema.initialize_database(database)
+    async with database.execute(
+        "SELECT caption, file_size, width, height FROM media_caption"
+    ) as cursor:
+        assert await cursor.fetchone() == ("Existing caption", 2048, 0, 0)
+    await database.execute("UPDATE media_caption SET width=1920, height=1080")
+    await database.commit()
+    await schema.initialize_database(database)
+    async with database.execute(
+        "SELECT file_size, width, height FROM media_caption"
+    ) as cursor:
+        assert await cursor.fetchone() == (2048, 1920, 1080)
+    assert await schema_version(database) == migrations.CURRENT_SCHEMA_VERSION
+
+
+@pytest.mark.asyncio
 async def test_unversioned_current_database_adopts_baseline_only_once(
     database, monkeypatch
 ):

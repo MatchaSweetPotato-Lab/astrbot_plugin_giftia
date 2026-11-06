@@ -111,6 +111,8 @@ class MediaCaption:
     is_captioned: bool = True
     duration: float = 0.0
     file_size: int = 0
+    width: int = 0
+    height: int = 0
 
 
 @dataclass(repr=False, slots=True)

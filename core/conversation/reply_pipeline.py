@@ -20,6 +20,7 @@ from ..memory.recall_scope import (
 )
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MediaCaption, MessageData
+from .context_window import ContextWindows
 from .media_captioner import MediaCaptioner
 from .memory_recall import conf_float, conf_int, search_automatic_user_memories
 from .tool_executor import ToolExecutor
@@ -32,6 +33,8 @@ class ReplyReviewRejected(RuntimeError):
 class ReplyPipeline:
     def __init__(self, plugin):
         self.plugin = plugin
+        if not hasattr(plugin, "context_windows"):
+            plugin.context_windows = ContextWindows(plugin)
         self.media_captioner = MediaCaptioner(plugin)
         self.tool_executor = ToolExecutor(plugin)
 
@@ -284,6 +287,12 @@ class ReplyPipeline:
                     recent_messages.append(deepcopy(msg))
                     seen_ids.add(msg.message_id)
         if is_first_turn:
+            history, targets = prepare_reply_message_context(
+                recent_messages, reply_messages
+            )
+            recent_messages = self.plugin.context_windows.select(
+                bot_name, group_or_user_id, [*history, *targets], reply_messages
+            )
             self_id = str(event.get_self_id())
             for msg in recent_messages:
                 if msg.user_id and str(msg.user_id) == self_id and msg.content:
@@ -292,6 +301,9 @@ class ReplyPipeline:
         media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
             recent_messages=[*recent_messages, *reply_messages],
+        )
+        image_metadata = await self.media_captioner.get_image_metadata(
+            [*recent_messages, *reply_messages]
         )
 
         if relevant_memories is None:
@@ -551,6 +563,7 @@ class ReplyPipeline:
             current_session_id=group_or_user_id,
             recent_messages=prompt_recent_messages,
             media_captions=media_captions,
+            image_metadata=image_metadata,
             reply_messages=prompt_reply_messages,
             remind_message=remind_message,
             group_data=str(
@@ -623,7 +636,7 @@ class ReplyPipeline:
                 bot_name,
                 group_or_user_id,
                 event.get_self_id(),
-                [*recent_messages, *reply_messages],
+                [*prompt_recent_messages, *prompt_reply_messages],
             )
         llm_result = await self.plugin.call_llm.call_llm_reply(
             event=event,

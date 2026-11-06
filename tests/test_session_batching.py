@@ -316,6 +316,9 @@ async def test_reply_preserves_unsummarized_memory_during_active_conversation(
         side_effect=lambda **kwargs: int(kwargs["message_id"])
     )
     plugin.passive_memory_manager = PassiveMemoryManager(plugin)
+    plugin.db.chat_history_repo.get_pending_memory_stats = AsyncMock(
+        return_value=(0, 0, 0)
+    )
     runtime.manager.decision_engine.evaluate_decision.return_value = (
         True,
         None,

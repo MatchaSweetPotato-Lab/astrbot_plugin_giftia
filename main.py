@@ -80,7 +80,10 @@ class Giftia(Star):
         self.caption_config = self.conf.get("caption_config", {})
         # 聊天记录配置
         msg_history = self.conf.get("msg_history", {})
-        self.msg_number = msg_history.get("msg_number", 300)
+        self.msg_number = max(1, int(msg_history.get("msg_number", 200)))
+        self.min_msg_number = min(
+            self.msg_number, max(1, int(msg_history.get("min_msg_number", 20)))
+        )
         self.block_command_messages = msg_history.get("block_command_messages", False)
 
         # Analysis windows are consumed once per decision batch.
@@ -115,12 +118,6 @@ class Giftia(Star):
         self.passive_memory_enabled = memory_config.get("passive_memory_enabled", False)
         self.passive_memory_provider_ids = memory_config.get(
             "passive_memory_provider_ids", []
-        )
-        self.passive_memory_silence_threshold = memory_config.get(
-            "passive_memory_silence_threshold", 10
-        )
-        self.passive_memory_overflow_threshold = memory_config.get(
-            "passive_memory_overflow_threshold", 100
         )
 
         # LLM工具配置

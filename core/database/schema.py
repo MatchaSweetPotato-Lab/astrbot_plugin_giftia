@@ -77,6 +77,8 @@ TABLE_DEFINITIONS = (
         is_captioned INTEGER DEFAULT 1,
         duration REAL DEFAULT 0.0,
         file_size INTEGER DEFAULT 0,
+        width INTEGER DEFAULT 0,
+        height INTEGER DEFAULT 0,
         query_times INTEGER,
         created_at DATETIME,
         updated_at DATETIME

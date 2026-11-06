@@ -181,8 +181,20 @@ class MessageMediaFormatter:
         file_name: str | None = None,
         duration: float = 0.0,
         file_size: int = 0,
+        width: int = 0,
+        height: int = 0,
     ) -> None:
-        """统一更新已存在媒体的 URL、文件名与元数据，并同步更新数据缓存"""
+        """Refresh media references and fill missing physical metadata.
+
+        Args:
+            existing_caption: Cached media record to update and persist.
+            url: Most recent media URL, when available.
+            file_name: Most recent platform file reference, when available.
+            duration: Known duration in seconds, or zero when unavailable.
+            file_size: Known file size in bytes, or zero when unavailable.
+            width: Known pixel width, or zero when unavailable.
+            height: Known pixel height, or zero when unavailable.
+        """
         if url:
             existing_caption.url = url
         if file_name:
@@ -191,6 +203,10 @@ class MessageMediaFormatter:
             existing_caption.duration = duration
         if file_size > 0 and getattr(existing_caption, "file_size", 0) <= 0:
             existing_caption.file_size = file_size
+        if width > 0 and existing_caption.width <= 0:
+            existing_caption.width = width
+        if height > 0 and existing_caption.height <= 0:
+            existing_caption.height = height
         await self.data_cache.set_caption(existing_caption)
 
     async def format_image_ref(
@@ -464,6 +480,9 @@ class MessageMediaFormatter:
                 return None, None
             # 新的 canonical media_id 一律使用图片内容哈希；文件名里的 32 位 MD5 只做旧缓存别名。
             hash_val = xxh3_64_hexdigest(image_bytes)
+            width, height, file_size = await asyncio.to_thread(
+                HttpManager.get_image_metadata, image_bytes
+            )
 
             # If the URL/file_name is a base64 string, replace it with a clean placeholder to avoid bloated DB columns
             db_url = url
@@ -497,6 +516,9 @@ class MessageMediaFormatter:
                     caption=custom_desc,
                     genre="表情包",
                     is_captioned=True,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -510,6 +532,9 @@ class MessageMediaFormatter:
                     media_caption,
                     url=db_url,
                     file_name=db_file_name if file_name else None,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if getattr(media_caption, "is_captioned", True) or defer_caption:
                     return hash_val, media_caption
@@ -526,6 +551,9 @@ class MessageMediaFormatter:
                     text=legacy_caption.text,
                     caption=legacy_caption.caption,
                     is_captioned=legacy_caption.is_captioned,
+                    width=width or legacy_caption.width,
+                    height=height or legacy_caption.height,
+                    file_size=file_size,
                 )
                 await self.data_cache.set_caption(canonical_caption)
                 if getattr(canonical_caption, "is_captioned", True) or defer_caption:
@@ -537,6 +565,9 @@ class MessageMediaFormatter:
                     url=db_url,
                     media_type="image",
                     is_captioned=True,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -550,6 +581,9 @@ class MessageMediaFormatter:
                     url=db_url,
                     media_type="image",
                     is_captioned=False,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -571,6 +605,9 @@ class MessageMediaFormatter:
                     url=db_url,
                     media_type="image",
                     is_captioned=False,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -587,6 +624,9 @@ class MessageMediaFormatter:
                     url=db_url,
                     media_type="image",
                     is_captioned=True,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -611,6 +651,9 @@ class MessageMediaFormatter:
                     url=db_url,
                     media_type="image",
                     is_captioned=True,
+                    width=width,
+                    height=height,
+                    file_size=file_size,
                 )
                 if file_name:
                     media_caption.file_name = db_file_name
@@ -622,6 +665,9 @@ class MessageMediaFormatter:
                 media_caption.file_name = db_file_name
             media_caption.media_type = "image"
             media_caption.is_captioned = True
+            media_caption.width = width
+            media_caption.height = height
+            media_caption.file_size = file_size
             # 缓存
             await self.data_cache.set_caption(media_caption)
             return hash_val, media_caption

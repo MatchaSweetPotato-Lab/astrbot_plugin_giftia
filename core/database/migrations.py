@@ -509,12 +509,26 @@ async def _migrate_to_v4(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def _migrate_to_v5(conn: aiosqlite.Connection) -> None:
+    """Store image dimensions alongside the existing media file size.
+
+    Args:
+        conn: Database connection being initialized.
+    """
+    await _add_missing_columns(
+        conn,
+        "media_caption",
+        (("width", "INTEGER DEFAULT 0"), ("height", "INTEGER DEFAULT 0")),
+    )
+
+
 # Schema versions are independent of plugin releases; released steps stay frozen.
 MIGRATIONS = (
     (1, _migrate_legacy_to_v1),
     (2, _migrate_to_v2),
     (3, _migrate_to_v3),
     (4, _migrate_to_v4),
+    (5, _migrate_to_v5),
 )
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

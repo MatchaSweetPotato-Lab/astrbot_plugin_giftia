@@ -12,7 +12,6 @@ from .maintenance import MemoryMaintenanceMixin
 from .passive_context import PassiveContextMixin
 
 RELATION_DELTA_LIMIT = 5
-MEMORY_SUMMARY_BATCH_SIZE = 100
 
 
 class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
@@ -283,17 +282,12 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     group_or_user_id,
                     start_id,
                     end_id,
-                    limit=MEMORY_SUMMARY_BATCH_SIZE,
+                    limit=max(1, int(self.plugin.msg_number)),
                 )
             )
             if not messages:
                 return True
-            selected, text_size = [], 0
-            for msg in messages:
-                if selected and text_size + len(msg.content or "") > 16000:
-                    break
-                selected.append(msg)
-                text_size += len(msg.content or "")
+            selected = messages
             has_source = any(
                 not msg.is_recalled
                 and msg.role != "operation_log"

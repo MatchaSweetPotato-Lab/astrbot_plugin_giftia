@@ -829,6 +829,9 @@ caption: {media_caption.caption}"""
         )
         if not session_allowed:
             self.plugin.active_reply_counters.pop(f"{bot_name}:{session_id}", None)
+            windows = getattr(self.plugin, "context_windows", None)
+            if windows is not None:
+                windows.close(bot_name, session_id)
         action = "加入" if should_be_in_list else "移出"
         yield await event.send(
             MessageChain(
@@ -929,6 +932,13 @@ caption: {media_caption.caption}"""
 
         fmt_key = f"{bot_name}:{group_or_user_id}"
         self.plugin.active_reply_counters[fmt_key] = 0
+        windows = getattr(self.plugin, "context_windows", None)
+        if windows is not None:
+            windows.close(bot_name, group_or_user_id)
+        if getattr(self.plugin, "passive_memory_enabled", False):
+            await self.plugin.passive_memory_manager.check_and_trigger_passive_memory(
+                bot_name, group_or_user_id, event.get_self_id(), force=True
+            )
 
         yield await event.send(
             MessageChain([Plain(f"已重置【{nickname}】在当前会话的接话分析窗口。")])
