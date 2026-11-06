@@ -6,6 +6,7 @@ from astrbot.api import logger
 from ..llm.preset_prompts import (
     DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT,
     DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT,
+    RELATION_DELTA_GUIDE,
 )
 from ..llm.prompt import (
     USER_PROFILE_FIELDS,
@@ -30,10 +31,30 @@ def format_time_to_seconds(db_value: str) -> str:
 
 class PassiveContextMixin:
     def _format_prompt_template(
-        self, prompt_template: str, nickname: str, self_id: str
+        self,
+        prompt_template: str,
+        nickname: str,
+        self_id: str,
+        *,
+        relation_delta_guide: str = RELATION_DELTA_GUIDE,
     ) -> str:
+        """Format trusted template variables without parsing inserted guide text.
+
+        Args:
+            prompt_template: Built-in task prompt.
+            nickname: Bot display name.
+            self_id: Bot account ID.
+            relation_delta_guide: Effective bot-scoped behavior rating guidance.
+
+        Returns:
+            Formatted prompt, or the original template if formatting fails.
+        """
         try:
-            return prompt_template.format(nickname=nickname, self_id=self_id)
+            return prompt_template.format(
+                nickname=nickname,
+                self_id=self_id,
+                relation_delta_guide=relation_delta_guide,
+            )
         except Exception as e:
             logger.warning(
                 f"[Giftia Passive Memory] 提示词变量格式化失败，将使用原文: {e}"

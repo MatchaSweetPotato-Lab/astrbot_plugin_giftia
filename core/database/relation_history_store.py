@@ -4,6 +4,10 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
+from ..utils.relation_scoring import (
+    DEFAULT_RELATION_TIER_COUNTS,
+    valid_relation_tier_counts,
+)
 from .operations import serialized_operation
 
 RELATION_CURVE_SCALE = 60 / 7
@@ -20,7 +24,7 @@ def _allocate_relation_weight(rating_weights: tuple[float, ...]) -> float:
     """Limit accumulated evidence before adding each stronger rating tier.
 
     Args:
-        rating_weights: Signed net squared weights for magnitudes one through five.
+        rating_weights: Signed net configured weights for magnitudes one through five.
 
     Returns:
         Effective signed weight after applying each tier's symmetric score limits.
@@ -38,13 +42,16 @@ def _allocate_relation_weight(rating_weights: tuple[float, ...]) -> float:
 
 
 def _smooth_recent_relation_score(
-    long_term_score: float, deltas: tuple[int, ...]
+    long_term_score: float,
+    deltas: tuple[int, ...],
+    rating_weights: tuple[float, ...] = (1, 4, 9, 16, 25),
 ) -> float:
     """Replay bounded recent evidence without making positive ratings lower affinity.
 
     Args:
         long_term_score: Relationship established by all recorded evaluations.
         deltas: Selected recent ratings in occurrence order, oldest first.
+        rating_weights: Effective per-rating weights for magnitudes one through five.
 
     Returns:
         Interaction score anchored to the long-term score. Each rating responds
@@ -63,7 +70,9 @@ def _smooth_recent_relation_score(
         directional_weights = [[0.0] * 5 for _ in range(2)]
         for delta in prefix:
             direction = 0 if delta > 0 else 1
-            directional_weights[direction][abs(delta) - 1] += delta * delta
+            directional_weights[direction][abs(delta) - 1] += rating_weights[
+                abs(delta) - 1
+            ]
         # Stronger evidence keeps its budget; lower tiers use remaining capacity.
         for weights in directional_weights:
             remaining = float("inf")
@@ -75,7 +84,7 @@ def _smooth_recent_relation_score(
         for delta in reversed(prefix):
             direction = 0 if delta > 0 else 1
             tier = abs(delta) - 1
-            strength = min(delta * delta, directional_weights[direction][tier])
+            strength = min(rating_weights[tier], directional_weights[direction][tier])
             directional_weights[direction][tier] -= strength
             steps.append((delta, tier, strength))
         smoothed = long_term_score
@@ -134,7 +143,7 @@ class RelationHistoryStoreMixin:
             Unrounded final, base, recent, long-term and interaction scores with
             sample counts. The recent baseline excludes the selected recent
             ratings and applies the same historical aggregation without replaying
-            or replacing them. Each magnitude cancels its own signed squared weights.
+            or replacing them. Each magnitude cancels its own configured weights.
             Accumulated weights are limited to the 80, 85, 90 and 95 score bounds
             before adding the next tier. Magnitude five can approach 100 or zero.
             Stronger weights fill lower ranges before carrying into higher ones.
@@ -148,6 +157,33 @@ class RelationHistoryStoreMixin:
             fifty.
         """
         scope = (bot_name, user_id)
+        counts = getattr(self, "relation_tier_counts", {}).get(
+            bot_name, DEFAULT_RELATION_TIER_COUNTS
+        )
+        if not valid_relation_tier_counts(counts):
+            counts = DEFAULT_RELATION_TIER_COUNTS
+        rating_weights = []
+        previous_limit = 0.0
+        # Preserve the original fraction of the final rating needed to fill each
+        # interval. Defaults therefore retain exact squared weights, while every
+        # custom count N still fills its interval on rating N, never on N - 1.
+        # The fifth interval uses 95 -> 99; 100 remains an asymptotic limit.
+        for magnitude, (count, default_count, limit) in enumerate(
+            zip(
+                counts,
+                DEFAULT_RELATION_TIER_COUNTS,
+                (*RELATION_TIER_WEIGHT_LIMITS[:4], RELATION_CURVE_SCALE * 49),
+                strict=True,
+            ),
+            start=1,
+        ):
+            width = limit - previous_limit
+            rating_weights.append(
+                magnitude * magnitude
+                if count == default_count
+                else width / (count - default_count + width / (magnitude * magnitude))
+            )
+            previous_limit = limit
         now = datetime.now(timezone.utc)
         tier_stats = ", ".join(
             f"COALESCE(SUM(CASE WHEN magnitude={magnitude} THEN weight ELSE 0 END), 0) "
@@ -193,15 +229,27 @@ class RelationHistoryStoreMixin:
             row = await cursor.fetchone()
         # Each window cancels and limits its own tiers before combining scores.
         long_term_weight = _allocate_relation_weight(
-            tuple(row[f"weight_{magnitude}"] for magnitude in range(1, 6))
+            tuple(
+                row[f"weight_{magnitude}"]
+                * rating_weights[magnitude - 1]
+                / (magnitude * magnitude)
+                for magnitude in range(1, 6)
+            )
         )
         recent_weight = _allocate_relation_weight(
-            tuple(row[f"recent_weight_{magnitude}"] for magnitude in range(1, 6))
+            tuple(
+                row[f"recent_weight_{magnitude}"]
+                * rating_weights[magnitude - 1]
+                / (magnitude * magnitude)
+                for magnitude in range(1, 6)
+            )
         )
         # Remove raw tier weights before cancellation and limits are reapplied.
         recent_baseline_weight = _allocate_relation_weight(
             tuple(
-                row[f"weight_{magnitude}"] - row[f"recent_weight_{magnitude}"]
+                (row[f"weight_{magnitude}"] - row[f"recent_weight_{magnitude}"])
+                * rating_weights[magnitude - 1]
+                / (magnitude * magnitude)
                 for magnitude in range(1, 6)
             )
         )
@@ -218,7 +266,9 @@ class RelationHistoryStoreMixin:
         interaction_score = (
             long_term_score
             if row["total_count"] == row["recent_count"]
-            else _smooth_recent_relation_score(long_term_score, recent_deltas)
+            else _smooth_recent_relation_score(
+                long_term_score, recent_deltas, tuple(rating_weights)
+            )
         )
         return {
             "base_relation": row["base_relation"],

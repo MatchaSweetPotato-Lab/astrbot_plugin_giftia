@@ -8,10 +8,46 @@
     max-width: 840px;
 }
 
-#relation-score-guide-text {
+#relation-score-guide-text,
+#relation-delta-guide-text {
     min-height: 280px;
     line-height: 1.7;
     resize: vertical;
+}
+
+.relation-guide-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 16px;
+}
+
+.relation-guide-tabs .media-tab-btn {
+    white-space: nowrap;
+}
+
+.relation-guide-panel[hidden] {
+    display: none;
+}
+
+.relation-tier-table-wrap {
+    overflow-x: auto;
+}
+
+.relation-tier-table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+}
+
+.relation-tier-table th,
+.relation-tier-table td {
+    padding: 12px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.relation-tier-table input {
+    width: 105px;
 }
 
 .user-aliases-modal-card {

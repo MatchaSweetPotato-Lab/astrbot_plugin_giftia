@@ -1071,23 +1071,55 @@
     <div id="relation-score-guide-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="relation-score-guide-title">
         <div class="modal-card card relation-score-guide-modal-card">
             <div class="modal-header">
-                <h2 id="relation-score-guide-title" class="text-h3 pa-4 pb-0 pl-6">好感度评级与互动范围</h2>
+                <h2 id="relation-score-guide-title" class="text-h3 pa-4 pb-0 pl-6">好感度说明</h2>
                 <button type="button" class="modal-close-btn" variant="text" aria-label="关闭好感度说明" onclick="closeModal('relation-score-guide-modal')">&times;</button>
             </div>
             <div class="modal-body" id="relation-score-guide-content">
                 <input type="hidden" id="relation-score-guide-bot">
                 <p id="relation-score-guide-scope" class="muted-text"></p>
-                <p class="muted-text">设置各好感度区间允许的互动范围，保存后用于该 Bot 后续的决策与回复。</p>
-                <div class="form-group">
-                    <label for="relation-score-guide-text">好感度说明</label>
-                    <textarea id="relation-score-guide-text" rows="14" maxlength="12000" aria-describedby="relation-score-guide-hint"></textarea>
-                    <small id="relation-score-guide-hint" class="muted-text">可结合角色设定调整评级和边界；最多 12000 字，留空使用默认说明。</small>
+                <div class="relation-guide-tabs" role="tablist" aria-label="好感度配置">
+                    <button type="button" id="relation-guide-tab-score" class="media-tab-btn active" role="tab" aria-selected="true" aria-controls="relation-guide-panel-score" onclick="switchRelationGuideTab('score')" onkeydown="switchRelationGuideTab('score', event)">评级与互动范围</button>
+                    <button type="button" id="relation-guide-tab-delta" class="media-tab-btn" role="tab" aria-selected="false" aria-controls="relation-guide-panel-delta" tabindex="-1" onclick="switchRelationGuideTab('delta')" onkeydown="switchRelationGuideTab('delta', event)">互动评价标准</button>
+                    <button type="button" id="relation-guide-tab-scoring" class="media-tab-btn" role="tab" aria-selected="false" aria-controls="relation-guide-panel-scoring" tabindex="-1" onclick="switchRelationGuideTab('scoring')" onkeydown="switchRelationGuideTab('scoring', event)">计分参数</button>
+                </div>
+                <div id="relation-guide-panel-score" class="relation-guide-panel" role="tabpanel" aria-labelledby="relation-guide-tab-score">
+                    <p class="muted-text">设置各好感度区间允许的互动范围，保存后用于该 Bot 后续的决策与回复。</p>
+                    <div class="form-group">
+                        <label for="relation-score-guide-text">评级与互动范围</label>
+                        <textarea id="relation-score-guide-text" rows="14" maxlength="12000" aria-describedby="relation-score-guide-hint"></textarea>
+                        <small id="relation-score-guide-hint" class="muted-text">可结合角色设定调整评级和边界；最多 12000 字，留空使用默认说明。</small>
+                    </div>
+                </div>
+                <div id="relation-guide-panel-delta" class="relation-guide-panel" role="tabpanel" aria-labelledby="relation-guide-tab-delta" hidden>
+                    <p class="muted-text">设置具体互动的正负方向与 delta 强度，保存后用于该 Bot 后续的好感度维护。</p>
+                    <div class="form-group">
+                        <label for="relation-delta-guide-text">互动评价标准</label>
+                        <textarea id="relation-delta-guide-text" rows="14" maxlength="12000" aria-describedby="relation-delta-guide-hint"></textarea>
+                        <small id="relation-delta-guide-hint" class="muted-text">delta 为 ±1～±5，不等于最终分数增减。证据要求和输出格式由系统维护；最多 12000 字，留空使用默认标准。</small>
+                    </div>
+                </div>
+                <div id="relation-guide-panel-scoring" class="relation-guide-panel" role="tabpanel" aria-labelledby="relation-guide-tab-scoring" hidden>
+                    <p class="muted-text" id="relation-tier-counts-hint">设置上一档已满后，还需要多少次同方向的本档评价才能达到本档边界。正负共用次数，按长期互动分计算，不含基础分和近期波动。</p>
+                    <div class="relation-tier-table-wrap">
+                        <table class="relation-tier-table">
+                            <thead><tr><th scope="col">评价强度</th><th scope="col">正向区间</th><th scope="col">负向区间</th><th scope="col">所需次数</th></tr></thead>
+                            <tbody>
+                                <tr><th scope="row">±1</th><td>50 → 80</td><td>50 → 20</td><td><input type="number" id="relation-tier-count-1" min="1" max="1000000" step="1" aria-label="±1 达档所需次数" aria-describedby="relation-tier-counts-hint"></td></tr>
+                                <tr><th scope="row">±2</th><td>80 → 85</td><td>20 → 15</td><td><input type="number" id="relation-tier-count-2" min="1" max="1000000" step="1" aria-label="±2 达档所需次数" aria-describedby="relation-tier-counts-hint"></td></tr>
+                                <tr><th scope="row">±3</th><td>85 → 90</td><td>15 → 10</td><td><input type="number" id="relation-tier-count-3" min="1" max="1000000" step="1" aria-label="±3 达档所需次数" aria-describedby="relation-tier-counts-hint"></td></tr>
+                                <tr><th scope="row">±4</th><td>90 → 95</td><td>10 → 5</td><td><input type="number" id="relation-tier-count-4" min="1" max="1000000" step="1" aria-label="±4 达档所需次数" aria-describedby="relation-tier-counts-hint"></td></tr>
+                                <tr><th scope="row">±5</th><td>95 → 99</td><td>5 → 1</td><td><input type="number" id="relation-tier-count-5" min="1" max="1000000" step="1" aria-label="±5 达到 99 或 1 分所需次数" aria-describedby="relation-tier-counts-hint"></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="muted-text">第五档以 99／1 分为参考，之后继续渐近 100／0。高档评价也可填补较低区间，不要求逐档解锁。</p>
+                    <p class="muted-text">修改次数后，该 Bot 已有评价将按新参数重算分数，原始 delta、理由和基础分保留。每项填写 1～1000000 的整数。</p>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" variant="tonal" onclick="restoreDefaultRelationScoreGuide()">恢复默认</button>
+                <button type="button" class="btn btn-secondary" variant="tonal" onclick="restoreDefaultRelationScoreGuide()">恢复当前页默认</button>
                 <button type="button" class="btn btn-secondary" variant="text" onclick="closeModal('relation-score-guide-modal')">取消</button>
-                <button type="button" class="btn btn-primary" variant="tonal" id="relation-score-guide-save" onclick="saveRelationScoreGuide()">保存说明</button>
+                <button type="button" class="btn btn-primary" variant="tonal" id="relation-score-guide-save" onclick="saveRelationScoreGuide()">保存</button>
             </div>
         </div>
     </div>

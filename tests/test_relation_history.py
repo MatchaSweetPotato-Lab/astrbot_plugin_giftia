@@ -12,6 +12,7 @@ from core.database.data_cache import DataCache
 from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.prompt import build_decision_prompt, build_reply_prompt
+from core.llm.preset_prompts import RELATION_DELTA_GUIDE
 from core.memory.passive_memory import PassiveMemoryManager
 from core.utils.relation_display import build_relation_display
 from core.utils.schemas import MessageData
@@ -52,6 +53,42 @@ async def runtime(tmp_path, monkeypatch):
     finally:
         await manager.close()
         await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "custom", ["", "自定义标准：具体帮助为 +2，保留 {角色} 与 <行为>。"]
+)
+async def test_profile_maintenance_uses_only_the_selected_bots_behavior_guide(
+    runtime, custom
+):
+    runtime.manager.plugin.bot_map["bot"].update(
+        {
+            "relation_score_guide": "不应进入维护模型的分数区间说明",
+            "relation_delta_guide": custom,
+            "relation_tier_counts": [26, 4, 7, 6, 28],
+        }
+    )
+    runtime.manager.plugin.bot_map["another-bot"] = {
+        "relation_delta_guide": "另一个 Bot 的标准"
+    }
+    source = MessageData(user_id="user", nickname="User", content="谢谢你认真帮助我")
+    context = await runtime.manager._build_summary_context(
+        "bot", "group", "self", [source]
+    )
+    assert await runtime.manager._run_profile_summary_task(
+        "bot", "group", "小吉", "self", context
+    )
+    prompt = runtime.manager._call_summary_llm.call_args.args[1]
+    assert prompt.count(custom or RELATION_DELTA_GUIDE) == 1
+    assert "你是 小吉（ID：self）" in prompt
+    assert "不应进入维护模型" not in prompt
+    assert "另一个 Bot 的标准" not in prompt
+    assert "达档次数" not in prompt
+    assert "范围 -5 到 +5" in prompt
+    assert "轻微分歧通常为" not in prompt
+    if custom:
+        assert RELATION_DELTA_GUIDE not in prompt
 
 
 @pytest.mark.asyncio

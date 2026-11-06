@@ -35,6 +35,7 @@ from .schema import initialize_database
 class Database(ProfileStoreMixin):
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
+        self.relation_tier_counts: dict[str, list[int]] = {}
         execute = conn.execute
 
         @wraps(execute)

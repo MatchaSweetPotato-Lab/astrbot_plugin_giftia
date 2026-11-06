@@ -375,6 +375,8 @@ class BotApi:
                 "send_sticker_as_gif",
                 "blocked_users",
                 "relation_score_guide",
+                "relation_delta_guide",
+                "relation_tier_counts",
             )
             previous = next(
                 (
