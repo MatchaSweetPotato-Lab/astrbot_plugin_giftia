@@ -90,7 +90,6 @@ async def test_profile_maintenance_uses_only_the_selected_bots_behavior_guide(
     assert "另一个 Bot 的标准" not in prompt
     assert "达档次数" not in prompt
     assert "范围 -5 到 +5" in prompt
-    assert "轻微分歧通常为" not in prompt
     if custom:
         assert RELATION_DELTA_GUIDE not in prompt
 

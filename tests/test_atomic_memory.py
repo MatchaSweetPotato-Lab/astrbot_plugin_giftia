@@ -517,6 +517,19 @@ async def test_summary_receives_session_call_names_without_rewriting_sources(
     )
     assert originals[0].nickname == nickname
     assert originals[0].content == first.content
+    context = await runtime.manager._build_summary_context(
+        "bot", "group", "self", originals
+    )
+    profile_prompt = runtime.manager._build_profile_user_prompt("group", context)
+    author = f"{display_name}(11111)" if display_name != "11111" else "11111"
+    assert f"{author}: {first.content}" in profile_prompt
+    assert f"小白(22222): {second.content}" in profile_prompt
+    assert (
+        f"用户 11111 ({display_name})" if display_name != "11111" else "用户 11111\n"
+    ) in profile_prompt
+    for omitted in ("其他Bot的称呼", "本批未发言用户的称呼"):
+        assert omitted not in profile_prompt
+    assert originals[0].nickname == nickname
     reply_prompt = build_reply_prompt(
         recent_messages=originals,
         media_captions=[],
@@ -526,7 +539,9 @@ async def test_summary_receives_session_call_names_without_rewriting_sources(
             {"user_id": "22222", "call_name": "小白"},
         ],
     )
-    reply_history = reply_prompt.split("<recent_messages>", 1)[1].split("</recent_messages>", 1)[0]
+    reply_history = reply_prompt.split("<recent_messages>", 1)[1].split(
+        "</recent_messages>", 1
+    )[0]
     reply = fromstring(f"<recent_messages>{reply_history}</recent_messages>")
     assert [
         item.attrib.get("nickname", item.attrib["user_id"])
@@ -3007,13 +3022,24 @@ async def test_memory_name_fallback_preserves_each_messages_original_nickname(
     context = await runtime.manager._build_summary_context(
         "bot", "group", "self", [first, second]
     )
+    profile_prompt = runtime.manager._build_profile_user_prompt("group", context)
+    for name, msg in zip(
+        [call_name, call_name] if call_name else ["旧昵称", "新昵称"],
+        [first, second],
+        strict=True,
+    ):
+        assert f"{name}(user): {msg.content}" in profile_prompt
+    assert f"用户 user ({call_name or '新昵称'})" in profile_prompt
+    assert context["nickname_to_user_id"]["旧昵称"] == "user"
+    assert context["nickname_to_user_id"]["新昵称"] == "user"
+    assert context["alias_observation_messages"][0] is first
     assert await runtime.manager._run_memory_summary_task(
         "bot", "group", "self", "Giftia", context
     )
     root = fromstring(runtime.manager._call_summary_llm.call_args.args[2])
-    assert [item.attrib["nickname"] for item in root.findall("new_messages/message")] == (
-        [call_name, call_name] if call_name else ["旧昵称", "新昵称"]
-    )
+    assert [
+        item.attrib["nickname"] for item in root.findall("new_messages/message")
+    ] == ([call_name, call_name] if call_name else ["旧昵称", "新昵称"])
     assert [first.nickname, second.nickname] == ["旧昵称", "新昵称"]
 
 
