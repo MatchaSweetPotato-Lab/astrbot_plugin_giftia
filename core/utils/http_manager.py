@@ -98,6 +98,23 @@ class HttpManager:
         return b""
 
     @staticmethod
+    def get_image_metadata(image_bytes: bytes) -> tuple[int, int, int]:
+        """Read pixel dimensions and file size before image conversion.
+
+        Args:
+            image_bytes: The complete image file as received from the platform.
+
+        Returns:
+            Width, height, and file size in bytes. Unreadable dimensions are zero.
+        """
+        try:
+            with Image.open(BytesIO(image_bytes)) as image:
+                return image.width, image.height, len(image_bytes)
+        except Exception as error:
+            logger.debug(f"[Giftia] Failed to read image dimensions: {error}")
+            return 0, 0, len(image_bytes)
+
+    @staticmethod
     def handle_image(image_bytes: bytes, max_frames: int = 8) -> tuple[list[str], bool]:
         try:
             results = []

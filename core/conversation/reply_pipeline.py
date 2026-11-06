@@ -302,6 +302,9 @@ class ReplyPipeline:
             bot_name=bot_name,
             recent_messages=[*recent_messages, *reply_messages],
         )
+        image_metadata = await self.media_captioner.get_image_metadata(
+            [*recent_messages, *reply_messages]
+        )
 
         if relevant_memories is None:
             relevant_memories = []
@@ -560,6 +563,7 @@ class ReplyPipeline:
             current_session_id=group_or_user_id,
             recent_messages=prompt_recent_messages,
             media_captions=media_captions,
+            image_metadata=image_metadata,
             reply_messages=prompt_reply_messages,
             remind_message=remind_message,
             group_data=str(

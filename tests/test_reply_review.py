@@ -164,6 +164,39 @@ async def runtime(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("is_captioned", [False, True])
+async def test_formal_reply_loads_image_metadata_without_enabled_captions(
+    runtime, is_captioned
+):
+    media = MediaCaption(
+        hash_val="0123456789abcdef",
+        media_type="image",
+        width=1920,
+        height=1080,
+        file_size=2048,
+        is_captioned=is_captioned,
+        caption="Hidden caption",
+    )
+    await runtime.plugin.data_cache.set_caption(media)
+    runtime.plugin.conf = {"caption_config": {"image_caption_enabled": False}}
+    placeholder = f"[图片:{media.hash_val}]"
+
+    await runtime.send(placeholder)
+    await runtime.drain()
+
+    prompt = runtime.plugin.call_llm.call_llm_reply.call_args.kwargs["user_prompt"]
+    assert f"{placeholder}[尺寸:1920×1080px; 大小:2.0KB]" in prompt
+    assert "Hidden caption" not in prompt
+    history = await runtime.plugin.data_cache.get_recent_message("bot", "group", 20)
+    assert (
+        next(
+            message for message in history if message.message_id == placeholder
+        ).content
+        == placeholder
+    )
+
+
+@pytest.mark.asyncio
 async def test_reply_context_grows_slides_and_restarts_after_inactivity(runtime):
     plugin = runtime.plugin
     plugin.min_msg_number = 3
