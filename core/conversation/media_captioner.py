@@ -239,8 +239,12 @@ class MediaCaptioner:
                 media_type, "媒体"
             )
             return media_caption, f"{media_label}转述已关闭，无法发起媒体分析。"
-        if not getattr(self.plugin.call_llm, "media_caption_provider_ids", None):
-            return media_caption, "未配置媒体转述提供商，无法发起媒体分析。"
+        provider_ids = self.plugin.call_llm.inspect_media_provider_ids
+        if not provider_ids:
+            return (
+                media_caption,
+                "未配置媒体查看工具或常规转述提供商，无法发起媒体分析。",
+            )
 
         try:
             if media_type == "video":
@@ -251,6 +255,7 @@ class MediaCaptioner:
                     question=question,
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
+                    provider_ids=provider_ids,
                 )
                 return media_caption, caption_text
 
@@ -270,6 +275,7 @@ class MediaCaptioner:
                         question=question,
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
+                        provider_ids=provider_ids,
                     )
                     if transcribed:
                         media_caption.genre = transcribed.genre
@@ -314,6 +320,7 @@ class MediaCaptioner:
                             question=question,
                             bot_name=bot_name,
                             group_or_user_id=group_or_user_id,
+                            provider_ids=provider_ids,
                         )
                         if transcribed:
                             media_caption.genre = transcribed.genre
@@ -352,6 +359,8 @@ class MediaCaptioner:
         bot_name: str = "",
         group_or_user_id: str = "",
         duration: int | None = None,
+        *,
+        provider_ids: list[str] | None = None,
     ) -> str:
         """Cache, clip, and transcribe a video on demand.
 
@@ -362,6 +371,7 @@ class MediaCaptioner:
             bot_name: Bot requesting the caption.
             group_or_user_id: Conversation identifier.
             duration: Optional clip length, capped by the configured threshold.
+            provider_ids: Request-specific providers, or None for the regular list.
 
         Returns:
             The video caption or an error message.
@@ -486,6 +496,7 @@ class MediaCaptioner:
                 question=question,
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
+                provider_ids=provider_ids,
             )
             if transcribed:
                 caption_text = f"{transcribed.caption}{clip_info_str}"

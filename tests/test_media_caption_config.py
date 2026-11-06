@@ -3,15 +3,23 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from core.conversation import media_captioner
 from core.conversation.media_captioner import MediaCaptioner
 from core.llm.call_llm import CallLLM
+from core.llm.llm_tools import InspectForwardMessageTool, InspectMediaTool
 from core.utils.schemas import MediaCaption, MessageData, XmlLlmResult
 from core.web import sticker_api
+
+from astrbot.api.event import AstrMessageEvent
 
 MEDIA_REQUESTS = [
     ("call_llm_image_caption", "image", {"image_urls": ["base64://aGVsbG8="]}),
     ("call_llm_audio_caption", "audio", {"audio_urls": ["audio.wav"]}),
-    ("call_llm_video_caption", "video", {"video_url": "data:video/mp4;base64,aGVsbG8="}),
+    (
+        "call_llm_video_caption",
+        "video",
+        {"video_url": "data:video/mp4;base64,aGVsbG8="},
+    ),
     (
         "call_llm_sticker_analysis",
         "image",
@@ -39,8 +47,171 @@ def caption_caller(request):
         context=context,
         xml_parse=SimpleNamespace(parse_str_json=json.loads),
         network_config=network_config,
-        caption_config={"media_caption_provider_ids": ["primary", "", "fallback"]},
+        caption_config={
+            "media_caption_provider_ids": ["primary", "", "fallback"],
+            "inspect_media_provider_ids": ["inspect-primary", "", "inspect-fallback"],
+        },
     )
+
+
+@pytest.fixture
+def inspect_runtime(caption_caller, request, tmp_path, monkeypatch):
+    media_type = getattr(request, "param", "image")
+    media = MediaCaption(
+        hash_val="1234567890abcdef", media_type=media_type, is_captioned=False
+    )
+    cache_dir = tmp_path / "media_cache"
+    cache_dir.mkdir()
+    filename = f"{media.hash_val}.mp4" if media_type == "video" else media.hash_val
+    media_file = cache_dir / filename
+    media_file.write_bytes(b"media payload")
+    media.url = str(media_file)
+    monkeypatch.setattr(media_captioner.StarTools, "get_data_dir", lambda _: tmp_path)
+    plugin = SimpleNamespace(
+        conf={"caption_config": caption_caller.caption_config},
+        adapter_id_map={"adapter": "bot"},
+        data_cache=SimpleNamespace(
+            get_caption_by_hash=AsyncMock(return_value=media),
+            update_caption=AsyncMock(),
+        ),
+        http_manager=SimpleNamespace(
+            download_media=AsyncMock(),
+            handle_image=Mock(return_value=(["base64://aGVsbG8="], False)),
+        ),
+        call_llm=caption_caller,
+    )
+    event = Mock(spec=AstrMessageEvent)
+    event.platform_meta = SimpleNamespace(id="adapter")
+    event.get_group_id.return_value = "group"
+    event.get_sender_id.return_value = "user"
+    return SimpleNamespace(
+        plugin=plugin,
+        media=media,
+        tool=InspectMediaTool(plugin=plugin),
+        event=event,
+        generate=caption_caller.context.llm_generate,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inspect_runtime", ["image", "audio", "video"], indirect=True)
+@pytest.mark.parametrize("refresh", [False, True])
+async def test_inspect_uses_dedicated_provider_order_and_updates_cache(
+    inspect_runtime, refresh
+):
+    runtime = inspect_runtime
+    runtime.media.is_captioned = refresh
+    runtime.media.caption = "Ambiguous caption" if refresh else ""
+    question = "What does the label say?" if refresh else ""
+    runtime.generate.side_effect = [RuntimeError("Unavailable")] * 2 + [
+        runtime.generate.return_value
+    ]
+
+    output = await runtime.tool.call(
+        runtime.event, media_id=runtime.media.hash_val, question=question
+    )
+
+    assert "Shared caption" in output
+    assert [
+        call.kwargs["chat_provider_id"] for call in runtime.generate.await_args_list
+    ] == ["inspect-primary", "inspect-primary", "inspect-fallback"]
+    if question:
+        assert question in runtime.generate.call_args.kwargs["prompt"]
+    assert runtime.media.is_captioned and runtime.media.caption == "Shared caption"
+    runtime.plugin.data_cache.update_caption.assert_awaited_once_with(runtime.media)
+    assert runtime.plugin.call_llm.media_caption_provider_ids == ["primary", "fallback"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inspect_runtime", ["image", "audio", "video"], indirect=True)
+@pytest.mark.parametrize(
+    "caption_config,expected_provider",
+    [
+        ({"media_caption_provider_ids": ["regular"]}, "regular"),
+        (
+            {
+                "media_caption_provider_ids": ["regular"],
+                "inspect_media_provider_ids": [],
+            },
+            "regular",
+        ),
+        (
+            {
+                "media_caption_provider_ids": ["regular"],
+                "inspect_media_provider_ids": [""],
+            },
+            "regular",
+        ),
+        ({"inspect_media_provider_ids": ["", "strong"]}, "strong"),
+        ({}, None),
+    ],
+)
+async def test_inspect_provider_defaults_and_tool_only_configuration(
+    inspect_runtime, caption_config, expected_provider
+):
+    runtime = inspect_runtime
+    runtime.plugin.conf["caption_config"] = caption_config
+    runtime.plugin.call_llm = CallLLM(
+        runtime.plugin.call_llm.context, None, {}, caption_config
+    )
+
+    output = await runtime.tool.call(runtime.event, media_id=runtime.media.hash_val)
+
+    if expected_provider is None:
+        assert "未配置" in output
+        runtime.generate.assert_not_awaited()
+        runtime.plugin.data_cache.update_caption.assert_not_awaited()
+        runtime.plugin.http_manager.handle_image.assert_not_called()
+        runtime.plugin.http_manager.download_media.assert_not_awaited()
+    else:
+        assert "Shared caption" in output
+        runtime.generate.assert_awaited_once()
+        assert (
+            runtime.generate.call_args.kwargs["chat_provider_id"] == expected_provider
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inspect_runtime", ["image", "audio", "video"], indirect=True)
+async def test_inspect_failure_does_not_retry_regular_providers(inspect_runtime):
+    runtime = inspect_runtime
+    runtime.generate.side_effect = RuntimeError("Unavailable")
+
+    output = await runtime.tool.call(runtime.event, media_id=runtime.media.hash_val)
+
+    assert "Shared caption" not in output
+    assert [
+        call.kwargs["chat_provider_id"] for call in runtime.generate.await_args_list
+    ] == ["inspect-primary", "inspect-primary", "inspect-fallback", "inspect-fallback"]
+    runtime.plugin.data_cache.update_caption.assert_not_awaited()
+    assert not runtime.media.is_captioned
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inspect_runtime", ["image", "audio", "video"], indirect=True)
+async def test_inspect_reuses_cache_with_dedicated_providers(inspect_runtime):
+    runtime = inspect_runtime
+    runtime.media.is_captioned = True
+    runtime.media.caption = "Cached caption"
+
+    output = await runtime.tool.call(runtime.event, media_id=runtime.media.hash_val)
+
+    assert "Cached caption" in output
+    runtime.generate.assert_not_awaited()
+    runtime.plugin.data_cache.update_caption.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inspect_runtime", ["image", "audio"], indirect=True)
+async def test_forward_media_use_inspection_providers(inspect_runtime):
+    runtime = inspect_runtime
+
+    captions = await InspectForwardMessageTool()._load_media_captions(
+        runtime.plugin, "bot", [runtime.media.hash_val]
+    )
+
+    assert captions == [runtime.media]
+    assert runtime.generate.call_args.kwargs["chat_provider_id"] == "inspect-primary"
 
 
 @pytest.mark.asyncio
@@ -122,7 +293,9 @@ async def test_media_requests_ignore_legacy_bot_caption_settings(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("media_type,media_label", [("image", "图片"), ("audio", "语音"), ("video", "视频")])
+@pytest.mark.parametrize(
+    "media_type,media_label", [("image", "图片"), ("audio", "语音"), ("video", "视频")]
+)
 @pytest.mark.parametrize("global_enabled", [False, True])
 async def test_cached_captions_use_global_settings_for_all_bots(
     media_type, media_label, global_enabled
@@ -153,7 +326,8 @@ async def test_cached_captions_use_global_settings_for_all_bots(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("media_type", ["image", "audio", "video"])
 @pytest.mark.parametrize(
-    "has_cache,question,can_reuse", [(False, "", False), (True, "", True), (True, "Focus", False)]
+    "has_cache,question,can_reuse",
+    [(False, "", False), (True, "", True), (True, "Focus", False)],
 )
 async def test_inspect_respects_switches_and_reuses_existing_captions(
     media_type, has_cache, question, can_reuse
@@ -171,6 +345,7 @@ async def test_inspect_respects_switches_and_reuses_existing_captions(
         http_manager=SimpleNamespace(download_media=AsyncMock()),
         call_llm=SimpleNamespace(
             media_caption_provider_ids=["shared"],
+            inspect_media_provider_ids=["strong"],
             call_llm_image_caption=AsyncMock(),
             call_llm_audio_caption=AsyncMock(),
             call_llm_video_caption=AsyncMock(),
@@ -190,7 +365,8 @@ async def test_inspect_respects_switches_and_reuses_existing_captions(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "enabled,providers,available", [(False, ["shared"], False), (True, [], False), (True, ["shared"], True)]
+    "enabled,providers,available",
+    [(False, ["shared"], False), (True, [], False), (True, ["shared"], True)],
 )
 async def test_sticker_ai_availability_matches_image_settings(
     monkeypatch, enabled, providers, available
