@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from core.bot.bot_config_manager import BotConfigManager
 from core.llm.call_llm import CallLLM
-from core.llm.preset_prompts import RELATION_SCORE_GUIDE
+from core.llm.preset_prompts import RELATION_DELTA_GUIDE, RELATION_SCORE_GUIDE
 from core.llm.xml_parse import XmlParse
 from core.web.bot_api import BotApi
 from core.web.profile_api import ProfileApi
@@ -63,6 +63,10 @@ async def test_guidance_persists_per_bot_and_survives_bot_editor_saves(guidance_
     client, plugin = guidance_api
     initial = (await client.get("/guide", params={"bot_name": "bot-a"})).json()["data"]
     assert initial["guide"] == initial["default_guide"] == RELATION_SCORE_GUIDE
+    assert (
+        initial["delta_guide"] == initial["default_delta_guide"] == RELATION_DELTA_GUIDE
+    )
+    assert initial["tier_counts"] == initial["default_tier_counts"] == [13, 2, 2, 3, 14]
     guide = "80 分以上可主动接梗\n90 分以上可谈心；保留 {角色} 与 <边界> 原文。"
     response = await client.post("/guide", json={"bot_name": "bot-a", "guide": guide})
     assert response.status_code == 200
@@ -78,6 +82,90 @@ async def test_guidance_persists_per_bot_and_survives_bot_editor_saves(guidance_
     assert plugin.bot_map["bot-a"]["relation_score_guide"] == guide
     reloaded = (await client.get("/guide", params={"bot_name": "bot-a"})).json()["data"]
     assert reloaded["guide"] == guide
+
+
+@pytest.mark.asyncio
+async def test_all_guidance_settings_save_together_and_survive_other_bot_edits(
+    guidance_api,
+):
+    client, plugin = guidance_api
+    settings = {
+        "bot_name": "bot-a",
+        "guide": "自定义互动范围",
+        "delta_guide": "具体关心记 +2；保留 {角色} 与 <行为>。",
+        "tier_counts": [26, 4, 6, 9, 28],
+    }
+    assert (await client.post("/guide", json=settings)).status_code == 200
+    current = (await client.get("/guide", params={"bot_name": "bot-a"})).json()["data"]
+    for key, value in settings.items():
+        assert current[key] == value
+    assert (
+        await client.post("/bot/save", json={"name": "bot-a", "nickname": "新昵称"})
+    ).status_code == 200
+    assert plugin.bot_map["bot-a"]["relation_delta_guide"] == settings["delta_guide"]
+    assert plugin.bot_map["bot-a"]["relation_tier_counts"] == settings["tier_counts"]
+    # A previously opened dashboard must not reset fields it does not submit.
+    assert (
+        await client.post("/guide", json={"bot_name": "bot-a", "guide": "只修改范围"})
+    ).status_code == 200
+    current = (await client.get("/guide", params={"bot_name": "bot-a"})).json()["data"]
+    assert current["delta_guide"] == settings["delta_guide"]
+    assert current["tier_counts"] == settings["tier_counts"]
+    other = (await client.get("/guide", params={"bot_name": "bot-b"})).json()["data"]
+    assert other["delta_guide"] == RELATION_DELTA_GUIDE
+    assert other["tier_counts"] == [13, 2, 2, 3, 14]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delta_guide", ["", " \n ", RELATION_DELTA_GUIDE])
+async def test_rating_guide_can_be_reset_independently(guidance_api, delta_guide):
+    client, plugin = guidance_api
+    response = await client.post(
+        "/guide",
+        json={
+            "bot_name": "bot-b",
+            "guide": "保留范围",
+            "delta_guide": delta_guide,
+            "tier_counts": [26, 4, 6, 9, 28],
+        },
+    )
+    assert response.status_code == 200
+    assert plugin.bot_map["bot-b"]["relation_delta_guide"] == ""
+    current = (await client.get("/guide", params={"bot_name": "bot-b"})).json()["data"]
+    assert current["delta_guide"] == RELATION_DELTA_GUIDE
+    assert current["guide"] == "保留范围"
+    assert current["tier_counts"] == [26, 4, 6, 9, 28]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("delta_guide", None),
+        ("delta_guide", []),
+        ("delta_guide", "a" * 12001),
+        ("tier_counts", None),
+        ("tier_counts", {}),
+        ("tier_counts", [13, 2, 2, 3]),
+        ("tier_counts", [True, 2, 2, 3, 14]),
+        ("tier_counts", [13, 0, 2, 3, 14]),
+        ("tier_counts", [13, 2, -1, 3, 14]),
+        ("tier_counts", [13, 2, 2.5, 3, 14]),
+        ("tier_counts", [13, 2, "2", 3, 14]),
+        ("tier_counts", [13, 2, 2, 3, 1000001]),
+    ],
+)
+async def test_invalid_rating_settings_cannot_partially_save(
+    guidance_api, field, value
+):
+    client, plugin = guidance_api
+    before = plugin.bot_config_manager.config_file.read_bytes()
+    response = await client.post(
+        "/guide", json={"bot_name": "bot-a", "guide": "不应写入", field: value}
+    )
+    assert response.status_code == 400
+    assert plugin.bot_config_manager.config_file.read_bytes() == before
+    plugin.sync_bot_maps.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -134,7 +222,13 @@ async def test_missing_bots_and_save_failures_leave_live_guidance_intact(
         "core.bot.bot_config_manager.os.replace", Mock(side_effect=OSError("disk full"))
     )
     response = await client.post(
-        "/guide", json={"bot_name": "bot-b", "guide": "未保存"}
+        "/guide",
+        json={
+            "bot_name": "bot-b",
+            "guide": "未保存",
+            "delta_guide": "不应更新的标准",
+            "tier_counts": [26, 4, 6, 9, 28],
+        },
     )
     assert response.status_code == 500
     assert plugin.bot_map == live_before

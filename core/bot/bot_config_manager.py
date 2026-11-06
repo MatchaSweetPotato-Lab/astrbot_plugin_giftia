@@ -9,6 +9,10 @@ from tempfile import NamedTemporaryFile
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
+from ..utils.relation_scoring import (
+    DEFAULT_RELATION_TIER_COUNTS,
+    valid_relation_tier_counts,
+)
 from ..utils.schemas import FeatureKey
 
 INTERACTIVE_FEATURES_METADATA = [
@@ -52,6 +56,8 @@ DEFAULT_BOT_CONFIG = {
     "nickname": "Giftia",
     "adapter_ids": [],
     "relation_score_guide": "",
+    "relation_delta_guide": "",
+    "relation_tier_counts": list(DEFAULT_RELATION_TIER_COUNTS),
     "blocked_users": {},
     "decision_conf": {
         "provider_ids": [],
@@ -259,6 +265,16 @@ class BotConfigManager:
         bot["adapter_ids"] = [str(a).strip() for a in bot.get("adapter_ids") or [] if a]
         guide = bot.get("relation_score_guide")
         bot["relation_score_guide"] = guide.strip() if isinstance(guide, str) else ""
+        delta_guide = bot.get("relation_delta_guide")
+        bot["relation_delta_guide"] = (
+            delta_guide.strip() if isinstance(delta_guide, str) else ""
+        )
+        counts = bot.get("relation_tier_counts")
+        bot["relation_tier_counts"] = list(
+            counts
+            if valid_relation_tier_counts(counts)
+            else DEFAULT_RELATION_TIER_COUNTS
+        )
         bot["blocked_users"] = {
             str(session).strip(): list(
                 dict.fromkeys(str(user).strip() for user in users if str(user).strip())

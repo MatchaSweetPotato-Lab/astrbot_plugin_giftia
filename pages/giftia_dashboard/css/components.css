@@ -237,6 +237,7 @@ tr:hover td {
 /* Toast Message */
 .toast {
     position: fixed;
+    pointer-events: none;
     bottom: 28px;
     right: 28px;
     padding: 14px 26px;

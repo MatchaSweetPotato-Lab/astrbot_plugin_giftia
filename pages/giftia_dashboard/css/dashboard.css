@@ -490,6 +490,7 @@ html[data-theme="dark"] .nav-custom-rank-badge.fallback-rank {
 
 .filter-group input,
 .filter-group select,
+.relation-tier-table input,
 .form-group input,
 .form-group select,
 .form-group textarea {
@@ -507,6 +508,7 @@ html[data-theme="dark"] .nav-custom-rank-badge.fallback-rank {
 
 .filter-group input:focus,
 .filter-group select:focus,
+.relation-tier-table input:focus,
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus {

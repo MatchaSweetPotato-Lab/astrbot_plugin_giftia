@@ -5,6 +5,7 @@ import re
 from astrbot.api import logger
 
 from ..database.utils import parse_aliases
+from ..llm.preset_prompts import RELATION_DELTA_GUIDE
 from ..llm.prompt import normalize_profile_value
 from ..utils.token_utils import extract_tokens_robust
 from .maintenance import MemoryMaintenanceMixin
@@ -98,8 +99,15 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         self_id: str,
         context: dict,
     ) -> bool:
+        bot_config = getattr(self.plugin, "bot_map", {}).get(bot_name, {})
         sys_prompt = self._format_prompt_template(
-            self._get_profile_summary_prompt(), nickname=nickname, self_id=self_id
+            self._get_profile_summary_prompt(),
+            nickname=nickname,
+            self_id=self_id,
+            relation_delta_guide=(
+                bot_config.get("relation_delta_guide", "").strip()
+                or RELATION_DELTA_GUIDE
+            ),
         )
         user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(

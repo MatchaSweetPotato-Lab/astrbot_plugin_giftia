@@ -7,7 +7,12 @@ from astrbot.api.web import error_response, json_response, request
 
 from ..database.profile_store import PROFILE_NAMES_CTE
 from ..database.relation_history_store import RelationHistoryConflictError
-from ..llm.preset_prompts import RELATION_SCORE_GUIDE
+from ..llm.preset_prompts import RELATION_DELTA_GUIDE, RELATION_SCORE_GUIDE
+from ..utils.relation_scoring import (
+    DEFAULT_RELATION_TIER_COUNTS,
+    MAX_RELATION_TIER_COUNT,
+    valid_relation_tier_counts,
+)
 from ..utils.schemas import ACCOUNT_TYPE_LABELS
 from .web_helpers import USER_PROFILE_FIELD_KEYS
 
@@ -43,6 +48,11 @@ class ProfileApi:
                         "bot_name": bot_name,
                         "guide": bot["relation_score_guide"] or RELATION_SCORE_GUIDE,
                         "default_guide": RELATION_SCORE_GUIDE,
+                        "delta_guide": bot["relation_delta_guide"]
+                        or RELATION_DELTA_GUIDE,
+                        "default_delta_guide": RELATION_DELTA_GUIDE,
+                        "tier_counts": bot["relation_tier_counts"],
+                        "default_tier_counts": list(DEFAULT_RELATION_TIER_COUNTS),
                     },
                 }
             )
@@ -66,6 +76,17 @@ class ProfileApi:
                 return error_response("请选择 Bot")
             if not isinstance(guide, str) or len(guide) > 12000:
                 return error_response("好感度说明必须为文本，最多 12000 字")
+            if "delta_guide" in body and (
+                not isinstance(body["delta_guide"], str)
+                or len(body["delta_guide"]) > 12000
+            ):
+                return error_response("互动评价标准必须为文本，最多 12000 字")
+            if "tier_counts" in body and not valid_relation_tier_counts(
+                body["tier_counts"]
+            ):
+                return error_response(
+                    f"达档次数必须包含五个 1～{MAX_RELATION_TIER_COUNT} 的整数"
+                )
             bot_name = bot_name.strip()
             manager = self.giftia.bot_config_manager
             bots = deepcopy(manager.load_bots())
@@ -74,6 +95,13 @@ class ProfileApi:
                 return error_response("Bot 不存在", status_code=404)
             guide = guide.strip()
             bot["relation_score_guide"] = "" if guide == RELATION_SCORE_GUIDE else guide
+            if "delta_guide" in body:
+                delta_guide = body["delta_guide"].strip()
+                bot["relation_delta_guide"] = (
+                    "" if delta_guide == RELATION_DELTA_GUIDE else delta_guide
+                )
+            if "tier_counts" in body:
+                bot["relation_tier_counts"] = body["tier_counts"]
             if not manager.save_bots(bots):
                 return error_response("保存好感度说明失败", status_code=500)
             self.giftia.sync_bot_maps()

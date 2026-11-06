@@ -11,6 +11,12 @@ class Field {
     options = [];
     style = {};
     children = new Map();
+    attributes = new Map();
+    classes = new Set();
+    classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) };
+    setAttribute(name, value) { this.attributes.set(name, value); }
+    getAttribute(name) { return this.attributes.get(name); }
+    focus() { document.activeElement = this; }
     querySelector(selector) {
         if (!this.children.has(selector)) this.children.set(selector, new Field());
         return this.children.get(selector);
@@ -43,6 +49,11 @@ await import('../pages/giftia_dashboard/js/modals/profile.js');
 await import('../pages/giftia_dashboard/js/modals/relation_guide.js');
 await import('../pages/giftia_dashboard/js/modals/relation_history.js');
 const get = id => document.getElementById(id);
+const guidanceData = (guide = '已保存的说明', defaultGuide = '默认说明') => ({
+    guide, default_guide: defaultGuide,
+    delta_guide: '已保存评价标准', default_delta_guide: '默认评价标准',
+    tier_counts: [13, 2, 2, 3, 14], default_tier_counts: [13, 2, 2, 3, 14]
+});
 
 beforeEach(() => {
     fields.clear();
@@ -54,6 +65,7 @@ beforeEach(() => {
     window.openModal = () => {};
     window.closeModal = () => {};
     window.showToast = () => {};
+    [13, 2, 2, 3, 14].forEach((count, index) => get(`relation-tier-count-${index + 1}`).value = String(count));
     window.GiftiaApp = {
         getScopedFilterParams,
         resetPagination: () => {},
@@ -272,7 +284,7 @@ test('affinity guidance saves to the bot captured when opening the editor', asyn
     const calls = [];
     window.apiGet = async (endpoint, params) => {
         calls.push([endpoint, params]);
-        return { status: 'success', data: { guide: '已保存的说明', default_guide: '默认说明' } };
+        return { status: 'success', data: guidanceData() };
     };
     window.apiPost = async (endpoint, body) => {
         calls.push([endpoint, body]);
@@ -285,17 +297,22 @@ test('affinity guidance saves to the bot captured when opening the editor', asyn
     assert.match(get('relation-score-guide-scope').textContent, /bot-a/);
     get('profile-bot-name').value = 'bot-b';
     get('relation-score-guide-text').value = '  80以上允许主动接梗\n90以上允许谈心  ';
+    get('relation-delta-guide-text').value = '  具体关心为 +2  ';
+    get('relation-tier-count-1').value = '26';
     await window.saveRelationScoreGuide();
     assert.deepEqual(calls, [
         ['/profiles/user/relation_guide', { bot_name: 'bot-a' }],
-        ['/profiles/user/relation_guide', { bot_name: 'bot-a', guide: '80以上允许主动接梗\n90以上允许谈心' }]
+        ['/profiles/user/relation_guide', {
+            bot_name: 'bot-a', guide: '80以上允许主动接梗\n90以上允许谈心',
+            delta_guide: '具体关心为 +2', tier_counts: [26, 2, 2, 3, 14]
+        }]
     ]);
     assert.equal(closed, 'relation-score-guide-modal');
 });
 
 test('restoring guidance is a draft change and cancel discards it on reopening', async () => {
     get('profile-bot-name').value = 'bot';
-    window.apiGet = async () => ({ status: 'success', data: { guide: '自定义说明', default_guide: '默认说明' } });
+    window.apiGet = async () => ({ status: 'success', data: guidanceData('自定义说明') });
     window.apiPost = async () => { throw new Error('must not save'); };
     await window.openRelationScoreGuideModal();
     window.restoreDefaultRelationScoreGuide();
@@ -329,7 +346,7 @@ test('guidance failures preserve drafts and allow retry without duplicate submis
 test('a late guidance save does not close or overwrite another bot editor', async () => {
     get('profile-bot-name').value = 'bot-a';
     window.apiGet = async (endpoint, { bot_name }) => ({
-        status: 'success', data: { guide: `${bot_name} 的说明`, default_guide: '默认说明' }
+        status: 'success', data: guidanceData(`${bot_name} 的说明`)
     });
     let finish;
     window.apiPost = () => new Promise(resolve => { finish = resolve; });
@@ -344,6 +361,64 @@ test('a late guidance save does not close or overwrite another bot editor', asyn
     assert.equal(closed, false);
     assert.equal(get('relation-score-guide-bot').value, 'bot-b');
     assert.equal(get('relation-score-guide-text').value, 'bot-b 的说明');
+});
+
+test('guidance tabs preserve all drafts and restore only the active tab', async () => {
+    get('profile-bot-name').value = 'bot';
+    window.apiGet = async () => ({ status: 'success', data: guidanceData() });
+    await window.openRelationScoreGuideModal();
+    get('relation-score-guide-text').value = '评级草稿';
+    get('relation-delta-guide-text').value = '评价草稿';
+    get('relation-tier-count-2').value = '8';
+    window.switchRelationGuideTab('delta');
+    assert.equal(get('relation-guide-panel-score').hidden, true);
+    assert.equal(get('relation-guide-panel-delta').hidden, false);
+    assert.equal(get('relation-guide-tab-delta').getAttribute('aria-selected'), 'true');
+    window.restoreDefaultRelationScoreGuide();
+    assert.equal(get('relation-delta-guide-text').value, '默认评价标准');
+    assert.equal(get('relation-score-guide-text').value, '评级草稿');
+    assert.equal(get('relation-tier-count-2').value, '8');
+    window.switchRelationGuideTab('scoring');
+    window.restoreDefaultRelationScoreGuide();
+    assert.equal(Number(get('relation-tier-count-2').value), 2);
+    assert.equal(get('relation-score-guide-text').value, '评级草稿');
+    await window.openRelationScoreGuideModal();
+    assert.equal(get('relation-score-guide-text').value, '已保存的说明');
+    assert.equal(get('relation-delta-guide-text').value, '已保存评价标准');
+    assert.equal(get('relation-guide-panel-score').hidden, false);
+});
+
+test('guidance tabs support arrow keys and move keyboard focus', () => {
+    let prevented = false;
+    window.switchRelationGuideTab('score', { key: 'ArrowLeft', preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(document.activeElement, get('relation-guide-tab-scoring'));
+    assert.equal(get('relation-guide-panel-scoring').hidden, false);
+});
+
+for (const count of ['', '0', '-1', '1.5', 'NaN', '1000001']) {
+    test(`invalid tier count ${JSON.stringify(count)} preserves drafts without submitting`, async () => {
+        get('relation-score-guide-bot').value = 'bot';
+        get('relation-score-guide-text').value = '草稿';
+        get('relation-tier-count-3').value = count;
+        let submitted = false;
+        window.apiPost = async () => { submitted = true; };
+        await window.saveRelationScoreGuide();
+        assert.equal(submitted, false);
+        assert.equal(get('relation-score-guide-text').value, '草稿');
+        assert.equal(get('relation-guide-panel-scoring').hidden, false);
+    });
+}
+
+test('saving guidance refreshes the selected bot member cards', async () => {
+    get('profile-bot-name').value = 'bot';
+    window.apiGet = async () => ({ status: 'success', data: guidanceData() });
+    window.apiPost = async () => ({ status: 'success' });
+    let refreshed = 0;
+    window.GiftiaApp.loadUserProfiles = async () => { refreshed++; };
+    await window.openRelationScoreGuideModal();
+    await window.saveRelationScoreGuide();
+    assert.equal(refreshed, 1);
 });
 
 test('fallback names are placeholders and are not copied into a local profile on save', async () => {

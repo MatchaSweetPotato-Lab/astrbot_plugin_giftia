@@ -168,7 +168,7 @@ class Giftia(Star):
         return {}
 
     def sync_bot_maps(self):
-        """同步重新加载机器人配置及适配器映射字典。"""
+        """Reload bot mappings and scoring counts, invalidating affected profiles."""
         bot_list = self.bot_config_manager.load_bots()
         self.bot_map.clear()
         self.adapter_id_map.clear()
@@ -178,12 +178,30 @@ class Giftia(Star):
             self.bot_map[bot_conf["name"]] = bot_conf
             for adapter_id in bot_conf.get("adapter_ids", []):
                 self.adapter_id_map[adapter_id] = bot_conf["name"]
+        if db := getattr(self, "db", None):
+            counts = {bot["name"]: bot["relation_tier_counts"] for bot in bot_list}
+            changed_bots = {
+                name
+                for name in db.relation_tier_counts.keys() | counts.keys()
+                if db.relation_tier_counts.get(name) != counts.get(name)
+            }
+            db.relation_tier_counts = counts
+            if changed_bots and (cache := getattr(self, "data_cache", None)):
+                for records in (
+                    cache.user_profiles,
+                    cache.user_profile_records,
+                    cache.relations,
+                ):
+                    for key in list(records):
+                        if any(key.startswith(f"{name}:") for name in changed_bots):
+                            records.pop(key, None)
 
     async def initialize(self):
         """插件初始化方法"""
         # 实例化底座服务
         self.ltm = LTM(self.context, self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
+        self.sync_bot_maps()
         self.data_cache = DataCache(
             db=self.db,
             http_manager=self.http_manager,

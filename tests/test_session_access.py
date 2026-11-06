@@ -62,9 +62,16 @@ def runtime(tmp_path, monkeypatch):
         message_parser=SimpleNamespace(
             parse_user_message=AsyncMock(), chain_to_result=AsyncMock()
         ),
-        data_cache=SimpleNamespace(add_message=AsyncMock()),
+        data_cache=SimpleNamespace(
+            add_message=AsyncMock(),
+            user_profiles={},
+            user_profile_records={},
+            relations={},
+        ),
         db=SimpleNamespace(
-            get_kv_data=AsyncMock(return_value=None), upsert_kv_data=AsyncMock()
+            get_kv_data=AsyncMock(return_value=None),
+            upsert_kv_data=AsyncMock(),
+            relation_tier_counts={},
         ),
         parse_locks=defaultdict(asyncio.Lock),
         replying_status={},
@@ -100,6 +107,27 @@ def runtime(tmp_path, monkeypatch):
     plugin.cmd_handler = CommandHandler(plugin)
     plugin.chat_manager = ChatManager(plugin)
     return plugin
+
+
+def test_scoring_sync_updates_counts_and_invalidates_only_affected_bot_profiles(
+    runtime,
+):
+    caches = (
+        runtime.data_cache.user_profiles,
+        runtime.data_cache.user_profile_records,
+        runtime.data_cache.relations,
+    )
+    for records in caches:
+        records.update({"bot:group:user": "stale", "other:group:user": "keep"})
+    bots = runtime.bot_config_manager.load_bots()
+    bots[0]["relation_tier_counts"] = [26, 4, 6, 9, 28]
+    assert runtime.bot_config_manager.save_bots(bots)
+    runtime.sync_bot_maps()
+    assert runtime.db.relation_tier_counts["bot"] == [26, 4, 6, 9, 28]
+    assert runtime.db.relation_tier_counts["other"] == [13, 2, 2, 3, 14]
+    for records in caches:
+        assert "bot:group:user" not in records
+        assert records["other:group:user"] == "keep"
 
 
 @pytest.fixture

@@ -6,14 +6,17 @@ from astrbot.api import logger
 from ..llm.preset_prompts import (
     DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT,
     DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT,
+    RELATION_DELTA_GUIDE,
 )
 from ..llm.prompt import (
     USER_PROFILE_FIELDS,
+    _apply_call_names_to_messages,
     normalize_profile_value,
     parse_caption_to_str,
     process_media_captions_for_prompt,
     truncate_message_content,
 )
+from ..utils.relation_display import build_relation_display
 
 SESSION_PROFILE_FIELDS = {"aliases"}
 
@@ -30,10 +33,30 @@ def format_time_to_seconds(db_value: str) -> str:
 
 class PassiveContextMixin:
     def _format_prompt_template(
-        self, prompt_template: str, nickname: str, self_id: str
+        self,
+        prompt_template: str,
+        nickname: str,
+        self_id: str,
+        *,
+        relation_delta_guide: str = RELATION_DELTA_GUIDE,
     ) -> str:
+        """Format trusted template variables without parsing inserted guide text.
+
+        Args:
+            prompt_template: Built-in task prompt.
+            nickname: Bot display name.
+            self_id: Bot account ID.
+            relation_delta_guide: Effective bot-scoped behavior rating guidance.
+
+        Returns:
+            Formatted prompt, or the original template if formatting fails.
+        """
         try:
-            return prompt_template.format(nickname=nickname, self_id=self_id)
+            return prompt_template.format(
+                nickname=nickname,
+                self_id=self_id,
+                relation_delta_guide=relation_delta_guide,
+            )
         except Exception as e:
             logger.warning(
                 f"[Giftia Passive Memory] 提示词变量格式化失败，将使用原文: {e}"
@@ -156,14 +179,6 @@ class PassiveContextMixin:
             threshold=100,
         )
 
-        chat_history_lines = []
-        for msg in processed_messages:
-            truncated_content = truncate_message_content(msg.content or "")
-            chat_history_lines.append(
-                f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {truncated_content}"
-            )
-        chat_history_text = "\n".join(chat_history_lines)
-
         active_user_briefs = []
         user_profile_blocks = []
         for uid in sorted(active_users_in_range):
@@ -179,7 +194,12 @@ class PassiveContextMixin:
             if call_name:
                 active_user_briefs.append({"user_id": str(uid), "call_name": call_name})
 
-            block_lines = [f"用户 {uid} ({nickname})" if nickname else f"用户 {uid}"]
+            display_name = call_name or nickname
+            block_lines = [
+                f"用户 {uid} ({display_name})"
+                if display_name and display_name != str(uid)
+                else f"用户 {uid}"
+            ]
             block_lines.append(
                 "现有画像:\n"
                 + self._format_user_profile_record_for_summary(
@@ -187,7 +207,41 @@ class PassiveContextMixin:
                     allowed_fields=SESSION_PROFILE_FIELDS,
                 )
             )
+            relation_score = {
+                "relation": 50.0,
+                "total_count": 0,
+                **(profile_record or {}),
+            }
+            if relation_score["relation"] is None:
+                relation_score["relation"] = 50.0
+            block_lines.extend(
+                [
+                    "好感度：",
+                    build_relation_display(relation_score)["relation_summary"],
+                    f"累计评价：{relation_score['total_count']}次",
+                ]
+            )
             user_profile_blocks.append("\n".join(block_lines))
+
+        processed_messages = _apply_call_names_to_messages(
+            processed_messages,
+            user_id="",
+            user_profile=None,
+            active_user_briefs=active_user_briefs,
+        )
+        chat_history_lines = []
+        for msg in processed_messages:
+            user_id = str(msg.user_id or "")
+            author = (
+                f"{msg.nickname}({user_id})"
+                if msg.nickname and msg.nickname != user_id
+                else user_id
+            )
+            truncated_content = truncate_message_content(msg.content or "")
+            chat_history_lines.append(
+                f"[{format_time_to_seconds(msg.time)}] {author}: {truncated_content}"
+            )
+        chat_history_text = "\n".join(chat_history_lines)
 
         media_captions_block = ""
         if remaining_captions:

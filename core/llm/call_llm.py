@@ -111,6 +111,9 @@ class CallLLM:
         self.media_caption_provider_ids = [
             p for p in (caption_config.get("media_caption_provider_ids") or []) if p
         ]
+        self.inspect_media_provider_ids = [
+            p for p in (caption_config.get("inspect_media_provider_ids") or []) if p
+        ] or self.media_caption_provider_ids
         self.media_caption_retry_times = network_config.get(
             "media_caption_retry_times", 2
         )
@@ -590,12 +593,27 @@ class CallLLM:
         question: str | None = None,
         bot_name: str = "",
         group_or_user_id: str = "",
+        *,
+        provider_ids: list[str] | None = None,
     ) -> MediaCaption | None:
-        """调用LLM生成图片描述"""
+        """Describe images using the selected providers.
+
+        Args:
+            image_urls: Image payloads or URLs.
+            question: Optional focus for the caption.
+            bot_name: Bot requesting the caption.
+            group_or_user_id: Conversation identifier.
+            provider_ids: Request-specific providers, or None for the regular list.
+
+        Returns:
+            The parsed caption, or None when disabled or all attempts fail.
+        """
         if not self.caption_config.get("image_caption_enabled", True):
             return None
         logger.info(f"调用LLM生成图片描述，共{len(image_urls)}张图片")
-        for provider_id in self.media_caption_provider_ids:
+        for provider_id in (
+            self.media_caption_provider_ids if provider_ids is None else provider_ids
+        ):
             for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
@@ -665,12 +683,27 @@ class CallLLM:
         question: str | None = None,
         bot_name: str = "",
         group_or_user_id: str = "",
+        *,
+        provider_ids: list[str] | None = None,
     ) -> MediaCaption | None:
-        """调用LLM生成音频描述"""
+        """Describe audio using the selected providers.
+
+        Args:
+            audio_urls: Audio files or URLs.
+            question: Optional focus for the caption.
+            bot_name: Bot requesting the caption.
+            group_or_user_id: Conversation identifier.
+            provider_ids: Request-specific providers, or None for the regular list.
+
+        Returns:
+            The parsed caption, or None when disabled or all attempts fail.
+        """
         if not self.caption_config.get("audio_caption_enabled", True):
             return None
         logger.info(f"调用LLM生成音频描述，共{len(audio_urls)}个音频")
-        for provider_id in self.media_caption_provider_ids:
+        for provider_id in (
+            self.media_caption_provider_ids if provider_ids is None else provider_ids
+        ):
             for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成音频描述失败，{provider_id} 重试第 {i} 次")
@@ -843,6 +876,8 @@ class CallLLM:
         question: str | None = None,
         bot_name: str = "",
         group_or_user_id: str = "",
+        *,
+        provider_ids: list[str] | None = None,
     ) -> MediaCaption | None:
         """Describe a video using a provider with native video understanding.
 
@@ -851,6 +886,7 @@ class CallLLM:
             question: Optional question about the video.
             bot_name: Bot requesting the caption.
             group_or_user_id: Conversation identifier.
+            provider_ids: Request-specific providers, or None for the regular list.
 
         Returns:
             The parsed caption, or None when disabled or all attempts fail.
@@ -858,7 +894,9 @@ class CallLLM:
         if not self.caption_config.get("video_caption_enabled", True):
             return None
         logger.info(f"调用LLM生成原生视频描述(音频与画面同频)，带问题={bool(question)}")
-        for provider_id in self.media_caption_provider_ids:
+        for provider_id in (
+            self.media_caption_provider_ids if provider_ids is None else provider_ids
+        ):
             for i in range(self.media_caption_retry_times):
                 if i > 0:
                     logger.warning(f"LLM生成视频描述失败，{provider_id} 重试第 {i} 次")

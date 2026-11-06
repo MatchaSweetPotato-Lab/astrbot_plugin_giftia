@@ -25,6 +25,7 @@ def video_runtime(tmp_path, monkeypatch):
     plugin.conf = {"caption_config": {"video_clip_threshold_seconds": 30}}
     plugin.data_cache.get_caption_by_hash = AsyncMock(return_value=video)
     plugin.data_cache.update_caption = AsyncMock()
+    plugin.call_llm.inspect_media_provider_ids = ["strong-video"]
     plugin.call_llm.call_llm_video_caption = AsyncMock(
         return_value=MediaCaption(hash_val=video.hash_val, caption="New caption")
     )
@@ -92,6 +93,9 @@ async def test_video_duration_controls_tool_payload(
         assert f"{start_time}s ~ {start_time + expected_duration}s" in output
 
     runtime.plugin.call_llm.call_llm_video_caption.assert_awaited_once()
+    assert runtime.plugin.call_llm.call_llm_video_caption.call_args.kwargs[
+        "provider_ids"
+    ] == ["strong-video"]
     video_url = runtime.plugin.call_llm.call_llm_video_caption.call_args.kwargs[
         "video_url"
     ]
