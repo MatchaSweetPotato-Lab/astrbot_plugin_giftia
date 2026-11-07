@@ -1,11 +1,9 @@
 """Inventory and manual connectivity tests for configured conversation models."""
 
-from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.exceptions import EmptyModelOutputError
 
 from ..llm.provider_health import ProviderUnavailableError, get_provider_health
-from ..utils.token_utils import extract_tokens_robust
 
 
 class ModelHealthApi:
@@ -107,16 +105,13 @@ class ModelHealthApi:
             return error_response("请选择插件已配置的对话模型")
 
         health = get_provider_health(self.giftia)
-        response = None
         success = False
         message = "连通性测试失败，请检查供应商配置或运行日志"
         try:
-            response = await health.call(
-                self.giftia.context.llm_generate,
-                chat_provider_id=provider_id,
-                prompt="请只回复 OK。",
-                request_timeout=30,
-                force_probe=True,
+            await health.probe(
+                provider_id,
+                log_token_usage=self.giftia.db.log_token_usage,
+                manual=True,
             )
             success = True
             message = "连通性测试通过，已恢复共享健康状态"
@@ -124,27 +119,8 @@ class ModelHealthApi:
             return error_response("该模型正在进行恢复试探或连通性测试，请稍后重试")
         except EmptyModelOutputError:
             message = "测试未收到文本响应，未恢复健康状态"
-        except Exception as error:
-            logger.warning(
-                "Model connectivity test failed. provider_id: %s, error: %s",
-                provider_id,
-                error,
-            )
-        prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(response)
-        await self.giftia.db.log_token_usage(
-            bot_name="",
-            group_or_user_id="",
-            type="provider_test",
-            provider_id=provider_id,
-            model_name=provider_id,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            extra_info={
-                "status": "success" if success else "api_failed",
-                "manual_test": True,
-            },
-        )
+        except Exception:
+            pass
         return json_response(
             {
                 "status": "success" if success else "error",

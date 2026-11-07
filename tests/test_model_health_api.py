@@ -225,3 +225,46 @@ async def test_inventory_includes_models_configured_for_disabled_bots(runtime):
         rows = (await client.get("/models/health")).json()["data"]
     reply = next(row for row in rows if row["provider_id"] == "reply")
     assert reply["uses"] == ["disabled（已停用） · 正式回复/转发转述"]
+
+
+@pytest.mark.asyncio
+async def test_background_probe_and_manual_test_share_one_request_slot(runtime):
+    health = runtime.health
+    ticks = [100.0]
+    health.clock = lambda: ticks[0]
+    health.CHECK_INTERVAL = 0.01
+    for _ in range(2):
+        with pytest.raises(ServiceError):
+            await health.call(
+                AsyncMock(side_effect=ServiceError()), chat_provider_id="shared"
+            )
+    entered, release, logged = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def generate(**kwargs):
+        entered.set()
+        await release.wait()
+        return SimpleNamespace(completion_text="OK")
+
+    runtime.plugin.context.llm_generate.side_effect = generate
+    runtime.plugin.db.log_token_usage.side_effect = lambda **_: logged.set()
+    ticks[0] += 60
+    health.start(runtime.plugin.db.log_token_usage)
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(runtime.app), base_url="http://test"
+        ) as client:
+            response = await client.post("/models/test", json={"provider_id": "shared"})
+        assert response.status_code == 400
+        assert "正在进行" in response.json()["message"]
+        runtime.plugin.context.llm_generate.assert_awaited_once()
+        runtime.plugin.db.log_token_usage.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(logged.wait(), 1)
+        assert health.snapshot("shared")["status"] == "healthy"
+        assert runtime.plugin.db.log_token_usage.await_args.kwargs["extra_info"] == {
+            "status": "success",
+            "manual_test": False,
+        }
+    finally:
+        await health.close()

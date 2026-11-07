@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import pytest_asyncio
 from core.llm.call_llm import CallLLM
 from core.llm.llm_tools import InspectForwardMessageTool
 from core.llm.provider_health import (
@@ -30,12 +31,22 @@ class ServiceError(Exception):
         self.body = body or {}
 
 
-@pytest.fixture
-def runtime():
+@pytest_asyncio.fixture
+async def runtime():
     ticks = [100.0]
     context = SimpleNamespace()
     health = ProviderHealth(context, clock=lambda: ticks[0])
-    return SimpleNamespace(health=health, ticks=ticks, context=context)
+    health.CHECK_INTERVAL = 0.01
+    recorded = asyncio.Event()
+    recorder = AsyncMock(side_effect=lambda **_: recorded.set())
+    yield SimpleNamespace(
+        health=health,
+        ticks=ticks,
+        context=context,
+        recorded=recorded,
+        recorder=recorder,
+    )
+    await health.close()
 
 
 @pytest.mark.asyncio
@@ -205,6 +216,10 @@ async def test_only_one_recovery_probe_runs_and_failure_extends_cooldown(runtime
             )
     ticks[0] += 60
     assert health.snapshot("model")["status"] == "probe_due"
+    blocked = AsyncMock()
+    with pytest.raises(ProviderUnavailableError):
+        await health.call(blocked, chat_provider_id="model")
+    blocked.assert_not_awaited()
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def fail(**kwargs):
@@ -212,7 +227,9 @@ async def test_only_one_recovery_probe_runs_and_failure_extends_cooldown(runtime
         await release.wait()
         raise ServiceError()
 
-    probe = asyncio.create_task(health.call(fail, chat_provider_id="model"))
+    probe = asyncio.create_task(
+        health.call(fail, chat_provider_id="model", force_probe=True)
+    )
     await entered.wait()
     assert health.snapshot("model")["status"] == "probing"
     blocked = AsyncMock()
@@ -406,3 +423,210 @@ async def test_every_conversation_model_path_shares_health_and_skips_current_lis
     )
     assert context.tool_loop_agent.await_args.kwargs["chat_provider_id"] == "good"
     assert caller.provider_health is get_provider_health(plugin)
+
+
+@pytest.mark.asyncio
+async def test_background_recovery_runs_without_business_requests(runtime):
+    health = runtime.health
+    with pytest.raises(ServiceError):
+        await health.call(
+            AsyncMock(side_effect=ServiceError(401)), chat_provider_id="model"
+        )
+    runtime.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text="OK")
+    )
+    health.start(runtime.recorder)
+    monitor = health._monitor_task
+    health.start(runtime.recorder)
+    assert health._monitor_task is monitor
+    await asyncio.sleep(health.CHECK_INTERVAL * 2)
+    runtime.context.llm_generate.assert_not_awaited()
+    runtime.ticks[0] += 600
+    await asyncio.wait_for(runtime.recorded.wait(), 1)
+    assert health.snapshot("model")["status"] == "healthy"
+    assert health.snapshot("model")["failures"] == 0
+    runtime.context.llm_generate.assert_awaited_once_with(
+        chat_provider_id="model", prompt="请只回复 OK。"
+    )
+    usage = runtime.recorder.await_args.kwargs
+    assert usage["type"] == "provider_test"
+    assert usage["extra_info"] == {"status": "success", "manual_test": False}
+    await asyncio.sleep(health.CHECK_INTERVAL * 2)
+    runtime.context.llm_generate.assert_awaited_once()
+    assert health.snapshot("unused")["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error", [ServiceError(), EmptyModelOutputError(), ValueError()]
+)
+async def test_failed_background_probes_keep_cooldown_even_for_neutral_errors(
+    runtime, error
+):
+    health = runtime.health
+    for _ in range(2):
+        with pytest.raises(ServiceError):
+            await health.call(
+                AsyncMock(side_effect=ServiceError()), chat_provider_id="model"
+            )
+    runtime.context.llm_generate = AsyncMock(side_effect=error)
+    runtime.ticks[0] += 60
+    health.start(runtime.recorder)
+    await asyncio.wait_for(runtime.recorded.wait(), 1)
+    status = health.snapshot("model")
+    assert status["status"] == "cooldown"
+    assert status["retry_in_seconds"] == 120
+    assert status["failures"] == (3 if isinstance(error, ServiceError) else 2)
+    assert runtime.recorder.await_args.kwargs["extra_info"] == {
+        "status": "api_failed",
+        "manual_test": False,
+    }
+    await asyncio.sleep(health.CHECK_INTERVAL * 3)
+    runtime.context.llm_generate.assert_awaited_once()
+    blocked = AsyncMock()
+    with pytest.raises(ProviderUnavailableError):
+        await health.call(blocked, chat_provider_id="model")
+    blocked.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_background_text_never_restores_health(runtime):
+    health = runtime.health
+    with pytest.raises(ServiceError):
+        await health.call(
+            AsyncMock(side_effect=ServiceError(429)), chat_provider_id="model"
+        )
+    runtime.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text=" \n ")
+    )
+    runtime.ticks[0] += 60
+    health.start(runtime.recorder)
+    await asyncio.wait_for(runtime.recorded.wait(), 1)
+    assert health.snapshot("model")["status"] == "cooldown"
+    assert health.snapshot("model")["retry_in_seconds"] == 120
+
+
+@pytest.mark.asyncio
+async def test_background_failures_back_off_and_never_enter_business(runtime):
+    health = runtime.health
+    for _ in range(2):
+        with pytest.raises(ServiceError):
+            await health.call(
+                AsyncMock(side_effect=ServiceError()), chat_provider_id="model"
+            )
+    runtime.context.llm_generate = AsyncMock(side_effect=ServiceError())
+    health.start(runtime.recorder)
+    previous = 60
+    business = AsyncMock()
+    for expected in (120, 300, 600, 600):
+        runtime.recorded.clear()
+        runtime.ticks[0] += previous
+        with pytest.raises(ProviderUnavailableError):
+            await health.call(business, chat_provider_id="model")
+        await asyncio.wait_for(runtime.recorded.wait(), 1)
+        assert health.snapshot("model")["retry_in_seconds"] == expected
+        previous = expected
+    business.assert_not_awaited()
+    assert runtime.context.llm_generate.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_slow_background_provider_does_not_block_other_recovery_or_business(
+    runtime,
+):
+    health = runtime.health
+    for provider_id in ("slow", "fast"):
+        with pytest.raises(ServiceError):
+            await health.call(
+                AsyncMock(side_effect=ServiceError(401)),
+                chat_provider_id=provider_id,
+            )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def generate(*, chat_provider_id, **kwargs):
+        if chat_provider_id == "slow":
+            entered.set()
+            await release.wait()
+        return SimpleNamespace(completion_text="OK")
+
+    runtime.context.llm_generate = AsyncMock(side_effect=generate)
+    runtime.ticks[0] += 600
+    health.start(runtime.recorder)
+    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(runtime.recorded.wait(), 1)
+    assert health.snapshot("slow")["status"] == "probing"
+    assert health.snapshot("fast")["status"] == "healthy"
+    business = AsyncMock(return_value="business reply")
+    with pytest.raises(ProviderUnavailableError):
+        await health.call(business, chat_provider_id="slow")
+    assert await health.call(business, chat_provider_id="other") == "business reply"
+    business.assert_awaited_once_with(chat_provider_id="other")
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_background_probe_timeout_keeps_provider_unavailable(runtime):
+    health = runtime.health
+    with pytest.raises(ServiceError):
+        await health.call(
+            AsyncMock(side_effect=ServiceError(429)), chat_provider_id="model"
+        )
+    cancelled = asyncio.Event()
+
+    async def generate(**kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    health.PROBE_TIMEOUT = 0.01
+    runtime.context.llm_generate = AsyncMock(side_effect=generate)
+    runtime.ticks[0] += 60
+    health.start(runtime.recorder)
+    await asyncio.wait_for(runtime.recorded.wait(), 1)
+    assert cancelled.is_set()
+    assert health.snapshot("model")["status"] == "cooldown"
+    assert health.snapshot("model")["retry_in_seconds"] == 120
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_awaits_background_probe_without_marking_failure(
+    runtime,
+):
+    health = runtime.health
+    with pytest.raises(ServiceError):
+        await health.call(
+            AsyncMock(side_effect=ServiceError(429)), chat_provider_id="model"
+        )
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def generate(**kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    runtime.context.llm_generate = AsyncMock(side_effect=generate)
+    runtime.ticks[0] += 60
+    health.start(runtime.recorder)
+    await asyncio.wait_for(entered.wait(), 1)
+    await health.close()
+    await health.close()
+    assert cancelled.is_set()
+    assert health._monitor_task is None
+    assert health.snapshot("model")["status"] == "probe_due"
+    assert health.snapshot("model")["failures"] == 1
+    runtime.recorder.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_token_log_errors_do_not_override_successful_probe(runtime):
+    runtime.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(completion_text="OK")
+    )
+    result = await runtime.health.probe(
+        "model", log_token_usage=AsyncMock(side_effect=RuntimeError("DB unavailable"))
+    )
+    assert result.completion_text == "OK"
+    assert runtime.health.snapshot("model")["status"] == "healthy"

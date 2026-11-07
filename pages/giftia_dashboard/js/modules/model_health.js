@@ -49,7 +49,7 @@ function renderModels() {
         const status = !model.registered ? 'missing' : (busy ? 'probing' : model.status);
         const color = status === 'healthy' ? 'success' : (['cooldown', 'missing'].includes(status) ? 'danger' : 'secondary');
         const detail = status === 'cooldown' ? `约 ${model.retry_in_seconds} 秒后可试探`
-            : status === 'probe_due' ? '下次请求将尝试恢复'
+            : status === 'probe_due' ? '等待后台连通性测试'
             : status === 'missing' ? '供应商配置尚未加载或已删除'
             : (reasonLabels[model.reason] || '');
         return `<tr>

@@ -14,6 +14,8 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.core.exceptions import EmptyModelOutputError
 
+from ..utils.token_utils import extract_tokens_robust
+
 
 class ProviderUnavailableError(Exception):
     """Signal a skipped provider without making a model request."""
@@ -39,11 +41,132 @@ class ProviderHealth:
 
     COOLDOWNS = (60, 120, 300, 600)
     FAILURE_THRESHOLD = 2
+    CHECK_INTERVAL = 1
+    PROBE_TIMEOUT = 30
 
     def __init__(self, context, *, clock: Callable[[], float] = time.monotonic):
         self.context = context
         self.clock = clock
         self._states: dict[str, _HealthState] = {}
+        self._monitor_task: asyncio.Task | None = None
+
+    def start(self, log_token_usage: Callable[..., Awaitable[Any]]):
+        """Start independent recovery checks for cooling providers.
+
+        Args:
+            log_token_usage: Token usage recorder for background test requests.
+        """
+        if self._monitor_task is None or self._monitor_task.done():
+            self._monitor_task = asyncio.create_task(self._monitor(log_token_usage))
+
+    async def close(self):
+        """Cancel the monitor and await its outstanding model probes."""
+        task, self._monitor_task = self._monitor_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _monitor(self, log_token_usage: Callable[..., Awaitable[Any]]):
+        """Schedule due probes without making business calls await recovery.
+
+        Each provider has its own task so a slow endpoint cannot delay another
+        provider's recovery. The request boundary owns the shared probe lock.
+
+        Args:
+            log_token_usage: Token usage recorder for automatic probes.
+        """
+        probes: dict[str, asyncio.Task] = {}
+        try:
+            while True:
+                for provider_id, task in list(probes.items()):
+                    if task.done():
+                        if not task.cancelled():
+                            task.exception()
+                        del probes[provider_id]
+                for provider_id, state in list(self._states.items()):
+                    if (
+                        state.retry_at
+                        and state.retry_at <= self.clock()
+                        and not state.probing
+                        and provider_id not in probes
+                    ):
+                        probes[provider_id] = asyncio.create_task(
+                            self.probe(provider_id, log_token_usage=log_token_usage)
+                        )
+                await asyncio.sleep(self.CHECK_INTERVAL)
+        finally:
+            for task in probes.values():
+                task.cancel()
+            await asyncio.gather(*probes.values(), return_exceptions=True)
+
+    async def probe(
+        self,
+        provider_id: str,
+        *,
+        log_token_usage: Callable[..., Awaitable[Any]],
+        manual: bool = False,
+    ):
+        """Test connectivity and record the same result for manual and auto probes.
+
+        Args:
+            provider_id: AstrBot provider ID to test independently of business.
+            log_token_usage: Token usage recorder for the actual test request.
+            manual: Whether the request was initiated from the WebUI.
+
+        Returns:
+            The SDK response after a successful, nonempty text reply.
+
+        Raises:
+            ProviderUnavailableError: Another probe owns this provider's slot.
+            Exception: The original request error or an empty test response.
+        """
+        response = None
+        error = None
+        try:
+            response = await self.call(
+                self.context.llm_generate,
+                chat_provider_id=provider_id,
+                prompt="请只回复 OK。",
+                request_timeout=self.PROBE_TIMEOUT,
+                force_probe=True,
+            )
+        except ProviderUnavailableError:
+            raise
+        except Exception as exc:
+            error = exc
+            logger.warning(
+                "Provider connectivity probe failed. provider_id: %s, manual: %s, error: %s",
+                provider_id,
+                manual,
+                exc,
+            )
+        try:
+            prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(
+                response
+            )
+            await log_token_usage(
+                bot_name="",
+                group_or_user_id="",
+                type="provider_test",
+                provider_id=provider_id,
+                model_name=provider_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                extra_info={
+                    "status": "api_failed" if error is not None else "success",
+                    "manual_test": manual,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record provider probe usage. provider_id: %s",
+                provider_id,
+                exc_info=True,
+            )
+        if error is not None:
+            raise error
+        return response
 
     async def call(
         self,
@@ -59,13 +182,13 @@ class ProviderHealth:
 
         State transitions do not await, so admission and probe ownership are
         atomic on the plugin event loop. Generations ignore results from requests
-        admitted before a cooldown, configuration change or manual test.
+        admitted before a cooldown, configuration change or recovery probe.
 
         Args:
             operation: AstrBot generation or native tool-loop method.
             chat_provider_id: Shared AstrBot provider configuration ID.
             request_timeout: Optional timeout around the actual model operation.
-            force_probe: Bypass cooldown for a manual text connectivity test.
+            force_probe: Bypass cooldown for an independent connectivity test.
             count_failure: Whether an exception can still be attributed to this
                 model, excluding native tool failures after execution starts.
             **kwargs: Arguments passed unchanged to the SDK method.
@@ -92,12 +215,11 @@ class ProviderHealth:
                 state = self._states[provider_id] = _HealthState(signature=signature)
             state.signature = signature
 
-        now = self.clock()
-        if state.probing or (not force_probe and state.retry_at > now):
+        if state.probing or (not force_probe and state.retry_at):
             raise ProviderUnavailableError(
                 f"Provider {provider_id} is temporarily unavailable"
             )
-        probe = force_probe or bool(state.retry_at)
+        probe = force_probe
         if probe:
             state.generation += 1
             state.probing = True
@@ -121,14 +243,22 @@ class ProviderHealth:
                 self._states.get(provider_id) is state
                 and state.generation == generation
                 and (count_failure is None or count_failure())
-                and (failure := self._classify_error(exc)) is not None
             ):
-                reason, delay, immediate = failure
-                state.failures += 1
-                state.last_failure = time.time()
-                state.reason = reason
                 state.last_latency_ms = round((self.clock() - started) * 1000)
-                if probe or immediate or state.failures >= self.FAILURE_THRESHOLD:
+                failure = self._classify_error(exc)
+                if failure is not None:
+                    reason, delay, immediate = failure
+                    state.failures += 1
+                    state.last_failure = time.time()
+                    state.reason = reason
+                else:
+                    delay, immediate = 0, False
+                if (
+                    failure is not None
+                    and (probe or immediate or state.failures >= self.FAILURE_THRESHOLD)
+                ) or (probe and state.retry_at):
+                    # A failed probe, including empty output or a neutral error,
+                    # must wait again rather than becoming a tight retry loop.
                     cooldown = self.COOLDOWNS[
                         min(state.backoff, len(self.COOLDOWNS) - 1)
                     ]
@@ -139,7 +269,7 @@ class ProviderHealth:
                     logger.warning(
                         "Provider entered cooldown. provider_id: %s, reason: %s, seconds: %s",
                         provider_id,
-                        reason,
+                        state.reason,
                         max(cooldown, delay),
                     )
             raise

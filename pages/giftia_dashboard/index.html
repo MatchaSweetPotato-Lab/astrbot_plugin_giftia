@@ -549,7 +549,7 @@
             <section id="tab-model-health" class="tab-panel">
                 <div class="filter-card card model-health-toolbar">
                     <div>
-                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。冷却中的模型会被临时跳过，冷却到期后使用下一条真实请求试探恢复。连通性测试会发送简短文本请求，成功后立即恢复健康状态。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
+                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。失效模型由后台独立探测，冷却到期后发送简短文本请求，测试通过后恢复使用。业务请求会持续跳过失效模型；也可手动测试并立即恢复健康状态。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
                         <span class="muted-text">查看各流程使用的对话模型，测试连接并恢复可用状态。</span>
                     </div>
                     <button id="model-health-refresh" class="btn btn-secondary" type="button">刷新</button>

@@ -379,6 +379,7 @@ class Giftia(Star):
             return ret
 
         self.context.send_message = intercepted_context_send_message
+        self.provider_health.start(self.db.log_token_usage)
 
     # ==================== 命令监听与分发 ====================
 
@@ -871,6 +872,8 @@ class Giftia(Star):
     async def terminate(self):
         """销毁方法"""
         self._terminated = True
+        if hasattr(self, "provider_health"):
+            await self.provider_health.close()
         if hasattr(self, "_original_send_message"):
             self.context.send_message = self._original_send_message
 
