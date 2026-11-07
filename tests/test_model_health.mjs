@@ -5,14 +5,18 @@ const fields = new Map();
 globalThis.document = {
     addEventListener() {},
     getElementById(id) {
-        if (!fields.has(id)) fields.set(id, {innerHTML: '', textContent: '', disabled: false});
+        if (!fields.has(id)) fields.set(id, {innerHTML: '', textContent: '', disabled: false, querySelectorAll: () => []});
         return fields.get(id);
     }
 };
 globalThis.window = {showToast() {}};
 globalThis.setTimeout = () => 1;
 globalThis.clearTimeout = () => {};
+globalThis.ResizeObserver = class { observe() {} };
 await import('../pages/giftia_dashboard/js/utils.js');
+await import('../pages/giftia_dashboard/js/api.js');
+const apiPost = window.apiPost;
+const originalFetch = globalThis.fetch;
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
 const { ALL_TABS, DEFAULT_PINNED_IDS } = await import('../pages/giftia_dashboard/js/modules/nav_manager.js');
 const { loadModelHealth, testModelConnection } = await import('../pages/giftia_dashboard/js/modules/model_health.js');
@@ -21,6 +25,8 @@ const model = status => ({provider_id: "provider'<>id", name: '<script>name</scr
 
 beforeEach(() => {
     fields.clear();
+    delete window.AstrBotPluginPage;
+    globalThis.fetch = originalFetch;
     state.activeTab = 'model-health';
     window.showToast = () => {};
     window.apiGet = async () => ({status: 'success', data: [model('cooldown')]});
@@ -59,6 +65,48 @@ test('duplicate tests are blocked and success refreshes the shared health displa
     await pending;
     assert.match(get('model-health-list').innerHTML, /健康/);
     assert.doesNotMatch(get('model-health-list').innerHTML, /冷却中|disabled/);
+});
+
+for (const bridged of [false, true]) {
+    test(`successful connectivity test shows success with ${bridged ? 'unwrapped bridge' : 'direct'} response`, async () => {
+        await loadModelHealth();
+        const notifications = [];
+        window.showToast = (...args) => notifications.push(args);
+        window.apiPost = apiPost;
+        if (bridged) {
+            window.AstrBotPluginPage = {
+                apiPost: async (endpoint, body) => {
+                    assert.equal(endpoint, '/models/test');
+                    assert.equal(body.provider_id, "provider'<>id");
+                    return model('healthy');
+                }
+            };
+        } else {
+            globalThis.fetch = async (endpoint, options) => {
+                assert.equal(endpoint, '/models/test');
+                assert.equal(options.method, 'POST');
+                assert.equal(JSON.parse(options.body).provider_id, "provider'<>id");
+                return {json: async () => ({status: 'success', message: '连通性测试通过，已恢复共享健康状态', data: model('healthy')})};
+            };
+        }
+        window.apiGet = async () => ({status: 'success', data: [model('healthy')]});
+        await testModelConnection("provider'<>id");
+        assert.deepEqual(notifications, [['连通性测试通过，已恢复共享健康状态', 'success']]);
+        assert.match(get('model-health-list').innerHTML, /健康/);
+    });
+}
+
+test('a failed bridge connectivity test keeps the failure notification and cooldown', async () => {
+    await loadModelHealth();
+    const notifications = [];
+    window.showToast = (...args) => notifications.push(args);
+    window.apiPost = apiPost;
+    window.AstrBotPluginPage = {
+        apiPost: async () => { throw new Error('测试未收到文本响应，未恢复健康状态'); }
+    };
+    await testModelConnection("provider'<>id");
+    assert.deepEqual(notifications, [['测试未收到文本响应，未恢复健康状态', 'error']]);
+    assert.match(get('model-health-list').innerHTML, /冷却中/);
 });
 
 test('a stale list response cannot overwrite a newer health snapshot', async () => {

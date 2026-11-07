@@ -4,6 +4,10 @@ Open **模型状态 (Model status)** in Giftia WebUI to see configured providers
 
 ![Model health and connectivity tests](../images/model-health.jpg)
 
+Each provider/model has one displayed name. Usage stays on one line until **展开 (Expand)** is selected; use **收起 (Collapse)** to close it. Expanded usage stays open during automatic refreshes. Phones and other narrow screens use cards with wrapping names, health, request times and a test button.
+
+![Mobile model status with expanded usage](../images/model-health-mobile.png)
+
 Decisions, formal replies, invalid-output fallback, reply review, image/audio/video captions, sticker analysis, media inspection, memory and affinity summaries, and forwarded-message summaries share one in-memory health tracker keyed by AstrBot `provider_id`. Different configurations with the same model name have independent health. Provider configuration and ordering are preserved. Embeddings, reranking and TTS are outside this conversation-model view.
 
 ## Automatic cooldown and recovery
@@ -20,7 +24,7 @@ Health admission precedes existing retry rules: request errors stay within the c
 
 ## Connectivity tests
 
-Click **连通性测试 (Connectivity test)** to send a short request asking for `OK`, with a 30-second timeout. Tests bypass cooldown, use no tools or conversation history, and share the single recovery-probe slot.
+Click **测试 (Test)** to send a short request asking for `OK`, with a 30-second timeout. Tests bypass cooldown, use no tools or conversation history, and share the single recovery-probe slot.
 
 A nonempty text reply immediately clears failures and cooldown for every flow. Empty output or an exception does not restore health. This tests text generation, not multimodal capabilities or business XML formatting.
 
