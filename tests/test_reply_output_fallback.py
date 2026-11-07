@@ -308,6 +308,81 @@ async def test_api_failures_stay_on_regular_provider_chain(runtime, native):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize(
+    "responses,expected_providers,recovered",
+    [
+        (["api", "invalid", "valid"], ["primary", "primary", "backup-a"], True),
+        (
+            ["api", "api", "invalid", "valid"],
+            ["primary", "primary", "regular-secondary", "backup-a"],
+            True,
+        ),
+        (
+            ["invalid", "api", "invalid", "valid"],
+            ["primary", "backup-a", "backup-a"],
+            False,
+        ),
+        (
+            ["invalid", "api", "api", "invalid", "valid"],
+            ["primary", "backup-a", "backup-a", "backup-b"],
+            False,
+        ),
+        (
+            ["invalid", "api", "api", "api", "api", "api", "api"],
+            [
+                "primary",
+                "backup-a",
+                "backup-a",
+                "backup-b",
+                "backup-b",
+                "backup-c",
+                "backup-c",
+            ],
+            False,
+        ),
+    ],
+)
+async def test_mixed_failures_preserve_provider_list_boundaries(
+    runtime, native, responses, expected_providers, recovered
+):
+    rt = runtime
+    rt.conf["invalid_reply_fallback_provider_ids"] = [
+        "backup-a",
+        "backup-b",
+        "backup-c",
+    ]
+    rt.context.tool_loop_agent.side_effect = [
+        RuntimeError("network failure")
+        if response == "api"
+        else SimpleNamespace(
+            completion_text="<message>recovered</message>"
+            if response == "valid"
+            else "blocked",
+            reasoning_content="",
+            tools_call_name=[],
+        )
+        for response in responses
+    ]
+    result = await rt.caller.call_llm_reply(
+        rt.event,
+        "group",
+        ["primary", "regular-secondary"],
+        "persona",
+        "input",
+        use_source_tools=native,
+    )
+    assert [
+        call.kwargs["chat_provider_id"]
+        for call in rt.context.tool_loop_agent.await_args_list
+    ] == expected_providers
+    if recovered:
+        assert result.msg_texts == ["recovered"]
+    else:
+        assert result is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fallback_attempt", [False, True])
 @pytest.mark.parametrize(
     "output", ["invalid", "empty", "exception", "api_error", "valid"]
