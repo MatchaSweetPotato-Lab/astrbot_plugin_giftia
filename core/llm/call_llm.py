@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from xml.etree.ElementTree import fromstring
@@ -9,6 +10,7 @@ from xxhash import xxh3_64_hexdigest
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
+from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.exceptions import EmptyModelOutputError
@@ -92,6 +94,23 @@ def _scoped_video_mime_detection():
         yield
     finally:
         media_utils.detect_image_mime_type = orig_fn
+
+
+class _ReplyToolHooks(BaseAgentRunHooks[AstrAgentContext]):
+    """Track tool execution across all steps of one reply attempt."""
+
+    def __init__(self):
+        self.called_tools: list[str] = []
+
+    async def on_tool_start(self, run_context, tool, tool_args) -> None:
+        """Record a tool before it can produce side effects.
+
+        Args:
+            run_context: Current agent context.
+            tool: Tool about to execute.
+            tool_args: Arguments supplied to the tool.
+        """
+        self.called_tools.append(tool.name)
 
 
 class CallLLM:
@@ -297,9 +316,17 @@ class CallLLM:
             bot_config.get("relation_score_guide", "").strip() or RELATION_SCORE_GUIDE
         )
 
-        for provider_id in provider_ids:
+        fallback_provider_ids = bot_config.get("llm_reply_conf", {}).get(
+            "invalid_reply_fallback_provider_ids", []
+        )
+        pending_providers = deque(provider_ids)
+        attempted_providers: set[str] = set()
+        using_output_fallback = False
+        while pending_providers:
+            provider_id = pending_providers.popleft()
+            attempted_providers.add(provider_id)
             for i in range(self.network_conf["reply_retry_times"]):
-                native_attempt_started = False
+                reply_hooks = _ReplyToolHooks()
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
@@ -454,13 +481,13 @@ class CallLLM:
                     )
                     logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
                     if native_tools.tools or (use_source_tools and not force_xml_tools):
-                        native_attempt_started = True
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
                             system_prompt=actual_system_prompt,
                             prompt=user_prompt,
                             tools=native_tools,
+                            agent_hooks=reply_hooks,
                             max_steps=getattr(self.plugin, "tools_config", {}).get(
                                 "max_loop", 10
                             ),
@@ -489,6 +516,14 @@ class CallLLM:
                         )
                     parsed_result = None
                     status_val = "parse_failed"
+                    native_tools_called = list(
+                        dict.fromkeys(
+                            [
+                                *reply_hooks.called_tools,
+                                *(llm_resp.tools_call_name or []),
+                            ]
+                        )
+                    )
 
                     if llm_resp.completion_text:
                         parsed_result = await self.xml_parse.decode_llm_xml(
@@ -496,17 +531,12 @@ class CallLLM:
                         )
                         if parsed_result is not None:
                             status_val = "success"
-                            parsed_result.native_tools_called = list(
-                                llm_resp.tools_call_name or []
-                            )
-                    elif llm_resp.reasoning_content:
-                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
-                        status_val = "parse_failed"
-                    else:
-                        # Succeeded but both completion and reasoning are empty.
+                            parsed_result.native_tools_called = native_tools_called
+                    elif native_tools_called:
+                        # A completed tool-only turn already performed useful work.
                         status_val = "success"
                         parsed_result = XmlLlmResult(
-                            native_tools_called=list(llm_resp.tools_call_name or [])
+                            native_tools_called=native_tools_called
                         )
 
                     bot_name = resolve_bot_name(self.plugin, event)
@@ -516,7 +546,10 @@ class CallLLM:
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": status_val},
+                        extra_info={
+                            "status": status_val,
+                            "output_fallback": using_output_fallback,
+                        },
                     )
 
                     if llm_resp.tools_call_name:
@@ -527,33 +560,22 @@ class CallLLM:
                         logger.info(
                             f"\n<reasoning>\n{llm_resp.reasoning_content}\n</reasoning>"
                         )
+                    if llm_resp.completion_text:
+                        logger.info(
+                            f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
+                        )
 
                     if parsed_result is not None:
-                        if llm_resp.completion_text:
-                            logger.info(
-                                f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
-                            )
                         return parsed_result
 
-                    if native_attempt_started:
+                    if native_tools_called:
                         logger.error(
                             "Native tool reply failed to parse; refusing to replay possible side effects"
                         )
                         return None
-                    if llm_resp.reasoning_content:
-                        logger.warning(
-                            f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
-                        )
-                        continue
-                    else:
-                        logger.warning(
-                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
-                        )
-                        continue
                 except EmptyModelOutputError:
-                    # Gemini empty output error; treat as no reply needed.
-                    logger.info(
-                        f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
+                    logger.warning(
+                        f"Reply model returned empty output. provider_id: {provider_id}"
                     )
                     bot_name = resolve_bot_name(self.plugin, event)
                     await self._log_token_usage_safely(
@@ -563,11 +585,16 @@ class CallLLM:
                         provider_id=provider_id,
                         llm_resp=None,
                         extra_info={
-                            "status": "api_failed",
+                            "status": "parse_failed",
                             "error": "EmptyModelOutputError",
+                            "output_fallback": using_output_fallback,
                         },
                     )
-                    return None if native_attempt_started else XmlLlmResult()
+                    if reply_hooks.called_tools:
+                        logger.error(
+                            "Native tool reply was empty; refusing to replay possible side effects"
+                        )
+                        return None
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}，provider_id: {provider_id}")
                     bot_name = resolve_bot_name(self.plugin, event)
@@ -577,14 +604,44 @@ class CallLLM:
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)},
+                        extra_info={
+                            "status": "api_failed",
+                            "error": str(e),
+                            "output_fallback": using_output_fallback,
+                        },
                     )
-                    if native_attempt_started:
+                    if reply_hooks.called_tools:
                         logger.error(
                             "Native tool reply failed; refusing to replay possible side effects"
                         )
                         return None
                     continue
+                # Only invalid output enters this separate, ordered fallback chain.
+                if using_output_fallback:
+                    logger.warning(
+                        "Output fallback returned no recognized XML; stopping the "
+                        f"reply without retrying or switching providers. provider_id: {provider_id}"
+                    )
+                    return None
+                if fallback_provider_ids:
+                    pending_providers = deque(
+                        dict.fromkeys(
+                            p
+                            for p in fallback_provider_ids
+                            if p and p not in attempted_providers
+                        )
+                    )
+                    using_output_fallback = True
+                    logger.warning(
+                        "Reply has no recognized XML; switching to output fallback "
+                        f"providers. provider_id: {provider_id}, "
+                        f"fallbacks: {list(pending_providers)}"
+                    )
+                    break
+                logger.warning(
+                    "Reply has no recognized XML; retrying within the configured "
+                    f"provider list. provider_id: {provider_id}"
+                )
         return None
 
     async def call_llm_image_caption(

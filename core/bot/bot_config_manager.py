@@ -76,6 +76,7 @@ DEFAULT_BOT_CONFIG = {
     },
     "llm_reply_conf": {
         "provider_ids": [],
+        "invalid_reply_fallback_provider_ids": [],
         "provider_selection_mode": "fallback",
         "persona_id": "default",
         "review_provider_id": "",
@@ -354,6 +355,13 @@ class BotConfigManager:
             "provider_ids": [
                 str(p).strip() for p in raw_reply.get("provider_ids") or [] if p
             ],
+            "invalid_reply_fallback_provider_ids": list(
+                dict.fromkeys(
+                    str(p).strip()
+                    for p in raw_reply.get("invalid_reply_fallback_provider_ids") or []
+                    if p and str(p).strip()
+                )
+            ),
             "provider_selection_mode": str(
                 raw_reply.get("provider_selection_mode") or "fallback"
             ),

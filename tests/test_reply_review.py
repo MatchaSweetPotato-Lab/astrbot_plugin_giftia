@@ -1,6 +1,7 @@
 """Integration tests for the single review and bounded reply regeneration."""
 
 import asyncio
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from core.database.database import Database
 from core.database.schema import initialize_database
 from core.llm.call_llm import CallLLM
 from core.llm.prompt import build_decision_prompt, build_reply_review_prompt
+from core.llm.xml_parse import XmlParse
 from core.utils.schemas import (
     MediaCaption,
     MessageData,
@@ -59,6 +61,7 @@ async def runtime(monkeypatch, tmp_path):
         plugin = SimpleNamespace(
             db=db,
             data_cache=cache,
+            adapter_id_map={"adapter": "bot"},
             bot_map={
                 "bot": {
                     "nickname": "Bot",
@@ -120,6 +123,8 @@ async def runtime(monkeypatch, tmp_path):
             nonlocal counter
             counter += 1
             event = SimpleNamespace(
+                platform_meta=SimpleNamespace(id="adapter"),
+                get_platform_name=lambda: "test",
                 unified_msg_origin="adapter:GroupMessage:group",
                 get_group_id=lambda: "group",
                 get_sender_id=lambda: user,
@@ -819,6 +824,67 @@ async def test_review_tokens_are_separate_from_decision_and_reply(runtime):
     assert stats["summary"]["reply_review_prompt_tokens"] == 10
     assert stats["summary"]["decision_tokens"] == 0
     assert stats["summary"]["reply_tokens"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "completion,expected_status",
+    [
+        ("", "failed"),
+        ("blocked", "failed"),
+        ("<message>recovered</message>", "handled"),
+    ],
+)
+async def test_fallback_attempt_logs_and_final_batch_status_are_independent(
+    runtime, completion, expected_status
+):
+    plugin = runtime.plugin
+    plugin.bot_map["bot"]["llm_reply_conf"].update(
+        invalid_reply_fallback_provider_ids=["backup-a", "backup-b"],
+        review_provider_id="",
+    )
+    plugin.context.tool_loop_agent = AsyncMock(
+        side_effect=[
+            SimpleNamespace(
+                completion_text="blocked", reasoning_content="", tools_call_name=[]
+            ),
+            SimpleNamespace(
+                completion_text=completion, reasoning_content="", tools_call_name=[]
+            ),
+        ]
+    )
+    plugin.call_llm = CallLLM(
+        plugin.context,
+        XmlParse(None, None),
+        {"reply_retry_times": 3},
+        {},
+        plugin=plugin,
+    )
+    await runtime.send("A")
+    await runtime.drain()
+    async with plugin.db.query(
+        "SELECT processing_status FROM chat_history WHERE message_id = 'A'"
+    ) as cursor:
+        assert (await cursor.fetchone())[0] == expected_status
+    async with plugin.db.query(
+        "SELECT bot_name, group_or_user_id, type, provider_id, extra_info "
+        "FROM token_usage ORDER BY id"
+    ) as cursor:
+        rows = await cursor.fetchall()
+    assert [tuple(row)[:4] for row in rows] == [
+        ("bot", "group", "reply", "reply"),
+        ("bot", "group", "reply", "backup-a"),
+    ]
+    attempts = [json.loads(row["extra_info"]) for row in rows]
+    assert [attempt["status"] for attempt in attempts] == [
+        "parse_failed",
+        "success" if expected_status == "handled" else "parse_failed",
+    ]
+    assert [attempt["output_fallback"] for attempt in attempts] == [False, True]
+    assert plugin.context.tool_loop_agent.await_count == 2
+    runtime.manager.decision_engine.evaluate_decision.assert_awaited_once()
+    if expected_status == "failed":
+        runtime.manager.action_dispatcher.dispatch_actions.assert_not_awaited()
 
 
 @pytest.mark.asyncio

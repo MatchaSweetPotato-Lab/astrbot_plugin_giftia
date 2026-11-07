@@ -1731,6 +1731,11 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label>无效回复回退提供商（可选）</label>
+                        <div id="bot-form-invalid-reply-fallback-providers" class="tag-select-container"></div>
+                        <p class="form-hint">回复为空或没有可识别的 XML 标签时，按此列表顺序回退，不受随机模式影响。回退模型再次输出空内容或无可识别 XML 时立即结束，不再重试或切换模型；接口异常沿用常规重试。留空使用原列表重试。仅更新状态的沉默不触发回退，已执行原生工具时不重放。</p>
+                    </div>
+                    <div class="form-group">
                         <label for="bot-form-review-provider">复审模型（可选） <span class="info-tooltip" data-tooltip="未选择时关闭。回复生成期间有新消息入库时，发送前复审一次；不通过则重新决策和生成，新回复直接发送。实际执行过原生工具或已进入后续工具轮次时跳过复审。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <select id="bot-form-review-provider"></select>
                     </div>

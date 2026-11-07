@@ -19,6 +19,7 @@ let currentEditingBotName = null;
 let adaptersTagSelect = null;
 let decProvidersTagSelect = null;
 let replyProvidersTagSelect = null;
+let invalidReplyFallbackTagSelect = null;
 
 /**
  * Load bots and system metadata from backend.
@@ -186,6 +187,7 @@ function openBotEditModal(botName = null) {
         },
         llm_reply_conf: {
             provider_ids: [],
+            invalid_reply_fallback_provider_ids: [],
             provider_selection_mode: 'fallback',
             persona_id: 'default',
             review_provider_id: ''
@@ -216,6 +218,7 @@ function openBotEditModal(botName = null) {
     if (adaptersTagSelect && typeof adaptersTagSelect.destroy === 'function') adaptersTagSelect.destroy();
     if (decProvidersTagSelect && typeof decProvidersTagSelect.destroy === 'function') decProvidersTagSelect.destroy();
     if (replyProvidersTagSelect && typeof replyProvidersTagSelect.destroy === 'function') replyProvidersTagSelect.destroy();
+    if (invalidReplyFallbackTagSelect && typeof invalidReplyFallbackTagSelect.destroy === 'function') invalidReplyFallbackTagSelect.destroy();
 
     // Initialize Tag Select for Adapter IDs
     adaptersTagSelect = new TagSelectComponent('bot-form-adapters', {
@@ -255,6 +258,11 @@ function openBotEditModal(botName = null) {
         placeholder: '检索或输入正式回复提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.provider_ids || []
+    });
+    invalidReplyFallbackTagSelect = new PrioritySelectComponent('bot-form-invalid-reply-fallback-providers', {
+        placeholder: '选择无效回复时使用的备用提供商，留空沿用常规重试...',
+        availableOptions: stateBotMetadata.llm_providers || [],
+        selectedValues: bot.llm_reply_conf?.invalid_reply_fallback_provider_ids || []
     });
 
     document.getElementById('bot-form-reply-mode').value = bot.llm_reply_conf?.provider_selection_mode || 'fallback';
@@ -698,6 +706,7 @@ async function saveBotFromModal() {
     const adapterIds = adaptersTagSelect ? adaptersTagSelect.getValues() : [];
     const decSelectedProviders = decProvidersTagSelect ? decProvidersTagSelect.getValues() : [];
     const replySelectedProviders = replyProvidersTagSelect ? replyProvidersTagSelect.getValues() : [];
+    const invalidReplyFallbackProviders = invalidReplyFallbackTagSelect ? invalidReplyFallbackTagSelect.getValues() : [];
 
     const activeFeatures = Array.from(document.querySelectorAll('.bot-feature-cb:checked')).map(cb => cb.value);
 
@@ -750,6 +759,7 @@ async function saveBotFromModal() {
         },
         llm_reply_conf: {
             provider_ids: replySelectedProviders,
+            invalid_reply_fallback_provider_ids: invalidReplyFallbackProviders,
             provider_selection_mode: document.getElementById('bot-form-reply-mode').value,
             persona_id: document.getElementById('bot-form-reply-persona')?.value || 'default',
             review_provider_id: document.getElementById('bot-form-review-provider').value,

@@ -92,6 +92,7 @@ class XmlParse:
             if not root:
                 return None
 
+            has_reply_tags = False
             for child in root.find_all(recursive=False):
                 tag_name = child.name
 
@@ -478,8 +479,12 @@ class XmlParse:
                         logger.error(
                             f"Add sticker数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
+                else:
+                    continue
+                has_reply_tags = True
 
-            return result
+            # Status-only output is intentional silence; unrecognized text is not.
+            return result if has_reply_tags else None
         except Exception as e:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
             return None

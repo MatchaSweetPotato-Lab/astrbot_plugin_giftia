@@ -404,6 +404,10 @@ class BotApi:
                     reply_conf["review_provider_id"] = previous.get(
                         "llm_reply_conf", {}
                     ).get("review_provider_id", "")
+                if "invalid_reply_fallback_provider_ids" not in reply_conf:
+                    reply_conf["invalid_reply_fallback_provider_ids"] = previous.get(
+                        "llm_reply_conf", {}
+                    ).get("invalid_reply_fallback_provider_ids", [])
 
             normalized_bot = manager.normalize_bot_config(body)
 
