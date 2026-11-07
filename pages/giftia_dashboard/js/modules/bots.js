@@ -231,7 +231,6 @@ function openBotEditModal(botName = null) {
 
     // Initialize Priority Select for Decision Providers
     decProvidersTagSelect = new PrioritySelectComponent('bot-form-dec-providers', {
-        placeholder: '检索或输入小模型提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.decision_conf?.provider_ids || []
     });
@@ -255,12 +254,10 @@ function openBotEditModal(botName = null) {
 
     // Initialize Priority Select for Reply Providers
     replyProvidersTagSelect = new PrioritySelectComponent('bot-form-reply-providers', {
-        placeholder: '检索或输入正式回复提供商 (按回车添加)...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.provider_ids || []
     });
     invalidReplyFallbackTagSelect = new PrioritySelectComponent('bot-form-invalid-reply-fallback-providers', {
-        placeholder: '选择无效回复时使用的备用提供商，留空保持原有行为...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.invalid_reply_fallback_provider_ids || []
     });
