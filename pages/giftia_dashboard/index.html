@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="css/components/priority_select.css">
     <link rel="stylesheet" href="css/components/stickers.css">
     <link rel="stylesheet" href="css/components/reports.css">
+    <link rel="stylesheet" href="css/components/model_health.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
@@ -543,6 +544,23 @@
 
                 <div id="bots-grid" class="bots-grid-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; margin-top: 15px;">
                     <!-- Bot cards rendered dynamically -->
+                </div>
+            </section>
+            <section id="tab-model-health" class="tab-panel">
+                <div class="filter-card card model-health-toolbar">
+                    <div>
+                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。冷却中的模型会被临时跳过，冷却到期后使用下一条真实请求试探恢复。连通性测试会发送简短文本请求，成功后立即恢复健康状态。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
+                        <span class="muted-text">查看各流程使用的对话模型，测试连接并恢复可用状态。</span>
+                    </div>
+                    <button id="model-health-refresh" class="btn btn-secondary" type="button">刷新</button>
+                </div>
+                <p id="model-health-count" class="muted-text">正在加载模型状态…</p>
+                <p id="model-health-error" role="alert"></p>
+                <div class="card table-container">
+                    <table class="model-health-table">
+                        <thead><tr><th>供应商 / 模型</th><th>使用位置</th><th>健康状态</th><th>最近请求 / 耗时</th><th>最近成功</th><th>操作</th></tr></thead>
+                        <tbody id="model-health-list"></tbody>
+                    </table>
                 </div>
             </section>
         </main>

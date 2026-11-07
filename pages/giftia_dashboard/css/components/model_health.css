@@ -1,0 +1,43 @@
+.model-health-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.model-health-toolbar h3 {
+    margin: 0 0 6px;
+    font-size: 1.1rem;
+}
+
+.model-health-table {
+    min-width: 900px;
+}
+
+.model-health-table td {
+    vertical-align: top;
+}
+
+.model-health-id {
+    overflow-wrap: anywhere;
+}
+
+.model-health-uses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-width: 310px;
+}
+
+.model-health-detail {
+    margin-top: 6px;
+    max-width: 210px;
+}
+
+#model-health-error {
+    color: var(--danger);
+}
+
+#model-health-count {
+    margin: 12px 0;
+}

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -40,6 +39,7 @@ from .preset_prompts import (
     get_sticker_analysis_prompt,
     get_video_caption_prompt,
 )
+from .provider_health import ProviderUnavailableError, get_provider_health
 from .xml_parse import XmlParse
 
 _orig_detect_image_mime_type = media_utils.detect_image_mime_type
@@ -125,6 +125,7 @@ class CallLLM:
         self.xml_parse = xml_parse
         self.network_conf = network_config
         self.plugin = plugin
+        self.provider_health = get_provider_health(plugin, context)
         self.caption_config = caption_config
         self.media_caption_provider_ids = [
             p for p in (caption_config.get("media_caption_provider_ids") or []) if p
@@ -166,7 +167,8 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM决策失败，{provider_id} 重试第 {i} 次")
                 try:
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         system_prompt=actual_system_prompt,
                         prompt=user_prompt,
@@ -199,6 +201,8 @@ class CallLLM:
                         f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
                     )
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -237,13 +241,12 @@ class CallLLM:
         passed = None
         extra_info = {"status": "api_failed"}
         try:
-            response = await asyncio.wait_for(
-                self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    system_prompt=REPLY_REVIEW_PROMPT,
-                    prompt=user_prompt,
-                ),
-                timeout=10,
+            response = await self.provider_health.call(
+                self.context.llm_generate,
+                chat_provider_id=provider_id,
+                system_prompt=REPLY_REVIEW_PROMPT,
+                prompt=user_prompt,
+                request_timeout=10,
             )
             extra_info["status"] = "parse_failed"
             completion = (getattr(response, "completion_text", "") or "").strip()
@@ -266,6 +269,8 @@ class CallLLM:
                 passed,
                 node.get("reason", ""),
             )
+        except ProviderUnavailableError:
+            return None
         except Exception as error:
             extra_info["error"] = str(error)
             extra_info["error_type"] = type(error).__name__
@@ -429,13 +434,17 @@ class CallLLM:
                     llm_resp = None
                     error = None
                     try:
-                        llm_resp = await self.context.tool_loop_agent(
+                        llm_resp = await self.provider_health.call(
+                            self.context.tool_loop_agent,
+                            count_failure=lambda: not reply_hooks.called_tools,
                             chat_provider_id=provider_id,
                             **request_kwargs,
                             **(
                                 {"agent_hooks": reply_hooks} if use_native_tools else {}
                             ),
                         )
+                    except ProviderUnavailableError:
+                        break
                     except Exception as exc:
                         error = exc
 
@@ -683,7 +692,8 @@ class CallLLM:
                         question=question,
                         fingerprint=",".join(b64_hashes),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         image_urls=image_urls,
@@ -713,6 +723,8 @@ class CallLLM:
                         return parsed
                     logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -765,7 +777,8 @@ class CallLLM:
                         question=question,
                         fingerprint=",".join(audio_fingerprints),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         audio_urls=audio_urls,
@@ -791,6 +804,8 @@ class CallLLM:
                         return parsed
                     logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -825,7 +840,8 @@ class CallLLM:
                         categories=categories,
                         fingerprint=",".join(image_urls),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         image_urls=image_urls,
@@ -868,6 +884,8 @@ class CallLLM:
                         return True, sticker
                     logger.warning("解析表情包分析 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM表情包分析失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -959,7 +977,8 @@ class CallLLM:
                     )
 
                     with _scoped_video_mime_detection():
-                        llm_resp = await self.context.llm_generate(
+                        llm_resp = await self.provider_health.call(
+                            self.context.llm_generate,
                             chat_provider_id=provider_id,
                             prompt=unique_prompt,
                             image_urls=[video_url],
@@ -990,6 +1009,8 @@ class CallLLM:
                             f"{llm_resp.completion_text[:120]!r}"
                         )
                         return parsed
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM原生视频转述异常: {e}")
                     await self._log_token_usage_safely(

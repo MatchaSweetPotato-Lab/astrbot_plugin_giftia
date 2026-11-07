@@ -1,4 +1,3 @@
-import asyncio
 import json
 import re
 
@@ -7,6 +6,7 @@ from astrbot.api import logger
 from ..database.utils import parse_aliases
 from ..llm.preset_prompts import RELATION_DELTA_GUIDE
 from ..llm.prompt import normalize_profile_value
+from ..llm.provider_health import ProviderUnavailableError, get_provider_health
 from ..utils.token_utils import extract_tokens_robust
 from .maintenance import MemoryMaintenanceMixin
 from .passive_context import PassiveContextMixin
@@ -42,13 +42,12 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     logger.info(
                         f"[Giftia Passive Memory] 尝试使用提供商 {provider_id} (第 {attempt + 1} 次) 进行{task_name}"
                     )
-                    llm_resp = await asyncio.wait_for(
-                        self.plugin.context.llm_generate(
-                            chat_provider_id=provider_id,
-                            system_prompt=system_prompt,
-                            prompt=user_prompt,
-                        ),
-                        timeout=120,
+                    llm_resp = await get_provider_health(self.plugin).call(
+                        self.plugin.context.llm_generate,
+                        chat_provider_id=provider_id,
+                        system_prompt=system_prompt,
+                        prompt=user_prompt,
+                        request_timeout=120,
                     )
                     if llm_resp and self.plugin:
                         prompt_tokens, completion_tokens, total_tokens = (
@@ -80,6 +79,8 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                             log_text,
                         )
                         return completion_text
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(
                         f"[Giftia Passive Memory] 提供商 {provider_id} 调用{task_name}报错: {e}"

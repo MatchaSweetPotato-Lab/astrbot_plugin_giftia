@@ -33,6 +33,11 @@ export const ALL_TABS = [
         icon: '<rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M9 13v2"></path><path d="M15 13v2"></path>'
     },
     {
+        id: 'model-health',
+        name: '模型状态',
+        icon: '<path d="M3 12h4l3-8 4 16 3-8h4"></path>'
+    },
+    {
         id: 'report-templates',
         name: '报告模板',
         icon: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M7 8h10M7 12h6M7 16h10"></path>'
@@ -65,7 +70,8 @@ export const DEFAULT_PINNED_IDS = [
     'profiles',
     'slang',
     'bot-status',
-    'bots'
+    'bots',
+    'model-health'
 ];
 
 let draftModalConfig = null;

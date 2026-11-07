@@ -10,6 +10,17 @@ class WebUIManager:
         ctx = self.plugin.context
 
         for route, handler, method in (
+            ("/models/health", self.web_api.get_model_health, "GET"),
+            ("/models/test", self.web_api.test_model_connection, "POST"),
+        ):
+            ctx.register_web_api(
+                route=f"/astrbot_plugin_giftia{route}",
+                view_handler=handler,
+                methods=[method],
+                desc="Inspect and test configured conversation models",
+            )
+
+        for route, handler, method in (
             ("/settings/nav_config", self.web_api.get_nav_config, "GET"),
             ("/settings/nav_config", self.web_api.save_nav_config, "POST"),
             ("/slang", self.web_api.get_slang, "GET"),

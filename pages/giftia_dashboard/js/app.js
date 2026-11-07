@@ -13,6 +13,7 @@ import * as profiles from './modules/render/profiles.js';
 import * as slang from './modules/render/slang.js';
 import * as token from './modules/render/token.js';
 import * as bots from './modules/bots.js';
+import * as modelHealth from './modules/model_health.js';
 import * as navManager from './modules/nav_manager.js';
 import { initGlobalTooltip } from './components/tooltip.js';
 
@@ -26,6 +27,7 @@ window.GiftiaApp = {
     resetSlangPagination: slang.resetSlangPagination,
     openSlangModal: slang.openSlangModal,
     loadBotsData: bots.loadBotsData,
+    loadModelHealth: modelHealth.loadModelHealth,
     // Current state variables (mapped to modules/state)
     get activeTab() { return state.activeTab; },
     set activeTab(val) { state.activeTab = val; },
