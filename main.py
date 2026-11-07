@@ -38,6 +38,7 @@ from .core.llm.native_tools import (
     ListScheduledTasksTool,
     SearchMemoryTool,
 )
+from .core.llm.provider_health import get_provider_health
 from .core.llm.xml_parse import XmlParse
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
@@ -69,6 +70,7 @@ class Giftia(Star):
 
         super().__init__(context)
         self.context: Context = context  # type: ignore
+        self.provider_health = get_provider_health(self, context)
         self.conf = config
         # 机器人配置管理器与实例映射
         self.bot_config_manager = BotConfigManager(self)
@@ -377,6 +379,7 @@ class Giftia(Star):
             return ret
 
         self.context.send_message = intercepted_context_send_message
+        self.provider_health.start(self.db.log_token_usage)
 
     # ==================== 命令监听与分发 ====================
 
@@ -869,6 +872,8 @@ class Giftia(Star):
     async def terminate(self):
         """销毁方法"""
         self._terminated = True
+        if hasattr(self, "provider_health"):
+            await self.provider_health.close()
         if hasattr(self, "_original_send_message"):
             self.context.send_message = self._original_send_message
 

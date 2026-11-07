@@ -1,4 +1,3 @@
-import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +8,7 @@ from xxhash import xxh3_64_hexdigest
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
+from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.exceptions import EmptyModelOutputError
@@ -39,6 +39,7 @@ from .preset_prompts import (
     get_sticker_analysis_prompt,
     get_video_caption_prompt,
 )
+from .provider_health import ProviderUnavailableError, get_provider_health
 from .xml_parse import XmlParse
 
 _orig_detect_image_mime_type = media_utils.detect_image_mime_type
@@ -94,6 +95,23 @@ def _scoped_video_mime_detection():
         media_utils.detect_image_mime_type = orig_fn
 
 
+class _ReplyToolHooks(BaseAgentRunHooks[AstrAgentContext]):
+    """Track tool execution across all steps of one reply attempt."""
+
+    def __init__(self):
+        self.called_tools: list[str] = []
+
+    async def on_tool_start(self, run_context, tool, tool_args) -> None:
+        """Record a tool before it can produce side effects.
+
+        Args:
+            run_context: Current agent context.
+            tool: Tool about to execute.
+            tool_args: Arguments supplied to the tool.
+        """
+        self.called_tools.append(tool.name)
+
+
 class CallLLM:
     def __init__(
         self,
@@ -107,6 +125,7 @@ class CallLLM:
         self.xml_parse = xml_parse
         self.network_conf = network_config
         self.plugin = plugin
+        self.provider_health = get_provider_health(plugin, context)
         self.caption_config = caption_config
         self.media_caption_provider_ids = [
             p for p in (caption_config.get("media_caption_provider_ids") or []) if p
@@ -148,7 +167,8 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM决策失败，{provider_id} 重试第 {i} 次")
                 try:
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         system_prompt=actual_system_prompt,
                         prompt=user_prompt,
@@ -181,6 +201,8 @@ class CallLLM:
                         f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
                     )
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -219,13 +241,12 @@ class CallLLM:
         passed = None
         extra_info = {"status": "api_failed"}
         try:
-            response = await asyncio.wait_for(
-                self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    system_prompt=REPLY_REVIEW_PROMPT,
-                    prompt=user_prompt,
-                ),
-                timeout=10,
+            response = await self.provider_health.call(
+                self.context.llm_generate,
+                chat_provider_id=provider_id,
+                system_prompt=REPLY_REVIEW_PROMPT,
+                prompt=user_prompt,
+                request_timeout=10,
             )
             extra_info["status"] = "parse_failed"
             completion = (getattr(response, "completion_text", "") or "").strip()
@@ -248,6 +269,8 @@ class CallLLM:
                 passed,
                 node.get("reason", ""),
             )
+        except ProviderUnavailableError:
+            return None
         except Exception as error:
             extra_info["error"] = str(error)
             extra_info["error_type"] = type(error).__name__
@@ -283,7 +306,31 @@ class CallLLM:
         use_meme_manager: bool = False,
         tool_context: dict | None = None,
     ) -> XmlLlmResult | None:
-        """调用LLM进行回复"""
+        """Generate a reply through the primary and optional fallback lists.
+
+        Request errors retry within the current list. Invalid primary output
+        enters the fallback list; invalid fallback output ends the reply.
+        An empty fallback list preserves legacy output handling.
+
+        Args:
+            event: Incoming event used for routing and native tools.
+            group_or_user_id: Conversation used for media and usage records.
+            provider_ids: Primary providers in their selected order.
+            system_prompt: Persona instructions.
+            user_prompt: Frozen conversation input.
+            timeout: Native tool timeout in seconds.
+            use_source_tools: Allow native function calling.
+            force_xml_tools: Describe function tools through XML instead.
+            enabled_features: Allowed interactive XML actions.
+            tts_instruction: Speech output instructions.
+            is_qq_official: Apply official QQ output restrictions.
+            persona_tools: Tool names allowed by the persona.
+            use_meme_manager: Enable external sticker instructions.
+            tool_context: Trusted state shared with tool execution.
+
+        Returns:
+            A valid reply, including intentional silence, or None on failure.
+        """
         is_qq_official_flag = is_qq_official or is_qq_official_platform(event)
         bot_name = (tool_context or {}).get("bot_name") or resolve_bot_name(
             self.plugin, event
@@ -296,296 +343,307 @@ class CallLLM:
         relation_score_guide = (
             bot_config.get("relation_score_guide", "").strip() or RELATION_SCORE_GUIDE
         )
+        fallback_provider_ids = bot_config.get("llm_reply_conf", {}).get(
+            "invalid_reply_fallback_provider_ids", []
+        )
+        fallback_enabled = bool(fallback_provider_ids)
 
-        for provider_id in provider_ids:
-            for i in range(self.network_conf["reply_retry_times"]):
-                native_attempt_started = False
-                if i > 0:
-                    logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
-                try:
-                    xml_inst = build_xml_instructions(
-                        enabled_features,
-                        tts_instruction,
-                        is_qq_official=is_qq_official_flag,
-                        use_meme_manager=use_meme_manager,
-                    )
-                    actual_system_prompt = "\n\n".join(
-                        (
-                            system_prompt or "",
-                            REPLY_CONTEXT_GUIDE,
-                            relation_score_guide,
-                            xml_inst,
+        xml_inst = build_xml_instructions(
+            enabled_features,
+            tts_instruction,
+            is_qq_official=is_qq_official_flag,
+            use_meme_manager=use_meme_manager,
+        )
+        actual_system_prompt = "\n\n".join(
+            (
+                system_prompt or "",
+                REPLY_CONTEXT_GUIDE,
+                relation_score_guide,
+                xml_inst,
+            )
+        )
+        tools_set = None
+        native_tools = ToolSet()
+        xml_tools = []
+        if use_source_tools or force_xml_tools:
+            tools_set = self._get_reply_tools(persona_tools)
+            if force_xml_tools:
+                xml_tools = tools_set.tools
+            else:
+                native_tools = tools_set
+            if xml_tools:
+                xml_tools_str = "\n".join(
+                    f'  - <tool_call name="{t.name}" description="{t.description}">{json.dumps(t.parameters, ensure_ascii=False)}</tool_call>'
+                    for t in xml_tools
+                )
+                xml_tools_instruction = (
+                    "\n\n# 可用工具 (强制使用 XML 标签调用)\n"
+                    '所有工具统一通过并列的 <tool_call name="工具名">参数JSON</tool_call> 标签调用，不使用原生 function calling。工具结果会在执行后提供，可据此继续调用或组织回复。若没有需要调用的工具，则不要输出 tool_call 标签。\n'
+                    "注意：参数部分必须是正确的 JSON 格式对象，例如：\n"
+                    "<status>...</status>\n"
+                    '<tool_call name="search_chat_history">{"keyword": "查询词"}</tool_call>\n\n'
+                    "当前可用的工具列表：\n"
+                ) + xml_tools_str
+                actual_system_prompt = actual_system_prompt + xml_tools_instruction
+
+        agent_context = None
+        if native_tools.tools:
+            agent_context = AstrAgentContext(
+                context=self.context,
+                event=event,
+                extra={NATIVE_CONTEXT_KEY: json.dumps(tool_context, ensure_ascii=False)}
+                if tool_context is not None
+                else {},
+            )
+        use_native_tools = bool(native_tools.tools) or (
+            use_source_tools and not force_xml_tools
+        )
+        request_kwargs = {
+            "event": event,
+            "system_prompt": actual_system_prompt,
+            "prompt": user_prompt,
+            "tool_call_timeout": timeout,
+            "stream": True,
+        }
+        if use_native_tools:
+            request_kwargs.update(
+                tools=native_tools,
+                max_steps=getattr(self.plugin, "tools_config", {}).get("max_loop", 10),
+            )
+            if agent_context is not None:
+                request_kwargs["agent_context"] = agent_context
+        logger.debug(f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>")
+        logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
+
+        attempted_providers: set[str] = set()
+        for is_fallback, current_providers in (
+            (False, provider_ids),
+            (True, fallback_provider_ids),
+        ):
+            invalid_output = False
+            for provider_id in current_providers:
+                if is_fallback and provider_id in attempted_providers:
+                    continue
+                attempted_providers.add(provider_id)
+                for attempt in range(self.network_conf["reply_retry_times"]):
+                    if attempt:
+                        logger.warning(
+                            f"Retrying reply request {attempt}. provider_id: {provider_id}"
                         )
-                    )
-                    tools_set = None
-                    native_tools = ToolSet()
-                    xml_tools = []
-                    if use_source_tools or force_xml_tools:
-                        tool_manager = self.context.get_llm_tool_manager()
-                        tools_set = tool_manager.get_full_tool_set()
-                        # AstrBot 内置的 Tavily 工具（web_search_tavily /
-                        # tavily_extract_web_page）默认不会进入
-                        # get_full_tool_set()，这里按白名单手动追加，
-                        # 前提是 AstrBot 配置里开启了网页搜索且提供商为 tavily。
-                        merged_builtin_tools: list[str] = []
-                        try:
-                            provider_settings = (
-                                self.context.astrbot_config_mgr.default_conf.get(
-                                    "provider_settings", {}
-                                )
-                            )
-                        except Exception:
-                            provider_settings = {}
-                        if bool(provider_settings.get("web_search")) and (
-                            provider_settings.get("websearch_provider") == "tavily"
-                        ):
-                            existing_names = {t.name for t in tools_set.tools}
-                            for builtin_name in (
-                                "web_search_tavily",
-                                "tavily_extract_web_page",
-                            ):
-                                if (
-                                    builtin_name in existing_names
-                                    or not tool_manager.is_builtin_tool(builtin_name)
-                                ):
-                                    continue
-                                builtin_tool = tool_manager.get_builtin_tool(
-                                    builtin_name
-                                )
-                                tools_set.add_tool(builtin_tool)
-                                existing_names.add(builtin_name)
-                                merged_builtin_tools.append(builtin_name)
-                        if merged_builtin_tools:
-                            logger.debug(
-                                f"<native_tool_merge>\n"
-                                f"  added: {merged_builtin_tools}\n"
-                                f"  reason: provider_settings.web_search=True, websearch_provider=tavily\n"
-                                f"</native_tool_merge>"
-                            )
-                        for tool in tools_set.tools[:]:
-                            if not tool.active:
-                                tools_set.remove_tool(tool.name)
-                            elif tool.name in NATIVE_TOOL_CONFIG_KEYS:
-                                if not getattr(self.plugin, "tools_config", {}).get(
-                                    NATIVE_TOOL_CONFIG_KEYS[tool.name], True
-                                ):
-                                    tools_set.remove_tool(tool.name)
-
-                        if persona_tools is not None:
-                            if isinstance(persona_tools, (list, tuple, set)):
-                                allowed_names = {
-                                    str(name).strip() for name in persona_tools if name
-                                }
-                                for tool in tools_set.tools[:]:
-                                    if tool.name not in allowed_names:
-                                        tools_set.remove_tool(tool.name)
-                                logger.info(
-                                    f"[Giftia] 经过人格工具限制过滤 ({len(allowed_names)} 个在白名单)，剩余 {len(tools_set.tools)} 个可用工具"
-                                )
-
-                        logger.debug(
-                            f"\n<native_tools count={len(tools_set.tools)}>\n"
-                            + "\n".join(
-                                f"- name: {t.name}\n  description: {t.description}"
-                                for t in tools_set.tools
-                            )
-                            + "\n</native_tools>"
-                        )
-                        target_tool_name = "web_search_tavily"
-                        target_tool = next(
-                            (t for t in tools_set.tools if t.name == target_tool_name),
-                            None,
-                        )
-                        if target_tool is None:
-                            is_builtin = tool_manager.is_builtin_tool(target_tool_name)
-                            logger.debug(
-                                f"<native_tool_probe>\n"
-                                f"  target: {target_tool_name}\n"
-                                f"  in_tools_set: False\n"
-                                f"  is_builtin_tool: {is_builtin}\n"
-                                f"  hint: {'内置工具未进入 tools_set（get_full_tool_set 仅遍历 func_list）' if is_builtin else '该工具未注册到当前工具管理器'}\n"
-                                f"</native_tool_probe>"
-                            )
-                        else:
-                            logger.debug(
-                                f"<native_tool_probe>\n"
-                                f"  target: {target_tool_name}\n"
-                                f"  in_tools_set: True\n"
-                                f"  active: {target_tool.active}\n"
-                                f"</native_tool_probe>"
-                            )
-
-                        if force_xml_tools:
-                            xml_tools = tools_set.tools
-                        else:
-                            native_tools = tools_set
-                        if xml_tools:
-                            xml_tools_str = "\n".join(
-                                f'  - <tool_call name="{t.name}" description="{t.description}">{json.dumps(t.parameters, ensure_ascii=False)}</tool_call>'
-                                for t in xml_tools
-                            )
-                            xml_tools_instruction = (
-                                "\n\n# 可用工具 (强制使用 XML 标签调用)\n"
-                                '所有工具统一通过并列的 <tool_call name="工具名">参数JSON</tool_call> 标签调用，不使用原生 function calling。工具结果会在执行后提供，可据此继续调用或组织回复。若没有需要调用的工具，则不要输出 tool_call 标签。\n'
-                                "注意：参数部分必须是正确的 JSON 格式对象，例如：\n"
-                                "<status>...</status>\n"
-                                '<tool_call name="search_chat_history">{"keyword": "查询词"}</tool_call>\n\n'
-                                "当前可用的工具列表：\n"
-                            ) + xml_tools_str
-                            actual_system_prompt = (
-                                actual_system_prompt + xml_tools_instruction
-                            )
-
-                    agent_context = None
-                    if native_tools.tools:
-                        agent_context = AstrAgentContext(
-                            context=self.context,
-                            event=event,
-                            extra={
-                                NATIVE_CONTEXT_KEY: json.dumps(
-                                    tool_context, ensure_ascii=False
-                                )
-                            }
-                            if tool_context is not None
-                            else {},
-                        )
-                    logger.debug(
-                        f"\n<system_prompt>\n{actual_system_prompt}\n</system_prompt>"
-                    )
-                    logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
-                    if native_tools.tools or (use_source_tools and not force_xml_tools):
-                        native_attempt_started = True
-                        llm_resp = await self.context.tool_loop_agent(
-                            event=event,
+                    reply_hooks = _ReplyToolHooks()
+                    llm_resp = None
+                    error = None
+                    try:
+                        llm_resp = await self.provider_health.call(
+                            self.context.tool_loop_agent,
+                            count_failure=lambda: not reply_hooks.called_tools,
                             chat_provider_id=provider_id,
-                            system_prompt=actual_system_prompt,
-                            prompt=user_prompt,
-                            tools=native_tools,
-                            max_steps=getattr(self.plugin, "tools_config", {}).get(
-                                "max_loop", 10
-                            ),
-                            tool_call_timeout=timeout,
-                            stream=True,
+                            **request_kwargs,
                             **(
-                                {"agent_context": agent_context}
-                                if agent_context is not None
-                                else {}
+                                {"agent_hooks": reply_hooks} if use_native_tools else {}
                             ),
                         )
-                    else:
-                        llm_resp = await self.context.tool_loop_agent(
-                            event=event,
-                            chat_provider_id=provider_id,
-                            system_prompt=actual_system_prompt,
-                            prompt=user_prompt,
-                            tool_call_timeout=timeout,
-                            stream=True,
+                    except ProviderUnavailableError:
+                        break
+                    except Exception as exc:
+                        error = exc
+
+                    request_failed = error is not None and not isinstance(
+                        error, EmptyModelOutputError
+                    )
+                    native_tools_called = list(
+                        dict.fromkeys(
+                            [
+                                *reply_hooks.called_tools,
+                                *(getattr(llm_resp, "tools_call_name", None) or []),
+                            ]
                         )
-                    if agent_context is not None and tool_context is not None:
-                        tool_context.update(
-                            json.loads(
-                                agent_context.extra.get(NATIVE_CONTEXT_KEY, "{}")
-                            )
-                        )
+                    )
                     parsed_result = None
-                    status_val = "parse_failed"
-
-                    if llm_resp.completion_text:
-                        parsed_result = await self.xml_parse.decode_llm_xml(
-                            llm_resp.completion_text, group_or_user_id
-                        )
-                        if parsed_result is not None:
-                            status_val = "success"
-                            parsed_result.native_tools_called = list(
-                                llm_resp.tools_call_name or []
+                    if error is None and llm_resp is not None:
+                        if agent_context is not None and tool_context is not None:
+                            tool_context.update(
+                                json.loads(
+                                    agent_context.extra.get(NATIVE_CONTEXT_KEY, "{}")
+                                )
                             )
-                    elif llm_resp.reasoning_content:
-                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
-                        status_val = "parse_failed"
-                    else:
-                        # Succeeded but both completion and reasoning are empty.
-                        status_val = "success"
-                        parsed_result = XmlLlmResult(
-                            native_tools_called=list(llm_resp.tools_call_name or [])
-                        )
+                        if llm_resp.completion_text:
+                            parsed_result = await self.xml_parse.decode_llm_xml(
+                                llm_resp.completion_text,
+                                group_or_user_id,
+                                require_reply_tags=fallback_enabled,
+                            )
+                        elif fallback_enabled:
+                            if native_tools_called:
+                                parsed_result = XmlLlmResult()
+                        elif not llm_resp.reasoning_content:
+                            parsed_result = XmlLlmResult()
+                        if parsed_result is not None:
+                            parsed_result.native_tools_called = native_tools_called
 
-                    bot_name = resolve_bot_name(self.plugin, event)
+                    status = "success" if parsed_result is not None else "parse_failed"
+                    extra_info = {"status": status, "output_fallback": is_fallback}
+                    if error is not None:
+                        extra_info["error"] = (
+                            str(error) if request_failed else "EmptyModelOutputError"
+                        )
+                        if request_failed or not fallback_enabled:
+                            extra_info["status"] = "api_failed"
+                        log = logger.error if request_failed else logger.warning
+                        log(
+                            "Reply request failed. provider_id: %s, error: %s",
+                            provider_id,
+                            extra_info["error"],
+                        )
                     await self._log_token_usage_safely(
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         type_name="reply",
                         provider_id=provider_id,
                         llm_resp=llm_resp,
-                        extra_info={"status": status_val},
+                        extra_info=extra_info,
                     )
-
-                    if llm_resp.tools_call_name:
-                        logger.info(
-                            f"\n<tools_call>\n{llm_resp.tools_call_name}\n</tools_call>"
-                        )
-                    if llm_resp.reasoning_content:
-                        logger.info(
-                            f"\n<reasoning>\n{llm_resp.reasoning_content}\n</reasoning>"
-                        )
-
-                    if parsed_result is not None:
+                    if llm_resp is not None:
+                        if native_tools_called:
+                            logger.info(
+                                f"\n<tools_call>\n{native_tools_called}\n</tools_call>"
+                            )
+                        if llm_resp.reasoning_content:
+                            logger.info(
+                                f"\n<reasoning>\n{llm_resp.reasoning_content}\n</reasoning>"
+                            )
                         if llm_resp.completion_text:
                             logger.info(
                                 f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
                             )
-                        return parsed_result
 
-                    if native_attempt_started:
+                    if parsed_result is not None:
+                        return parsed_result
+                    if native_tools_called:
                         logger.error(
-                            "Native tool reply failed to parse; refusing to replay possible side effects"
+                            "Reply failed after native tool execution; refusing to replay side effects"
                         )
                         return None
-                    if llm_resp.reasoning_content:
-                        logger.warning(
-                            f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
-                        )
+                    if request_failed:
                         continue
-                    else:
-                        logger.warning(
-                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
-                        )
+                    if not fallback_enabled:
+                        # Legacy empty-output errors are terminal; reasoning-only
+                        # or unparsable replies retain their existing retry rules.
+                        if isinstance(error, EmptyModelOutputError):
+                            return None if use_native_tools else XmlLlmResult()
+                        if use_native_tools:
+                            return None
                         continue
-                except EmptyModelOutputError:
-                    # Gemini empty output error; treat as no reply needed.
-                    logger.info(
-                        f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
+
+                    # Invalid output ends this list. Only the primary list has
+                    # another stage; request errors never reach this transition.
+                    invalid_output = True
+                    logger.warning(
+                        "Reply has no recognized XML. provider_id: %s, action: %s",
+                        provider_id,
+                        "stop fallback" if is_fallback else "switch to fallback list",
                     )
-                    bot_name = resolve_bot_name(self.plugin, event)
-                    await self._log_token_usage_safely(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        type_name="reply",
-                        provider_id=provider_id,
-                        llm_resp=None,
-                        extra_info={
-                            "status": "api_failed",
-                            "error": "EmptyModelOutputError",
-                        },
-                    )
-                    return None if native_attempt_started else XmlLlmResult()
-                except Exception as e:
-                    logger.error(f"LLM回复失败: {e!s}，provider_id: {provider_id}")
-                    bot_name = resolve_bot_name(self.plugin, event)
-                    await self._log_token_usage_safely(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        type_name="reply",
-                        provider_id=provider_id,
-                        llm_resp=None,
-                        extra_info={"status": "api_failed", "error": str(e)},
-                    )
-                    if native_attempt_started:
-                        logger.error(
-                            "Native tool reply failed; refusing to replay possible side effects"
-                        )
-                        return None
-                    continue
+                    break
+                if invalid_output:
+                    break
+            if not invalid_output:
+                return None
         return None
+
+    def _get_reply_tools(self, persona_tools: list[str] | None) -> ToolSet:
+        """Prepare the available tool set once for all reply attempts.
+
+        Args:
+            persona_tools: Tool names allowed by the persona, or None for all.
+
+        Returns:
+            Active tools permitted by both plugin and persona configuration.
+        """
+        tool_manager = self.context.get_llm_tool_manager()
+        tools_set = tool_manager.get_full_tool_set()
+        # Built-in Tavily tools are not included in the full tool set.
+        # Add them only when Tavily web search is enabled.
+        merged_builtin_tools: list[str] = []
+        try:
+            provider_settings = self.context.astrbot_config_mgr.default_conf.get(
+                "provider_settings", {}
+            )
+        except Exception:
+            provider_settings = {}
+        if bool(provider_settings.get("web_search")) and (
+            provider_settings.get("websearch_provider") == "tavily"
+        ):
+            existing_names = {t.name for t in tools_set.tools}
+            for builtin_name in (
+                "web_search_tavily",
+                "tavily_extract_web_page",
+            ):
+                if builtin_name in existing_names or not tool_manager.is_builtin_tool(
+                    builtin_name
+                ):
+                    continue
+                builtin_tool = tool_manager.get_builtin_tool(builtin_name)
+                tools_set.add_tool(builtin_tool)
+                existing_names.add(builtin_name)
+                merged_builtin_tools.append(builtin_name)
+        if merged_builtin_tools:
+            logger.debug(
+                f"<native_tool_merge>\n"
+                f"  added: {merged_builtin_tools}\n"
+                f"  reason: provider_settings.web_search=True, websearch_provider=tavily\n"
+                f"</native_tool_merge>"
+            )
+        for tool in tools_set.tools[:]:
+            if not tool.active:
+                tools_set.remove_tool(tool.name)
+            elif tool.name in NATIVE_TOOL_CONFIG_KEYS:
+                if not getattr(self.plugin, "tools_config", {}).get(
+                    NATIVE_TOOL_CONFIG_KEYS[tool.name], True
+                ):
+                    tools_set.remove_tool(tool.name)
+
+        if persona_tools is not None:
+            if isinstance(persona_tools, (list, tuple, set)):
+                allowed_names = {str(name).strip() for name in persona_tools if name}
+                for tool in tools_set.tools[:]:
+                    if tool.name not in allowed_names:
+                        tools_set.remove_tool(tool.name)
+                logger.info(
+                    f"[Giftia] Persona allows {len(allowed_names)} tool names; {len(tools_set.tools)} tools remain"
+                )
+
+        logger.debug(
+            f"\n<native_tools count={len(tools_set.tools)}>\n"
+            + "\n".join(
+                f"- name: {t.name}\n  description: {t.description}"
+                for t in tools_set.tools
+            )
+            + "\n</native_tools>"
+        )
+        target_tool_name = "web_search_tavily"
+        target_tool = next(
+            (t for t in tools_set.tools if t.name == target_tool_name),
+            None,
+        )
+        if target_tool is None:
+            is_builtin = tool_manager.is_builtin_tool(target_tool_name)
+            logger.debug(
+                f"<native_tool_probe>\n"
+                f"  target: {target_tool_name}\n"
+                f"  in_tools_set: False\n"
+                f"  is_builtin_tool: {is_builtin}\n"
+                f"  hint: {'Built-in tool is excluded from the full tool set' if is_builtin else 'Tool is not registered'}\n"
+                f"</native_tool_probe>"
+            )
+        else:
+            logger.debug(
+                f"<native_tool_probe>\n"
+                f"  target: {target_tool_name}\n"
+                f"  in_tools_set: True\n"
+                f"  active: {target_tool.active}\n"
+                f"</native_tool_probe>"
+            )
+        return tools_set
 
     async def call_llm_image_caption(
         self,
@@ -634,7 +692,8 @@ class CallLLM:
                         question=question,
                         fingerprint=",".join(b64_hashes),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         image_urls=image_urls,
@@ -664,6 +723,8 @@ class CallLLM:
                         return parsed
                     logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -716,7 +777,8 @@ class CallLLM:
                         question=question,
                         fingerprint=",".join(audio_fingerprints),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         audio_urls=audio_urls,
@@ -742,6 +804,8 @@ class CallLLM:
                         return parsed
                     logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM回复失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -776,7 +840,8 @@ class CallLLM:
                         categories=categories,
                         fingerprint=",".join(image_urls),
                     )
-                    llm_resp = await self.context.llm_generate(
+                    llm_resp = await self.provider_health.call(
+                        self.context.llm_generate,
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
                         image_urls=image_urls,
@@ -819,6 +884,8 @@ class CallLLM:
                         return True, sticker
                     logger.warning("解析表情包分析 JSON 失败，准备重试或降级...")
                     continue
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM表情包分析失败: {e!s}")
                     await self._log_token_usage_safely(
@@ -910,7 +977,8 @@ class CallLLM:
                     )
 
                     with _scoped_video_mime_detection():
-                        llm_resp = await self.context.llm_generate(
+                        llm_resp = await self.provider_health.call(
+                            self.context.llm_generate,
                             chat_provider_id=provider_id,
                             prompt=unique_prompt,
                             image_urls=[video_url],
@@ -941,6 +1009,8 @@ class CallLLM:
                             f"{llm_resp.completion_text[:120]!r}"
                         )
                         return parsed
+                except ProviderUnavailableError:
+                    break
                 except Exception as e:
                     logger.error(f"LLM原生视频转述异常: {e}")
                     await self._log_token_usage_safely(

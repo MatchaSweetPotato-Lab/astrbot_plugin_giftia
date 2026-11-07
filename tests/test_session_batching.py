@@ -1082,16 +1082,29 @@ async def test_processing_status_migration_and_exact_batch_updates():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("native,expected_calls", [(False, 4), (True, 1)])
-async def test_model_retry_does_not_replay_native_tool_attempts(native, expected_calls):
+@pytest.mark.parametrize(
+    "native,tool_started,expected_calls",
+    [(False, False, 4), (True, False, 4), (True, True, 1)],
+)
+async def test_model_retry_does_not_replay_native_tool_attempts(
+    native, tool_started, expected_calls
+):
     from core.llm.call_llm import CallLLM
 
     tool_manager = SimpleNamespace(
         get_full_tool_set=lambda: SimpleNamespace(tools=[]),
         is_builtin_tool=lambda _: False,
     )
+
+    async def fail(**kwargs):
+        if tool_started:
+            await kwargs["agent_hooks"].on_tool_start(
+                None, SimpleNamespace(name="external_action"), {}
+            )
+        raise RuntimeError("connection lost")
+
     context = SimpleNamespace(
-        tool_loop_agent=AsyncMock(side_effect=RuntimeError("connection lost")),
+        tool_loop_agent=AsyncMock(side_effect=fail),
         get_llm_tool_manager=lambda: tool_manager,
     )
     caller = CallLLM(context, Mock(), {"reply_retry_times": 2}, {}, plugin=None)

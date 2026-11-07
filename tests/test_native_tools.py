@@ -599,6 +599,9 @@ async def test_native_failure_does_not_replay_completed_schedule_side_effects(ru
     rt = runtime
 
     async def loop(**kwargs):
+        await kwargs["agent_hooks"].on_tool_start(
+            None, rt.tools["create_scheduled_task"], {}
+        )
         result = json.loads(
             await rt.tools["create_scheduled_task"].call(
                 SimpleNamespace(context=kwargs["agent_context"]),

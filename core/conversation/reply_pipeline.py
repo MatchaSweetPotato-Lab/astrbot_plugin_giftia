@@ -663,7 +663,7 @@ class ReplyPipeline:
         )
 
         if not llm_result:
-            raise RuntimeError("Reply providers exhausted their retries")
+            raise RuntimeError("Reply generation ended without a valid result")
 
         # Anti-drooling optimization for low-intelligence models:
         # Filter out messages that have already been sent in the current XML tool calling loop.

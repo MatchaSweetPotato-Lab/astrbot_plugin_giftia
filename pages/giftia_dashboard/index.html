@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="css/components/priority_select.css">
     <link rel="stylesheet" href="css/components/stickers.css">
     <link rel="stylesheet" href="css/components/reports.css">
+    <link rel="stylesheet" href="css/components/model_health.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
@@ -543,6 +544,23 @@
 
                 <div id="bots-grid" class="bots-grid-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; margin-top: 15px;">
                     <!-- Bot cards rendered dynamically -->
+                </div>
+            </section>
+            <section id="tab-model-health" class="tab-panel">
+                <div class="filter-card card model-health-toolbar">
+                    <div>
+                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。失效模型由后台独立探测，冷却到期后发送简短文本请求，测试通过后恢复使用。业务请求会持续跳过失效模型；也可手动测试并立即恢复健康状态。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
+                        <span class="muted-text">查看各流程使用的对话模型，测试连接并恢复可用状态。</span>
+                    </div>
+                    <button id="model-health-refresh" class="btn btn-secondary" type="button">刷新</button>
+                </div>
+                <p id="model-health-count" class="muted-text">正在加载模型状态…</p>
+                <p id="model-health-error" role="alert"></p>
+                <div class="card table-container model-health-table-container">
+                    <table class="model-health-table">
+                        <thead><tr><th>供应商 / 模型</th><th>使用位置</th><th>健康状态</th><th>最近请求 / 耗时</th><th>最近成功</th><th>操作</th></tr></thead>
+                        <tbody id="model-health-list"></tbody>
+                    </table>
                 </div>
             </section>
         </main>
@@ -1720,7 +1738,7 @@
                 <!-- Sub-tab 4: Reply Conf -->
                 <div id="subtab-reply" class="bot-subtab-content" style="display: none;">
                     <div class="form-group">
-                        <label>正式回复提供商优先级 <span class="info-tooltip" data-tooltip="点击或检索选择，支持手动输入与降级尝试"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <label>主模型列表 <span class="info-tooltip" data-tooltip="正常情况下的供应商列表"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
                         <div id="bot-form-reply-providers" class="tag-select-container"></div>
                     </div>
                     <div class="form-group">
@@ -1729,6 +1747,10 @@
                             <option value="fallback">fallback (顺序降级)</option>
                             <option value="random">random (随机抽取)</option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label>备用模型列表（可选） <span class="info-tooltip" data-tooltip="主模型无效响应（非请求错误）时的回退模型（如主模型为gemini系模型，遇到安全拦截时将使用此列表重新回复）。留空或回退模型也无效响应时跳过处理。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>
+                        <div id="bot-form-invalid-reply-fallback-providers" class="tag-select-container"></div>
                     </div>
                     <div class="form-group">
                         <label for="bot-form-review-provider">复审模型（可选） <span class="info-tooltip" data-tooltip="未选择时关闭。回复生成期间有新消息入库时，发送前复审一次；不通过则重新决策和生成，新回复直接发送。实际执行过原生工具或已进入后续工具轮次时跳过复审。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></label>

@@ -5,6 +5,7 @@ from .dashboard_api import DashboardApi
 from .forward_api import ForwardApi
 from .media_api import MediaApi
 from .memory_api import MemoryApi
+from .model_health_api import ModelHealthApi
 from .profile_api import ProfileApi
 from .report_api import ReportApi
 from .slang_api import SlangApi
@@ -16,6 +17,7 @@ from .token_api import TokenApi
 class GiftiaWebApi(
     DashboardApi,
     BotApi,
+    ModelHealthApi,
     MediaApi,
     ForwardApi,
     TokenApi,

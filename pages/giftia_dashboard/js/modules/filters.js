@@ -249,5 +249,7 @@ export function loadActiveTabData() {
         if (typeof window.loadBotsData === "function") {
             window.loadBotsData();
         }
+    } else if (state.activeTab === "model-health") {
+        app.loadModelHealth();
     }
 }

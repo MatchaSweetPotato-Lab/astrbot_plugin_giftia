@@ -25,6 +25,7 @@ from .prompt import (
     format_memory_time,
     normalize_profile_value,
 )
+from .provider_health import ProviderUnavailableError, get_provider_health
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -606,7 +607,8 @@ class InspectForwardMessageTool(FunctionTool):
         system_prompt = "你是聊天合并转发内容的转述器，输出直接可供另一个助手理解。"
         for provider_id in provider_ids:
             try:
-                llm_resp = await plugin.context.llm_generate(
+                llm_resp = await get_provider_health(plugin).call(
+                    plugin.context.llm_generate,
                     chat_provider_id=provider_id,
                     system_prompt=system_prompt,
                     prompt=prompt,
@@ -614,6 +616,8 @@ class InspectForwardMessageTool(FunctionTool):
                 completion = getattr(llm_resp, "completion_text", "") or ""
                 if completion.strip():
                     return self._shorten(completion.strip(), max_chars)
+            except ProviderUnavailableError:
+                continue
             except Exception as e:
                 logger.warning(
                     f"InspectForwardMessageTool 转发转述失败: provider_id={provider_id}, error={e}"
