@@ -835,12 +835,17 @@ async def test_review_tokens_are_separate_from_decision_and_reply(runtime):
         ("<message>recovered</message>", "handled"),
     ],
 )
+@pytest.mark.parametrize("configured", [False, True])
 async def test_fallback_attempt_logs_and_final_batch_status_are_independent(
-    runtime, completion, expected_status
+    runtime, completion, expected_status, configured
 ):
     plugin = runtime.plugin
+    if not configured:
+        expected_status = "handled"
     plugin.bot_map["bot"]["llm_reply_conf"].update(
-        invalid_reply_fallback_provider_ids=["backup-a", "backup-b"],
+        invalid_reply_fallback_provider_ids=["backup-a", "backup-b"]
+        if configured
+        else [],
         review_provider_id="",
     )
     plugin.context.tool_loop_agent = AsyncMock(
@@ -871,17 +876,20 @@ async def test_fallback_attempt_logs_and_final_batch_status_are_independent(
         "FROM token_usage ORDER BY id"
     ) as cursor:
         rows = await cursor.fetchall()
-    assert [tuple(row)[:4] for row in rows] == [
-        ("bot", "group", "reply", "reply"),
-        ("bot", "group", "reply", "backup-a"),
-    ]
+    expected_rows = [("bot", "group", "reply", "reply")]
+    if configured:
+        expected_rows.append(("bot", "group", "reply", "backup-a"))
+    assert [tuple(row)[:4] for row in rows] == expected_rows
     attempts = [json.loads(row["extra_info"]) for row in rows]
-    assert [attempt["status"] for attempt in attempts] == [
-        "parse_failed",
-        "success" if expected_status == "handled" else "parse_failed",
-    ]
-    assert [attempt["output_fallback"] for attempt in attempts] == [False, True]
-    assert plugin.context.tool_loop_agent.await_count == 2
+    assert [attempt["status"] for attempt in attempts] == (
+        ["parse_failed", "success" if expected_status == "handled" else "parse_failed"]
+        if configured
+        else ["success"]
+    )
+    assert [attempt["output_fallback"] for attempt in attempts] == (
+        [False, True] if configured else [False]
+    )
+    assert plugin.context.tool_loop_agent.await_count == (2 if configured else 1)
     runtime.manager.decision_engine.evaluate_decision.assert_awaited_once()
     if expected_status == "failed":
         runtime.manager.action_dispatcher.dispatch_actions.assert_not_awaited()

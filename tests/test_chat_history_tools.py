@@ -6,6 +6,7 @@ from xml.etree.ElementTree import Element, fromstring, tostring
 
 import pytest
 import pytest_asyncio
+from core.conversation.reply_pipeline import ReplyPipeline
 from core.conversation.tool_executor import ToolExecutor
 from core.database.data_cache import DataCache
 from core.database.database import Database
@@ -546,8 +547,13 @@ def test_group_id_is_optional_in_tool_declarations(tool_type):
 )
 async def test_retired_tags_do_not_query_or_trigger_a_tool_followup(name, arguments):
     result = await XmlParse(None, None).decode_llm_xml(f"<{name} {arguments}/>", "100")
-    assert result is None
+    assert result is not None
     assert name not in SYSTEM_XML_TAGS
+    assert not result.tools_to_call
+    assert not result.output_order
+    assert not ReplyPipeline._has_non_message_work(result)
+    assert not hasattr(result, "search_histories")
+    assert not hasattr(result, "get_message_contexts")
 
 
 @pytest.mark.asyncio

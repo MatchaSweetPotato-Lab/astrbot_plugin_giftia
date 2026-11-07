@@ -122,14 +122,14 @@ async def test_valid_silence_media_and_actions_do_not_trigger_fallback(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "fallback", [[], ["primary", "backup-a", "backup-a", "backup-b"]]
-)
-async def test_invalid_fallback_stops_while_unconfigured_replies_keep_retrying(
-    runtime, fallback
-):
+async def test_invalid_fallback_stops_and_skips_duplicate_providers(runtime):
     rt = runtime
-    rt.conf["invalid_reply_fallback_provider_ids"] = fallback
+    rt.conf["invalid_reply_fallback_provider_ids"] = [
+        "primary",
+        "backup-a",
+        "backup-a",
+        "backup-b",
+    ]
     rt.context.tool_loop_agent.return_value = SimpleNamespace(
         completion_text="blocked", reasoning_content="", tools_call_name=[]
     )
@@ -139,11 +139,85 @@ async def test_invalid_fallback_stops_while_unconfigured_replies_keep_retrying(
     assert result is None
     assert [
         c.kwargs["chat_provider_id"] for c in rt.context.tool_loop_agent.await_args_list
-    ] == (
-        ["primary", "backup-a"]
-        if fallback
-        else ["primary", "primary", "regular-secondary", "regular-secondary"]
+    ] == ["primary", "backup-a"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("configured_empty", [False, True])
+@pytest.mark.parametrize(
+    "completion",
+    ["", "   ", "blocked", "<unknown/>", "<root/>", "<think>draft</think>"],
+)
+async def test_unconfigured_fallback_preserves_legacy_silence_without_extra_requests(
+    runtime, native, configured_empty, completion
+):
+    rt = runtime
+    rt.conf.clear()
+    if configured_empty:
+        rt.conf["invalid_reply_fallback_provider_ids"] = []
+    rt.context.tool_loop_agent.return_value = SimpleNamespace(
+        completion_text=completion, reasoning_content="", tools_call_name=[]
     )
+    result = await rt.caller.call_llm_reply(
+        rt.event,
+        "group",
+        ["primary", "regular-secondary"],
+        "persona",
+        "input",
+        use_source_tools=native,
+    )
+    assert result is not None
+    assert not result.msg_chains and not result.output_order
+    rt.context.tool_loop_agent.assert_awaited_once()
+    usage = rt.caller._log_token_usage_safely.await_args.kwargs
+    assert usage["extra_info"]["status"] == "success"
+    assert usage["extra_info"]["output_fallback"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_unconfigured_empty_output_error_preserves_terminal_legacy_handling(
+    runtime, native
+):
+    rt = runtime
+    rt.conf.clear()
+    rt.context.tool_loop_agent.side_effect = EmptyModelOutputError()
+    result = await rt.caller.call_llm_reply(
+        rt.event,
+        "group",
+        ["primary", "regular-secondary"],
+        "persona",
+        "input",
+        use_source_tools=native,
+    )
+    assert (result is None) is native
+    rt.context.tool_loop_agent.assert_awaited_once()
+    usage = rt.caller._log_token_usage_safely.await_args.kwargs
+    assert usage["extra_info"]["status"] == "api_failed"
+    assert usage["extra_info"]["error"] == "EmptyModelOutputError"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native,expected_calls", [(False, 4), (True, 1)])
+async def test_unconfigured_reasoning_only_output_preserves_existing_retry_rules(
+    runtime, native, expected_calls
+):
+    rt = runtime
+    rt.conf.clear()
+    rt.context.tool_loop_agent.return_value = SimpleNamespace(
+        completion_text="", reasoning_content="unfinished reasoning", tools_call_name=[]
+    )
+    result = await rt.caller.call_llm_reply(
+        rt.event,
+        "group",
+        ["primary", "regular-secondary"],
+        "persona",
+        "input",
+        use_source_tools=native,
+    )
+    assert result is None
+    assert rt.context.tool_loop_agent.await_count == expected_calls
 
 
 @pytest.mark.asyncio

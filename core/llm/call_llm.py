@@ -326,6 +326,7 @@ class CallLLM:
             provider_id = pending_providers.popleft()
             attempted_providers.add(provider_id)
             for i in range(self.network_conf["reply_retry_times"]):
+                native_attempt_started = False
                 reply_hooks = _ReplyToolHooks()
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
@@ -481,6 +482,7 @@ class CallLLM:
                     )
                     logger.debug(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
                     if native_tools.tools or (use_source_tools and not force_xml_tools):
+                        native_attempt_started = True
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
@@ -527,13 +529,18 @@ class CallLLM:
 
                     if llm_resp.completion_text:
                         parsed_result = await self.xml_parse.decode_llm_xml(
-                            llm_resp.completion_text, group_or_user_id
+                            llm_resp.completion_text,
+                            group_or_user_id,
+                            require_reply_tags=bool(fallback_provider_ids),
                         )
                         if parsed_result is not None:
                             status_val = "success"
                             parsed_result.native_tools_called = native_tools_called
-                    elif native_tools_called:
-                        # A completed tool-only turn already performed useful work.
+                    elif (fallback_provider_ids and native_tools_called) or (
+                        not fallback_provider_ids and not llm_resp.reasoning_content
+                    ):
+                        # Preserve legacy empty-response silence when fallback is disabled.
+                        # With fallback enabled, a completed tool-only turn is valid.
                         status_val = "success"
                         parsed_result = XmlLlmResult(
                             native_tools_called=native_tools_called
@@ -568,7 +575,9 @@ class CallLLM:
                     if parsed_result is not None:
                         return parsed_result
 
-                    if native_tools_called:
+                    if native_tools_called or (
+                        not fallback_provider_ids and native_attempt_started
+                    ):
                         logger.error(
                             "Native tool reply failed to parse; refusing to replay possible side effects"
                         )
@@ -585,11 +594,16 @@ class CallLLM:
                         provider_id=provider_id,
                         llm_resp=None,
                         extra_info={
-                            "status": "parse_failed",
+                            "status": "parse_failed"
+                            if fallback_provider_ids
+                            else "api_failed",
                             "error": "EmptyModelOutputError",
                             "output_fallback": using_output_fallback,
                         },
                     )
+                    if not fallback_provider_ids:
+                        # Keep the legacy terminal handling of provider empty-output errors.
+                        return None if native_attempt_started else XmlLlmResult()
                     if reply_hooks.called_tools:
                         logger.error(
                             "Native tool reply was empty; refusing to replay possible side effects"

@@ -260,7 +260,7 @@ function openBotEditModal(botName = null) {
         selectedValues: bot.llm_reply_conf?.provider_ids || []
     });
     invalidReplyFallbackTagSelect = new PrioritySelectComponent('bot-form-invalid-reply-fallback-providers', {
-        placeholder: '选择无效回复时使用的备用提供商，留空沿用常规重试...',
+        placeholder: '选择无效回复时使用的备用提供商，留空保持原有行为...',
         availableOptions: stateBotMetadata.llm_providers || [],
         selectedValues: bot.llm_reply_conf?.invalid_reply_fallback_provider_ids || []
     });

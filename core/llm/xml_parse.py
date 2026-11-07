@@ -78,9 +78,23 @@ class XmlParse:
             return None
 
     async def decode_llm_xml(
-        self, xml_str: str, group_or_user_id: str
+        self,
+        xml_str: str,
+        group_or_user_id: str,
+        *,
+        require_reply_tags: bool = False,
     ) -> XmlLlmResult | None:
-        """解码LLM返回的XML字符串"""
+        """Decode reply XML with optional rejection of unrecognized output.
+
+        Args:
+            xml_str: Raw model completion.
+            group_or_user_id: Conversation used to resolve media.
+            require_reply_tags: Reject output without recognized reply tags when
+                invalid-output fallback is configured.
+
+        Returns:
+            Parsed reply, or None on failure or missing required reply tags.
+        """
         if not xml_str:
             return None
         try:
@@ -483,8 +497,8 @@ class XmlParse:
                     continue
                 has_reply_tags = True
 
-            # Status-only output is intentional silence; unrecognized text is not.
-            return result if has_reply_tags else None
+            # Strict validation is opt-in; legacy text-only replies remain silent.
+            return result if has_reply_tags or not require_reply_tags else None
         except Exception as e:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
             return None
