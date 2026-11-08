@@ -178,7 +178,7 @@ class ProviderHealth:
         count_failure: Callable[[], bool] | None = None,
         **kwargs,
     ):
-        """Run one SDK call without changing the caller's retry policy.
+        """Run one SDK call with request retries controlled by the caller.
 
         State transitions do not await, so admission and probe ownership are
         atomic on the plugin event loop. Generations ignore results from requests
@@ -191,7 +191,7 @@ class ProviderHealth:
             force_probe: Bypass cooldown for an independent connectivity test.
             count_failure: Whether an exception can still be attributed to this
                 model, excluding native tool failures after execution starts.
-            **kwargs: Arguments passed unchanged to the SDK method.
+            **kwargs: SDK arguments, with request_max_retries fixed at 1.
 
         Returns:
             The original SDK response.
@@ -227,6 +227,8 @@ class ProviderHealth:
         state.last_attempt = time.time()
         started = self.clock()
         try:
+            # Giftia owns retries; avoid stacking AstrBot's default attempts.
+            kwargs["request_max_retries"] = 1
             pending = operation(chat_provider_id=provider_id, **kwargs)
             response = (
                 await asyncio.wait_for(pending, request_timeout)

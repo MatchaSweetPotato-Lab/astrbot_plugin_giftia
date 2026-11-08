@@ -63,6 +63,9 @@ async def test_failures_cool_down_without_consuming_skipped_requests(runtime):
     with pytest.raises(ProviderUnavailableError):
         await rt.health.call(operation, chat_provider_id="model")
     assert operation.await_count == 2
+    assert all(
+        call.kwargs["request_max_retries"] == 1 for call in operation.await_args_list
+    )
 
 
 @pytest.mark.asyncio
@@ -419,9 +422,11 @@ async def test_every_conversation_model_path_shares_health_and_skips_current_lis
     )
     assert all(
         call.kwargs["chat_provider_id"] == "good"
+        and call.kwargs["request_max_retries"] == 1
         for call in context.llm_generate.await_args_list
     )
     assert context.tool_loop_agent.await_args.kwargs["chat_provider_id"] == "good"
+    assert context.tool_loop_agent.await_args.kwargs["request_max_retries"] == 1
     assert caller.provider_health is get_provider_health(plugin)
 
 
@@ -446,7 +451,7 @@ async def test_background_recovery_runs_without_business_requests(runtime):
     assert health.snapshot("model")["status"] == "healthy"
     assert health.snapshot("model")["failures"] == 0
     runtime.context.llm_generate.assert_awaited_once_with(
-        chat_provider_id="model", prompt="请只回复 OK。"
+        chat_provider_id="model", prompt="请只回复 OK。", request_max_retries=1
     )
     usage = runtime.recorder.await_args.kwargs
     assert usage["type"] == "provider_test"
@@ -560,7 +565,7 @@ async def test_slow_background_provider_does_not_block_other_recovery_or_busines
     with pytest.raises(ProviderUnavailableError):
         await health.call(business, chat_provider_id="slow")
     assert await health.call(business, chat_provider_id="other") == "business reply"
-    business.assert_awaited_once_with(chat_provider_id="other")
+    business.assert_awaited_once_with(chat_provider_id="other", request_max_retries=1)
     release.set()
 
 
