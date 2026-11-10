@@ -7,7 +7,13 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
-from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+
+try:
+    from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+except ModuleNotFoundError as exc:
+    if exc.name != "astrbot.core.astr_agent_tool_exec":
+        raise
+    from astrbot.core.astr_agent_runtime.tool_executor import FunctionToolExecutor
 
 from ..llm.native_tools import NATIVE_CONTEXT_KEY
 from ..utils.schemas import MessageData
