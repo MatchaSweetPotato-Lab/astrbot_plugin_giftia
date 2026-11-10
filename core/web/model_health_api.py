@@ -1,9 +1,14 @@
 """Inventory and manual connectivity tests for configured conversation models."""
 
+from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.exceptions import EmptyModelOutputError
 
-from ..llm.provider_health import ProviderUnavailableError, get_provider_health
+from ..llm.provider_health import (
+    InvalidProbeResponseError,
+    ProviderUnavailableError,
+    get_provider_health,
+)
 
 
 class ModelHealthApi:
@@ -88,10 +93,42 @@ class ModelHealthApi:
 
     async def get_model_health(self):
         """List configured conversation models and their shared health."""
-        return json_response({"status": "success", "data": self._used_models()})
+        return json_response(
+            {
+                "status": "success",
+                "data": {
+                    "enabled": get_provider_health(self.giftia).enabled,
+                    "models": self._used_models(),
+                },
+            }
+        )
+
+    async def update_model_health_settings(self):
+        """Persist overall health management or one configured provider's state."""
+        try:
+            body = await request.json()
+        except ValueError:
+            return error_response("请求内容格式错误")
+        if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+            return error_response("启用状态必须为布尔值")
+        provider_id = body.get("provider_id")
+        if "provider_id" in body and (
+            not isinstance(provider_id, str)
+            or provider_id
+            not in {model["provider_id"] for model in self._used_models()}
+        ):
+            return error_response("请选择插件已配置的对话模型")
+        try:
+            await get_provider_health(self.giftia).update_settings(
+                self.giftia.db, enabled=body["enabled"], provider_id=provider_id
+            )
+        except Exception:
+            logger.error("Failed to save provider health settings", exc_info=True)
+            return error_response("保存模型状态设置失败，请重试")
+        return await self.get_model_health()
 
     async def test_model_connection(self):
-        """Probe one used provider and restore it only after a valid text reply."""
+        """Probe a used provider and restore it only after an exact challenge match."""
         try:
             body = await request.json()
         except ValueError:
@@ -105,6 +142,10 @@ class ModelHealthApi:
             return error_response("请选择插件已配置的对话模型")
 
         health = get_provider_health(self.giftia)
+        if provider_id in health.disabled_provider_ids:
+            return error_response("该模型已手动停用，请先启用后再测试")
+        if not health.enabled:
+            return error_response("模型健康管理已关闭，请先开启后再测试")
         success = False
         message = "连通性测试失败，请检查供应商配置或运行日志"
         try:
@@ -116,7 +157,11 @@ class ModelHealthApi:
             success = True
             message = "连通性测试通过，已恢复共享健康状态"
         except ProviderUnavailableError:
-            return error_response("该模型正在进行恢复试探或连通性测试，请稍后重试")
+            return error_response(
+                "该模型已停用、健康管理已关闭或正在进行测试，请刷新后重试"
+            )
+        except InvalidProbeResponseError:
+            message = "测试回复未通过严格格式校验，模型保持不可用"
         except EmptyModelOutputError:
             message = "测试未收到文本响应，未恢复健康状态"
         except Exception:

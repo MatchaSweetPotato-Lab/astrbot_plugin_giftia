@@ -18,6 +18,38 @@
     flex-shrink: 0;
 }
 
+.model-health-controls,
+.model-health-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.model-health-controls {
+    flex-shrink: 0;
+}
+
+.model-health-controls > label {
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.model-health-controls .switch-checkbox:focus-visible + .switch-label {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+}
+
+.model-health-controls .switch-checkbox:disabled + .switch-label {
+    cursor: wait;
+    opacity: 0.6;
+}
+
+.model-health-actions .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
 .model-health-table {
     table-layout: fixed;
 }
@@ -29,12 +61,12 @@
     overflow-wrap: anywhere;
 }
 
-.model-health-table th:nth-child(1) { width: 26%; }
-.model-health-table th:nth-child(2) { width: 23%; }
+.model-health-table th:nth-child(1) { width: 23%; }
+.model-health-table th:nth-child(2) { width: 21%; }
 .model-health-table th:nth-child(3) { width: 15%; }
 .model-health-table th:nth-child(4),
 .model-health-table th:nth-child(5) { width: 14%; }
-.model-health-table th:nth-child(6) { width: 8%; }
+.model-health-table th:nth-child(6) { width: 13%; }
 
 .model-health-usage {
     display: flex;
@@ -115,6 +147,7 @@
         align-items: flex-start;
         gap: 12px;
         padding: 16px;
+        flex-wrap: wrap;
     }
 
     .model-health-table-container {

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import math
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,6 +20,14 @@ from ..utils.token_utils import extract_tokens_robust
 
 class ProviderUnavailableError(Exception):
     """Signal a skipped provider without making a model request."""
+
+
+class InvalidProbeResponseError(ValueError):
+    """Reject probe output while retaining its response for token accounting."""
+
+    def __init__(self, response):
+        self.response = response
+        super().__init__("Connectivity test response did not match the required format")
 
 
 @dataclass
@@ -49,6 +58,85 @@ class ProviderHealth:
         self.clock = clock
         self._states: dict[str, _HealthState] = {}
         self._monitor_task: asyncio.Task | None = None
+        self.enabled = True
+        self.disabled_provider_ids: set[str] = set()
+        self._settings_lock = asyncio.Lock()
+        self._probe_requests: dict[str, asyncio.Future] = {}
+
+    async def load_settings(self, database):
+        """Load persistent controls before starting any model services.
+
+        Args:
+            database: Plugin database containing the shared settings.
+        """
+        raw = await database.get_kv_data("provider_health_settings")
+        if raw is None:
+            return
+        try:
+            settings = json.loads(raw)
+            if (
+                not isinstance(settings, dict)
+                or not isinstance(settings.get("enabled"), bool)
+                or not isinstance(settings.get("disabled_provider_ids"), list)
+                or any(
+                    not isinstance(provider_id, str) or not provider_id
+                    for provider_id in settings["disabled_provider_ids"]
+                )
+            ):
+                raise ValueError("Invalid provider health settings")
+        except (TypeError, ValueError):
+            logger.warning("Ignoring malformed provider health settings")
+            return
+        self.enabled = settings["enabled"]
+        self.disabled_provider_ids = set(settings["disabled_provider_ids"])
+
+    async def update_settings(
+        self, database, *, enabled: bool, provider_id: str | None = None
+    ):
+        """Persist a control change and cancel probes that it disables.
+
+        Args:
+            database: Plugin database used to persist the controls.
+            enabled: Whether health management or the selected provider is enabled.
+            provider_id: Provider to toggle, or None for overall health management.
+        """
+        async with self._settings_lock:
+            management_enabled = self.enabled if provider_id is not None else enabled
+            disabled = self.disabled_provider_ids.copy()
+            if provider_id is not None:
+                if enabled:
+                    disabled.discard(provider_id)
+                else:
+                    disabled.add(provider_id)
+            await database.upsert_kv_data(
+                "provider_health_settings",
+                json.dumps(
+                    {
+                        "enabled": management_enabled,
+                        "disabled_provider_ids": sorted(disabled),
+                    }
+                ),
+            )
+            changed = (
+                management_enabled != self.enabled
+                if provider_id is None
+                else disabled != self.disabled_provider_ids
+            )
+            self.enabled = management_enabled
+            self.disabled_provider_ids = disabled
+            if changed:
+                if provider_id is None:
+                    self._states.clear()
+                else:
+                    self._states.pop(provider_id, None)
+            pending = [
+                task
+                for target, task in self._probe_requests.items()
+                if not self.enabled or target in self.disabled_provider_ids
+            ]
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
 
     def start(self, log_token_usage: Callable[..., Awaitable[Any]]):
         """Start independent recovery checks for cooling providers.
@@ -65,6 +153,10 @@ class ProviderHealth:
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        pending = list(self._probe_requests.values())
+        for request in pending:
+            request.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
     async def _monitor(self, log_token_usage: Callable[..., Awaitable[Any]]):
         """Schedule due probes without making business calls await recovery.
@@ -85,7 +177,9 @@ class ProviderHealth:
                         del probes[provider_id]
                 for provider_id, state in list(self._states.items()):
                     if (
-                        state.retry_at
+                        self.enabled
+                        and provider_id not in self.disabled_provider_ids
+                        and state.retry_at
                         and state.retry_at <= self.clock()
                         and not state.probing
                         and provider_id not in probes
@@ -114,11 +208,11 @@ class ProviderHealth:
             manual: Whether the request was initiated from the WebUI.
 
         Returns:
-            The SDK response after a successful, nonempty text reply.
+            The SDK response after an exact match of a fresh random challenge.
 
         Raises:
-            ProviderUnavailableError: Another probe owns this provider's slot.
-            Exception: The original request error or an empty test response.
+            ProviderUnavailableError: Controls or another probe prevent testing.
+            Exception: The original request error or an invalid test response.
         """
         response = None
         error = None
@@ -126,14 +220,21 @@ class ProviderHealth:
             response = await self.call(
                 self.context.llm_generate,
                 chat_provider_id=provider_id,
-                prompt="请只回复 OK。",
                 request_timeout=self.PROBE_TIMEOUT,
                 force_probe=True,
             )
+        except asyncio.CancelledError:
+            if not self.enabled or provider_id in self.disabled_provider_ids:
+                raise ProviderUnavailableError(
+                    "Provider connectivity testing has been disabled"
+                ) from None
+            raise
         except ProviderUnavailableError:
             raise
         except Exception as exc:
             error = exc
+            if isinstance(exc, InvalidProbeResponseError):
+                response = exc.response
             logger.warning(
                 "Provider connectivity probe failed. provider_id: %s, manual: %s, error: %s",
                 provider_id,
@@ -197,10 +298,27 @@ class ProviderHealth:
             The original SDK response.
 
         Raises:
-            ProviderUnavailableError: Cooldown or another probe prevents a call.
-            Exception: Original SDK error or an empty manual test response.
+            ProviderUnavailableError: Controls, cooldown or a probe prevent a call.
+            Exception: Original SDK error or an invalid connectivity test response.
         """
         provider_id = chat_provider_id
+        if provider_id in self.disabled_provider_ids:
+            raise ProviderUnavailableError(
+                f"Provider {provider_id} is manually disabled"
+            )
+        if force_probe and (not self.enabled or provider_id in self._probe_requests):
+            raise ProviderUnavailableError(
+                "Provider connectivity testing is unavailable"
+            )
+        # Keep the existing request and timeout policy when management is off.
+        if not self.enabled:
+            kwargs["request_max_retries"] = 1
+            pending = operation(chat_provider_id=provider_id, **kwargs)
+            return (
+                await asyncio.wait_for(pending, request_timeout)
+                if request_timeout is not None
+                else await pending
+            )
         state = self._states.setdefault(provider_id, _HealthState())
         instances = getattr(
             getattr(self.context, "provider_manager", None), "inst_map", None
@@ -226,20 +344,37 @@ class ProviderHealth:
         generation = state.generation
         state.last_attempt = time.time()
         started = self.clock()
+        pending = None
         try:
             # Giftia owns retries; avoid stacking AstrBot's default attempts.
             kwargs["request_max_retries"] = 1
+            if probe:
+                challenge = f"GIFTIA_PROBE_{secrets.token_hex(16)}"
+                kwargs["prompt"] = (
+                    "请原样回复以下校验串，不要添加解释、引号、Markdown 或其他内容：\n"
+                    f"{challenge}"
+                )
             pending = operation(chat_provider_id=provider_id, **kwargs)
+            if probe:
+                pending = asyncio.ensure_future(pending)
+                self._probe_requests[provider_id] = pending
             response = (
                 await asyncio.wait_for(pending, request_timeout)
                 if request_timeout is not None
                 else await pending
             )
-            if (
-                force_probe
-                and not (getattr(response, "completion_text", "") or "").strip()
-            ):
-                raise EmptyModelOutputError("Connectivity test returned no text")
+            if probe:
+                if (
+                    not self.enabled
+                    or provider_id in self.disabled_provider_ids
+                    or self._states.get(provider_id) is not state
+                ):
+                    raise ProviderUnavailableError(
+                        "Provider connectivity testing controls have changed"
+                    )
+                text = getattr(response, "completion_text", None)
+                if not isinstance(text, str) or text.strip(" \t\r\n") != challenge:
+                    raise InvalidProbeResponseError(response)
         except Exception as exc:
             if (
                 self._states.get(provider_id) is state
@@ -258,8 +393,8 @@ class ProviderHealth:
                 if (
                     failure is not None
                     and (probe or immediate or state.failures >= self.FAILURE_THRESHOLD)
-                ) or (probe and state.retry_at):
-                    # A failed probe, including empty output or a neutral error,
+                ) or probe:
+                    # A failed probe, including invalid output or a neutral error,
                     # must wait again rather than becoming a tight retry loop.
                     cooldown = self.COOLDOWNS[
                         min(state.backoff, len(self.COOLDOWNS) - 1)
@@ -290,6 +425,8 @@ class ProviderHealth:
                 state.last_latency_ms = round((self.clock() - started) * 1000)
             return response
         finally:
+            if probe and self._probe_requests.get(provider_id) is pending:
+                self._probe_requests.pop(provider_id, None)
             if (
                 self._states.get(provider_id) is state
                 and state.generation == generation
@@ -315,8 +452,13 @@ class ProviderHealth:
             status = "cooldown" if remaining else "probe_due"
         if state.probing:
             status = "probing"
+        if not self.enabled:
+            status = "unmanaged"
+        if provider_id in self.disabled_provider_ids:
+            status = "disabled"
         return {
             "provider_id": provider_id,
+            "enabled": provider_id not in self.disabled_provider_ids,
             "status": status,
             "failures": state.failures,
             "retry_in_seconds": math.ceil(remaining),
@@ -338,6 +480,8 @@ class ProviderHealth:
             A safe reason, minimum cooldown and immediate-trip flag, or None for
             input, safety, output, tool and unrecognized local errors.
         """
+        if isinstance(error, InvalidProbeResponseError):
+            return "invalid_probe_response", 0, True
         if isinstance(error, EmptyModelOutputError):
             return None
         seen = set()

@@ -12,12 +12,13 @@ class WebUIManager:
         for route, handler, method in (
             ("/models/health", self.web_api.get_model_health, "GET"),
             ("/models/test", self.web_api.test_model_connection, "POST"),
+            ("/models/settings", self.web_api.update_model_health_settings, "POST"),
         ):
             ctx.register_web_api(
                 route=f"/astrbot_plugin_giftia{route}",
                 view_handler=handler,
                 methods=[method],
-                desc="Inspect and test configured conversation models",
+                desc="Inspect, control and test configured conversation models",
             )
 
         for route, handler, method in (

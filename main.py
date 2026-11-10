@@ -200,6 +200,7 @@ class Giftia(Star):
         # 实例化底座服务
         self.ltm = LTM(self.context, self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
+        await self.provider_health.load_settings(self.db)
         self.sync_bot_maps()
         self.data_cache = DataCache(
             db=self.db,

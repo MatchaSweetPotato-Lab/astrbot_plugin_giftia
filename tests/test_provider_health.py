@@ -13,6 +13,7 @@ import pytest_asyncio
 from core.llm.call_llm import CallLLM
 from core.llm.llm_tools import InspectForwardMessageTool
 from core.llm.provider_health import (
+    InvalidProbeResponseError,
     ProviderHealth,
     ProviderUnavailableError,
     get_provider_health,
@@ -29,6 +30,19 @@ class ServiceError(Exception):
         self.status_code = status
         self.response = SimpleNamespace(headers=headers or {})
         self.body = body or {}
+
+
+def probe_reply(*, prompt, **kwargs):
+    """Echo the requested challenge for successful connectivity tests.
+
+    Args:
+        prompt: Probe prompt ending with the challenge.
+        **kwargs: Other SDK arguments.
+
+    Returns:
+        An SDK-like response containing the exact challenge.
+    """
+    return SimpleNamespace(completion_text=prompt.rsplit("\n", 1)[-1])
 
 
 @pytest_asyncio.fixture
@@ -244,7 +258,7 @@ async def test_only_one_recovery_probe_runs_and_failure_extends_cooldown(runtime
         await probe
     assert health.snapshot("model")["retry_in_seconds"] == 120
     await health.call(
-        AsyncMock(return_value=SimpleNamespace(completion_text="OK")),
+        AsyncMock(side_effect=probe_reply),
         chat_provider_id="model",
         force_probe=True,
     )
@@ -268,7 +282,7 @@ async def test_cancelled_probe_releases_ownership_without_extending_cooldown(run
         await task
     assert runtime.health.snapshot("model")["status"] == "unknown"
     await runtime.health.call(
-        AsyncMock(return_value=SimpleNamespace(completion_text="OK")),
+        AsyncMock(side_effect=probe_reply),
         chat_provider_id="model",
         force_probe=True,
     )
@@ -294,7 +308,7 @@ async def test_late_request_result_cannot_undo_manual_recovery(runtime):
                 AsyncMock(side_effect=ServiceError()), chat_provider_id="model"
             )
     await runtime.health.call(
-        AsyncMock(return_value=SimpleNamespace(completion_text="OK")),
+        AsyncMock(side_effect=probe_reply),
         chat_provider_id="model",
         force_probe=True,
     )
@@ -341,8 +355,9 @@ async def test_request_timeout_is_counted_but_tool_errors_are_excluded(runtime):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("manually_disabled", [False, True])
 async def test_every_conversation_model_path_shares_health_and_skips_current_list(
-    runtime,
+    runtime, manually_disabled
 ):
     context = SimpleNamespace(llm_generate=AsyncMock(), tool_loop_agent=AsyncMock())
     plugin = SimpleNamespace(
@@ -369,11 +384,16 @@ async def test_every_conversation_model_path_shares_health_and_skips_current_lis
         plugin=plugin,
     )
     caller._log_token_usage_safely = AsyncMock()
-    for _ in range(2):
-        with pytest.raises(ServiceError):
-            await get_provider_health(plugin).call(
-                AsyncMock(side_effect=ServiceError()), chat_provider_id="bad"
-            )
+    if manually_disabled:
+        await runtime.health.update_settings(
+            SimpleNamespace(upsert_kv_data=AsyncMock()), enabled=False, provider_id="bad"
+        )
+    else:
+        for _ in range(2):
+            with pytest.raises(ServiceError):
+                await get_provider_health(plugin).call(
+                    AsyncMock(side_effect=ServiceError()), chat_provider_id="bad"
+                )
     context.llm_generate.return_value = SimpleNamespace(
         completion_text='<decision reply="true" use_rag="false"/>'
     )
@@ -438,7 +458,7 @@ async def test_background_recovery_runs_without_business_requests(runtime):
             AsyncMock(side_effect=ServiceError(401)), chat_provider_id="model"
         )
     runtime.context.llm_generate = AsyncMock(
-        return_value=SimpleNamespace(completion_text="OK")
+        side_effect=probe_reply
     )
     health.start(runtime.recorder)
     monitor = health._monitor_task
@@ -450,9 +470,11 @@ async def test_background_recovery_runs_without_business_requests(runtime):
     await asyncio.wait_for(runtime.recorded.wait(), 1)
     assert health.snapshot("model")["status"] == "healthy"
     assert health.snapshot("model")["failures"] == 0
-    runtime.context.llm_generate.assert_awaited_once_with(
-        chat_provider_id="model", prompt="请只回复 OK。", request_max_retries=1
-    )
+    arguments = runtime.context.llm_generate.await_args.kwargs
+    assert arguments["chat_provider_id"] == "model"
+    assert arguments["request_max_retries"] == 1
+    assert arguments["prompt"].rsplit("\n", 1)[-1].startswith("GIFTIA_PROBE_")
+    assert set(arguments) == {"chat_provider_id", "prompt", "request_max_retries"}
     usage = runtime.recorder.await_args.kwargs
     assert usage["type"] == "provider_test"
     assert usage["extra_info"] == {"status": "success", "manual_test": False}
@@ -552,7 +574,7 @@ async def test_slow_background_provider_does_not_block_other_recovery_or_busines
         if chat_provider_id == "slow":
             entered.set()
             await release.wait()
-        return SimpleNamespace(completion_text="OK")
+        return probe_reply(**kwargs)
 
     runtime.context.llm_generate = AsyncMock(side_effect=generate)
     runtime.ticks[0] += 600
@@ -628,10 +650,182 @@ async def test_shutdown_cancels_and_awaits_background_probe_without_marking_fail
 @pytest.mark.asyncio
 async def test_token_log_errors_do_not_override_successful_probe(runtime):
     runtime.context.llm_generate = AsyncMock(
-        return_value=SimpleNamespace(completion_text="OK")
+        side_effect=probe_reply
     )
     result = await runtime.health.probe(
         "model", log_token_usage=AsyncMock(side_effect=RuntimeError("DB unavailable"))
     )
-    assert result.completion_text == "OK"
+    assert result.completion_text.startswith("GIFTIA_PROBE_")
     assert runtime.health.snapshot("model")["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", [None, 42, [], {}, "", " \n ", "OK", "ＯＫ", "\x00�", "<html>OK</html>"])
+async def test_probe_rejects_non_llm_and_malformed_output_and_records_usage(runtime, output):
+    runtime.context.llm_generate = AsyncMock(
+        return_value=SimpleNamespace(
+            completion_text=output, usage={"input": 10, "output": 2, "total": 12}
+        )
+    )
+    with pytest.raises(InvalidProbeResponseError):
+        await runtime.health.probe("model", log_token_usage=runtime.recorder, manual=True)
+    snapshot = runtime.health.snapshot("model")
+    assert snapshot["status"] == "cooldown"
+    assert snapshot["reason"] == "invalid_probe_response"
+    assert snapshot["last_success"] is None
+    usage = runtime.recorder.await_args.kwargs
+    assert usage["total_tokens"] == 12
+    assert usage["extra_info"] == {"status": "api_failed", "manual_test": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix,suffix", [("", ""), (" \r\n", "\t\n"), ("```\n", "\n```"), ("", "\u200b"), ("", "\x00"), ("", "\u00a0"), ('"', '"'), ("Here is the response: ", "")])
+async def test_probe_requires_exact_challenge_except_ascii_boundary_whitespace(runtime, prefix, suffix):
+    runtime.context.llm_generate = AsyncMock(
+        side_effect=lambda **kwargs: SimpleNamespace(
+            completion_text=prefix + kwargs["prompt"].rsplit("\n", 1)[-1] + suffix
+        )
+    )
+    if not prefix.strip(" \t\r\n") and not suffix.strip(" \t\r\n"):
+        await runtime.health.probe("model", log_token_usage=runtime.recorder)
+        assert runtime.health.snapshot("model")["status"] == "healthy"
+    else:
+        with pytest.raises(InvalidProbeResponseError):
+            await runtime.health.probe("model", log_token_usage=runtime.recorder)
+        assert runtime.health.snapshot("model")["status"] == "cooldown"
+
+
+@pytest.mark.asyncio
+async def test_probe_cannot_replay_a_previous_successful_challenge(runtime):
+    runtime.context.llm_generate = AsyncMock(side_effect=probe_reply)
+    previous = await runtime.health.probe("model", log_token_usage=runtime.recorder)
+    runtime.context.llm_generate.side_effect = None
+    runtime.context.llm_generate.return_value = previous
+    with pytest.raises(InvalidProbeResponseError):
+        await runtime.health.probe("model", log_token_usage=runtime.recorder)
+    prompts = [call.kwargs["prompt"] for call in runtime.context.llm_generate.await_args_list]
+    assert prompts[0] != prompts[1]
+    assert runtime.health.snapshot("model")["status"] == "cooldown"
+
+
+@pytest.mark.asyncio
+async def test_global_control_bypasses_cooldown_but_keeps_manual_disables(runtime):
+    health = runtime.health
+    database = SimpleNamespace(upsert_kv_data=AsyncMock())
+    with pytest.raises(ServiceError):
+        await health.call(AsyncMock(side_effect=ServiceError(429)), chat_provider_id="model")
+    await health.update_settings(database, enabled=False, provider_id="disabled")
+    await health.update_settings(database, enabled=False)
+    for _ in range(3):
+        with pytest.raises(ServiceError):
+            await health.call(AsyncMock(side_effect=ServiceError()), chat_provider_id="model")
+    assert health.snapshot("model")["status"] == "unmanaged"
+    assert health.snapshot("model")["failures"] == 0
+    assert health.snapshot("disabled")["status"] == "disabled"
+    blocked = AsyncMock()
+    with pytest.raises(ProviderUnavailableError):
+        await health.call(blocked, chat_provider_id="disabled")
+    runtime.context.llm_generate = blocked
+    with pytest.raises(ProviderUnavailableError):
+        await health.probe("model", log_token_usage=runtime.recorder, manual=True)
+    health.start(runtime.recorder)
+    runtime.ticks[0] += 1000
+    await asyncio.sleep(health.CHECK_INTERVAL * 3)
+    blocked.assert_not_awaited()
+    runtime.recorder.assert_not_awaited()
+    await health.update_settings(database, enabled=True)
+    assert health.snapshot("model")["status"] == "unknown"
+    assert health.snapshot("disabled")["status"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_disabled_provider_survives_configuration_change_and_is_never_probed(runtime):
+    health = runtime.health
+    database = SimpleNamespace(upsert_kv_data=AsyncMock())
+    with pytest.raises(ServiceError):
+        await health.call(AsyncMock(side_effect=ServiceError(429)), chat_provider_id="model")
+    await health.update_settings(database, enabled=False, provider_id="model")
+    runtime.context.provider_manager = SimpleNamespace(
+        inst_map={"model": SimpleNamespace(provider_config={"key": "changed"})}
+    )
+    blocked = AsyncMock()
+    runtime.context.llm_generate = blocked
+    for force_probe in (False, True):
+        with pytest.raises(ProviderUnavailableError):
+            await health.call(blocked, chat_provider_id="model", force_probe=force_probe)
+    health.start(runtime.recorder)
+    runtime.ticks[0] += 1000
+    await asyncio.sleep(health.CHECK_INTERVAL * 3)
+    blocked.assert_not_awaited()
+    assert health.snapshot("model")["status"] == "disabled"
+    await health.update_settings(database, enabled=True, provider_id="model")
+    assert health.snapshot("model")["status"] == "unknown"
+    await health.call(AsyncMock(return_value="reply"), chat_provider_id="model")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_control", [False, True])
+async def test_disabling_cancels_inflight_probe_and_ignores_its_late_success(runtime, global_control):
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def generate(**kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            return probe_reply(**kwargs)
+
+    runtime.context.llm_generate = AsyncMock(side_effect=generate)
+    task = asyncio.create_task(runtime.health.probe("model", log_token_usage=runtime.recorder, manual=True))
+    await entered.wait()
+    await runtime.health.update_settings(
+        SimpleNamespace(upsert_kv_data=AsyncMock()),
+        enabled=False,
+        provider_id=None if global_control else "model",
+    )
+    with pytest.raises(ProviderUnavailableError):
+        await task
+    assert cancelled.is_set()
+    snapshot = runtime.health.snapshot("model")
+    assert snapshot["status"] == ("unmanaged" if global_control else "disabled")
+    assert snapshot["last_success"] is None
+
+
+@pytest.mark.asyncio
+async def test_late_business_result_cannot_reset_manual_disable(runtime):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def generate(**kwargs):
+        entered.set()
+        await release.wait()
+        return "reply"
+
+    task = asyncio.create_task(runtime.health.call(generate, chat_provider_id="model"))
+    await entered.wait()
+    await runtime.health.update_settings(SimpleNamespace(upsert_kv_data=AsyncMock()), enabled=False, provider_id="model")
+    release.set()
+    assert await task == "reply"
+    assert runtime.health.snapshot("model")["status"] == "disabled"
+    assert runtime.health.snapshot("model")["last_success"] is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_also_cancels_manual_probes_without_a_monitor(runtime):
+    entered, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def generate(**kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    runtime.context.llm_generate = AsyncMock(side_effect=generate)
+    task = asyncio.create_task(runtime.health.probe("model", log_token_usage=runtime.recorder, manual=True))
+    await entered.wait()
+    await runtime.health.close()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
+    runtime.recorder.assert_not_awaited()
