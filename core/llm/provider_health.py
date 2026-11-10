@@ -6,7 +6,7 @@ import json
 import math
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import timezone
 from email.utils import parsedate_to_datetime
@@ -208,7 +208,7 @@ class ProviderHealth:
             manual: Whether the request was initiated from the WebUI.
 
         Returns:
-            The SDK response after an exact match of a fresh random challenge.
+            The SDK response after validating a fresh random challenge.
 
         Raises:
             ProviderUnavailableError: Controls or another probe prevent testing.
@@ -216,10 +216,21 @@ class ProviderHealth:
         """
         response = None
         error = None
+        is_decision = False
         try:
+            instances = getattr(
+                getattr(self.context, "provider_manager", None), "inst_map", {}
+            )
+            provider = instances.get(provider_id)
+            meta = (
+                provider.meta() if callable(getattr(provider, "meta", None)) else None
+            )
+            capability = getattr(meta, "provider_type", None)
+            is_decision = getattr(capability, "value", capability) == "decision"
             response = await self.call(
-                self.context.llm_generate,
+                self.context.decision.ask if is_decision else self.context.llm_generate,
                 chat_provider_id=provider_id,
+                decision=is_decision,
                 request_timeout=self.PROBE_TIMEOUT,
                 force_probe=True,
             )
@@ -257,6 +268,11 @@ class ProviderHealth:
                 extra_info={
                     "status": "api_failed" if error is not None else "success",
                     "manual_test": manual,
+                    **(
+                        {"provider_type": "decision", "usage_missing": True}
+                        if is_decision
+                        else {}
+                    ),
                 },
             )
         except Exception:
@@ -277,6 +293,7 @@ class ProviderHealth:
         request_timeout: float | None = None,
         force_probe: bool = False,
         count_failure: Callable[[], bool] | None = None,
+        decision: bool = False,
         **kwargs,
     ):
         """Run one SDK call with request retries controlled by the caller.
@@ -286,13 +303,15 @@ class ProviderHealth:
         admitted before a cooldown, configuration change or recovery probe.
 
         Args:
-            operation: AstrBot generation or native tool-loop method.
+            operation: AstrBot generation, native tool-loop or decision method.
             chat_provider_id: Shared AstrBot provider configuration ID.
             request_timeout: Optional timeout around the actual model operation.
             force_probe: Bypass cooldown for an independent connectivity test.
             count_failure: Whether an exception can still be attributed to this
                 model, excluding native tool failures after execution starts.
-            **kwargs: SDK arguments, with request_max_retries fixed at 1.
+            decision: Whether the operation uses the decision service, whose
+                provider_id argument and default zero retries are preserved.
+            **kwargs: SDK arguments. Generation requests use one attempt.
 
         Returns:
             The original SDK response.
@@ -310,10 +329,15 @@ class ProviderHealth:
             raise ProviderUnavailableError(
                 "Provider connectivity testing is unavailable"
             )
+        if decision:
+            kwargs["provider_id"] = provider_id
+        else:
+            kwargs["chat_provider_id"] = provider_id
+            # Giftia owns retries; avoid stacking AstrBot's default attempts.
+            kwargs["request_max_retries"] = 1
         # Keep the existing request and timeout policy when management is off.
         if not self.enabled:
-            kwargs["request_max_retries"] = 1
-            pending = operation(chat_provider_id=provider_id, **kwargs)
+            pending = operation(**kwargs)
             return (
                 await asyncio.wait_for(pending, request_timeout)
                 if request_timeout is not None
@@ -346,15 +370,30 @@ class ProviderHealth:
         started = self.clock()
         pending = None
         try:
-            # Giftia owns retries; avoid stacking AstrBot's default attempts.
-            kwargs["request_max_retries"] = 1
             if probe:
                 challenge = f"GIFTIA_PROBE_{secrets.token_hex(16)}"
-                kwargs["prompt"] = (
-                    "请原样回复以下校验串，不要添加解释、引号、Markdown 或其他内容：\n"
-                    f"{challenge}"
-                )
-            pending = operation(chat_provider_id=provider_id, **kwargs)
+                if decision:
+                    from astrbot.api.provider import (
+                        DecisionChoiceAnswer,
+                        DecisionChoiceQuestion,
+                    )
+
+                    options = [challenge, f"GIFTIA_PROBE_{secrets.token_hex(16)}"]
+                    if secrets.randbelow(2):
+                        options.reverse()
+                    kwargs["questions"] = {
+                        "probe": DecisionChoiceQuestion(
+                            "Select the exact marker present in the state.",
+                            {option: option for option in options},
+                        )
+                    }
+                    kwargs["state"] = challenge
+                else:
+                    kwargs["prompt"] = (
+                        "请原样回复以下校验串，不要添加解释、引号、Markdown 或其他内容：\n"
+                        f"{challenge}"
+                    )
+            pending = operation(**kwargs)
             if probe:
                 pending = asyncio.ensure_future(pending)
                 self._probe_requests[provider_id] = pending
@@ -372,8 +411,18 @@ class ProviderHealth:
                     raise ProviderUnavailableError(
                         "Provider connectivity testing controls have changed"
                     )
-                text = getattr(response, "completion_text", None)
-                if not isinstance(text, str) or text.strip(" \t\r\n") != challenge:
+                if decision:
+                    answer = (
+                        response.get("probe") if isinstance(response, Mapping) else None
+                    )
+                    valid = (
+                        isinstance(answer, DecisionChoiceAnswer)
+                        and answer.choice == challenge
+                    )
+                else:
+                    text = getattr(response, "completion_text", None)
+                    valid = isinstance(text, str) and text.strip(" \t\r\n") == challenge
+                if not valid:
                     raise InvalidProbeResponseError(response)
         except Exception as exc:
             if (
@@ -499,11 +548,13 @@ class ProviderHealth:
                 )
             ):
                 return None
-            # HTTP resource errors may originate from downloading media before
-            # inference. Provider SDK status errors carry their own status_code.
-            if type(current).__name__ == "HTTPStatusError" and type(
-                current
-            ).__module__.startswith("httpx"):
+            # Decision adapters wrap endpoint HTTP errors in DecisionError.
+            # Other HTTP errors may originate from downloading media.
+            if (
+                type(current).__name__ == "HTTPStatusError"
+                and type(current).__module__.startswith("httpx")
+                and type(error).__name__ != "DecisionError"
+            ):
                 return None
             response = getattr(current, "response", None)
             code = getattr(current, "status_code", None) or getattr(

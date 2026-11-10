@@ -19,9 +19,20 @@ class BotApi:
         self.giftia = giftia
 
     def _extract_providers_from_config(
-        self, context, llm_providers: list[dict], tts_providers: list[dict]
+        self,
+        context,
+        llm_providers: list[dict],
+        tts_providers: list[dict],
+        decision_providers: list[dict],
     ) -> None:
-        """从 AstrBot 基础配置 JSON/Config 中解析已注册的 LLM 与 TTS 供应商。"""
+        """Read configured chat, TTS and decision providers.
+
+        Args:
+            context: AstrBot plugin context.
+            llm_providers: Chat provider inventory to extend.
+            tts_providers: TTS provider inventory to extend.
+            decision_providers: Decision provider inventory to extend.
+        """
         cfg = getattr(context, "config", None) or getattr(context, "_config", None)
         if not cfg and hasattr(context, "astrbot_config_mgr"):
             acm = getattr(context, "astrbot_config_mgr")
@@ -78,7 +89,14 @@ class BotApi:
                     p_name = str(item.get("name") or p_id).strip()
                     if p_id:
                         info = {"id": p_id, "name": p_name or p_id, "type": p_type}
-                        if any(
+                        capability = item.get("provider_type")
+                        if (
+                            getattr(capability, "value", capability) == "decision"
+                            or "decision" in p_type.lower()
+                        ):
+                            if not any(x["id"] == p_id for x in decision_providers):
+                                decision_providers.append(info)
+                        elif any(
                             k in p_type.lower()
                             for k in [
                                 "tts",
@@ -100,9 +118,20 @@ class BotApi:
                                     llm_providers.append(info)
 
     def _extract_providers_from_runtime(
-        self, context, llm_providers: list[dict], tts_providers: list[dict]
+        self,
+        context,
+        llm_providers: list[dict],
+        tts_providers: list[dict],
+        decision_providers: list[dict],
     ) -> None:
-        """从 ProviderManager 运行时实例回退解析已加载的提供商。"""
+        """Read loaded chat, TTS and decision providers.
+
+        Args:
+            context: AstrBot plugin context.
+            llm_providers: Chat provider inventory to extend.
+            tts_providers: TTS provider inventory to extend.
+            decision_providers: Decision provider inventory to extend.
+        """
         pm = getattr(context, "provider_manager", None)
         all_prov_sources = []
         if pm:
@@ -111,6 +140,7 @@ class BotApi:
                 "_providers",
                 "provider_insts",
                 "llm_providers",
+                "decision_provider_insts",
             ]:
                 provs = getattr(pm, attr_name, None)
                 if isinstance(provs, dict):
@@ -151,10 +181,12 @@ class BotApi:
             if not item:
                 continue
             p_id, p_type, p_name = "", "", ""
+            capability = None
             if isinstance(item, dict):
                 p_id = str(item.get("id") or item.get("name") or "").strip()
                 p_type = str(item.get("type") or "").strip()
                 p_name = str(item.get("name") or p_id).strip()
+                capability = item.get("provider_type")
             else:
                 try:
                     if hasattr(item, "meta") and callable(item.meta):
@@ -162,6 +194,7 @@ class BotApi:
                         p_id = str(getattr(m, "id", "") or "")
                         p_type = str(getattr(m, "type", "") or "")
                         p_name = str(getattr(m, "name", "") or p_id)
+                        capability = getattr(m, "provider_type", None)
                 except Exception:
                     pass
                 if not p_id:
@@ -179,7 +212,13 @@ class BotApi:
 
             if p_id:
                 info = {"id": p_id, "name": p_name or p_id, "type": p_type}
-                if any(
+                if (
+                    getattr(capability, "value", capability) == "decision"
+                    or "decision" in p_type.lower()
+                ):
+                    if not any(x["id"] == p_id for x in decision_providers):
+                        decision_providers.append(info)
+                elif any(
                     k in p_type.lower()
                     for k in ["tts", "speech", "voice", "fishaudio", "gsv", "cosy"]
                 ):
@@ -269,9 +308,14 @@ class BotApi:
         return adapters
 
     def _get_available_metadata(self) -> dict:
-        """汇总可用的 LLM 提供商、TTS 提供商、消息适配器列表、人格列表和内置交互功能。"""
+        """Collect provider inventories and bot editor metadata.
+
+        Returns:
+            Separate chat, decision and TTS lists, adapters, personas and features.
+        """
         llm_providers = []
         tts_providers = []
+        decision_providers = []
         adapters = []
         personas = []
 
@@ -279,8 +323,18 @@ class BotApi:
         context = getattr(giftia, "context", None) if giftia else None
 
         if context:
-            self._extract_providers_from_config(context, llm_providers, tts_providers)
-            self._extract_providers_from_runtime(context, llm_providers, tts_providers)
+            self._extract_providers_from_config(
+                context, llm_providers, tts_providers, decision_providers
+            )
+            self._extract_providers_from_runtime(
+                context, llm_providers, tts_providers, decision_providers
+            )
+            decision_ids = {provider["id"] for provider in decision_providers}
+            llm_providers = [
+                provider
+                for provider in llm_providers
+                if provider["id"] not in decision_ids
+            ]
             adapters = self._extract_platform_adapters(context)
             if hasattr(context, "persona_manager") and context.persona_manager:
                 try:
@@ -313,10 +367,11 @@ class BotApi:
             )
 
         logger.info(
-            f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters, {len(personas)} personas"
+            f"[Giftia BotApi] Metadata fetched: {len(llm_providers)} LLM providers, {len(decision_providers)} decision providers, {len(tts_providers)} TTS providers, {len(adapters)} adapters, {len(personas)} personas"
         )
         return {
             "llm_providers": llm_providers,
+            "decision_providers": decision_providers,
             "tts_providers": tts_providers,
             "adapters": adapters,
             "personas": personas,

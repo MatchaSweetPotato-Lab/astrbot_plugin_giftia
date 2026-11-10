@@ -1,3 +1,13 @@
+## [v0.5.6] - 待定
+
+### Features
+
+- 复核模型增加决策模型支持
+
+### Improvements
+
+- 兼容Astrbot v4.30.0
+
 ## [v0.5.5] - 2026-11-10
 
 ### Features

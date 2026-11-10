@@ -9,6 +9,7 @@ const sanitizeId = (str) => String(str || '').replace(/[^a-zA-Z0-9_-]/g, '_');
 let stateBots = [];
 let stateBotMetadata = {
     llm_providers: [],
+    decision_providers: [],
     tts_providers: [],
     adapters: [],
     interactive_features: []
@@ -263,7 +264,12 @@ function openBotEditModal(botName = null) {
     });
 
     document.getElementById('bot-form-reply-mode').value = bot.llm_reply_conf?.provider_selection_mode || 'fallback';
-    renderSingleProviderSelect('bot-form-review-provider', stateBotMetadata.llm_providers, bot.llm_reply_conf?.review_provider_id || '');
+    renderSingleProviderSelect('bot-form-review-provider', [
+        ...(stateBotMetadata.llm_providers || []),
+        ...(stateBotMetadata.decision_providers || []).map(p => ({
+            ...p, name: `${p.name || p.id}（决策模型）`
+        }))
+    ], bot.llm_reply_conf?.review_provider_id || '');
 
     // 4. TTS Conf
     document.getElementById('bot-form-tts-enabled').checked = bot.tts_config?.enabled === true;

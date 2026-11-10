@@ -32,6 +32,7 @@ from .preset_prompts import (
     RELATION_SCORE_GUIDE,
     REPLY_CONTEXT_GUIDE,
     REPLY_REVIEW_PROMPT,
+    REPLY_REVIEW_RULES,
     build_xml_instructions,
     get_audio_caption_prompt,
     get_decision_rules,
@@ -226,7 +227,7 @@ class CallLLM:
         """Review an unsent draft once without invoking tools.
 
         Args:
-            provider_id: Explicitly selected review provider.
+            provider_id: Explicitly selected chat or decision review provider.
             user_prompt: Original messages, draft and new conversation messages.
             bot_name: Owning bot configuration.
             group_or_user_id: Owning conversation.
@@ -234,40 +235,68 @@ class CallLLM:
         Returns:
             True to send, False to regenerate, or None on timeout or invalid output.
         """
-        logger.debug(f"\n<system_prompt>{REPLY_REVIEW_PROMPT}</system_prompt>")
         logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
 
         response = None
         passed = None
         extra_info = {"status": "api_failed"}
         try:
-            response = await self.provider_health.call(
-                self.context.llm_generate,
-                chat_provider_id=provider_id,
-                system_prompt=REPLY_REVIEW_PROMPT,
-                prompt=user_prompt,
-                request_timeout=10,
+            get_provider = getattr(self.context, "get_provider_by_id", None)
+            provider = get_provider(provider_id) if callable(get_provider) else None
+            capability = (
+                getattr(provider.meta(), "provider_type", None) if provider else None
             )
-            extra_info["status"] = "parse_failed"
-            completion = (getattr(response, "completion_text", "") or "").strip()
-            if completion.startswith("```") and completion.endswith("```"):
-                completion = "\n".join(completion.splitlines()[1:-1]).strip()
-            node = fromstring(completion)
-            verdict = (node.get("pass") or "").strip().lower()
-            if node.tag != "review" or verdict not in ("true", "false"):
-                raise ValueError("Invalid reply review verdict")
-            passed = verdict == "true"
+            is_decision = getattr(capability, "value", capability) == "decision"
+            review_instructions = (
+                REPLY_REVIEW_RULES + "\n待发送内容是否仍适合原样发送？"
+                if is_decision
+                else REPLY_REVIEW_PROMPT
+            )
+            logger.debug(f"\n<system_prompt>{review_instructions}</system_prompt>")
+            reason = ""
+            if is_decision:
+                response = await self.provider_health.call(
+                    self.context.decision.yes_no,
+                    chat_provider_id=provider_id,
+                    decision=True,
+                    question=review_instructions,
+                    state=user_prompt,
+                    request_timeout=10,
+                )
+                extra_info["status"] = "parse_failed"
+                if not isinstance(response, bool):
+                    raise ValueError("Invalid decision review verdict")
+                passed = response
+            else:
+                response = await self.provider_health.call(
+                    self.context.llm_generate,
+                    chat_provider_id=provider_id,
+                    system_prompt=review_instructions,
+                    prompt=user_prompt,
+                    request_timeout=10,
+                )
+                extra_info["status"] = "parse_failed"
+                completion = (getattr(response, "completion_text", "") or "").strip()
+                if completion.startswith("```") and completion.endswith("```"):
+                    completion = "\n".join(completion.splitlines()[1:-1]).strip()
+                node = fromstring(completion)
+                verdict = (node.get("pass") or "").strip().lower()
+                if node.tag != "review" or verdict not in ("true", "false"):
+                    raise ValueError("Invalid reply review verdict")
+                passed = verdict == "true"
+                reason = node.get("reason", "")
             extra_info = {
                 "status": "success",
                 "passed": passed,
-                "reason": node.get("reason", ""),
+                "reason": reason,
+                "provider_type": "decision" if is_decision else "chat_completion",
             }
             logger.info(
                 "[Giftia] Reply review for %s:%s: passed=%s, reason=%s",
                 bot_name,
                 group_or_user_id,
                 passed,
-                node.get("reason", ""),
+                reason,
             )
         except ProviderUnavailableError:
             return None
