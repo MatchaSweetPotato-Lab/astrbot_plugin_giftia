@@ -730,7 +730,7 @@ html[data-theme="dark"] .nav-custom-rank-badge.fallback-rank {
     }
 
     .grid-layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 12px;
     }
 

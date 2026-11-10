@@ -2,6 +2,7 @@
 
 /* Status Grid & Card Layout */
 .status-card {
+    min-width: 0;
     padding: 22px;
     display: flex;
     flex-direction: column;
@@ -31,6 +32,8 @@
 }
 
 .status-card-title {
+    min-width: 0;
+    flex: 1;
     margin: 0;
     font-size: 16px;
     font-weight: 600;
@@ -44,6 +47,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.status-card-subtitle-row .btn-copy-icon {
+    flex-shrink: 0;
 }
 
 .status-card-subtitle {
@@ -113,12 +120,14 @@
 
 .status-pill {
     display: inline-flex;
+    max-width: 100%;
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
     border-radius: 30px;
     font-size: 12px;
     border: 1px solid transparent;
+    overflow-wrap: anywhere;
 }
 
 .status-pill .pill-label {
