@@ -144,6 +144,23 @@ class Database(ProfileStoreMixin):
             bot_name, group_or_user_id, user_id, after_id, limit
         )
 
+    async def get_cross_group_pending_context(
+        self, bot_name: str, session_id: str, user_ids: list[str]
+    ) -> dict[str, list[MessageData]]:
+        """Read merged recent interaction windows without changing source states.
+
+        Args:
+            bot_name: Bot owning the recorded conversations.
+            session_id: Current conversation, excluded from anchor selection.
+            user_ids: Frozen reply participants.
+
+        Returns:
+            Observed message windows grouped by their source group.
+        """
+        return await self.chat_history_repo.get_cross_group_pending_context(
+            bot_name, session_id, user_ids
+        )
+
     async def get_message_count_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
     ) -> int:

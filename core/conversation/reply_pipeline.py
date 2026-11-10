@@ -224,6 +224,7 @@ class ReplyPipeline:
         task_creator_names: dict[str, str] | None = None,
         tool_context: dict | None = None,
         review_after_id: int | None = None,
+        cross_group_context: dict[str, list[MessageData]] | None = None,
     ):
         """Generate frozen reply turns and review the first eligible unsent draft.
 
@@ -245,6 +246,7 @@ class ReplyPipeline:
             task_creator_names: Trusted identities for task creation.
             tool_context: Trusted state shared by tool invocations.
             review_after_id: Input watermark; None disables review for this run.
+            cross_group_context: Source-group windows frozen across tool turns.
 
         Yields:
             Parsed reply results ready for action dispatch.
@@ -298,13 +300,37 @@ class ReplyPipeline:
                 if msg.user_id and str(msg.user_id) == self_id and msg.content:
                     sent_messages.append(msg.content)
 
+        if cross_group_context is None:
+            cross_group_context = {}
+            cross_group_users = list(
+                dict.fromkeys(
+                    str(msg.user_id)
+                    for msg in reply_messages
+                    if msg.user_id
+                    and str(msg.user_id) != str(event.get_self_id())
+                    and msg.role == "message"
+                    and not msg.is_recalled
+                )
+            )
+            if cross_group_users and getattr(
+                self.plugin, "passive_memory_enabled", False
+            ):
+                cross_group_context = (
+                    await self.plugin.db.get_cross_group_pending_context(
+                        bot_name, group_or_user_id, cross_group_users
+                    )
+                )
+
+        context_messages = [
+            *recent_messages,
+            *reply_messages,
+            *(msg for messages in cross_group_context.values() for msg in messages),
+        ]
         media_captions = await self.media_captioner.get_cached_media_captions(
             bot_name=bot_name,
-            recent_messages=[*recent_messages, *reply_messages],
+            recent_messages=context_messages,
         )
-        image_metadata = await self.media_captioner.get_image_metadata(
-            [*recent_messages, *reply_messages]
-        )
+        image_metadata = await self.media_captioner.get_image_metadata(context_messages)
 
         if relevant_memories is None:
             relevant_memories = []
@@ -575,6 +601,7 @@ class ReplyPipeline:
             tool_results=tool_results,
             session_recalled_memories=session_recalled_memories,
             relevant_memories=relevant_memories,
+            cross_group_context=cross_group_context,
             user_profiles=user_profiles,
             group_profile=group_profile,
             active_user_briefs=active_user_briefs,
@@ -831,5 +858,6 @@ class ReplyPipeline:
                 recent_messages=recent_messages,
                 task_creator_names=llm_result.task_creator_names,
                 tool_context=tool_context,
+                cross_group_context=cross_group_context,
             ):
                 yield chunk

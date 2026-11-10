@@ -78,6 +78,7 @@ def runtime():
             )
         ),
         db=SimpleNamespace(
+            get_cross_group_pending_context=AsyncMock(return_value={}),
             get_user_common_groups=AsyncMock(return_value={}),
             get_relation_changes=AsyncMock(return_value=[]),
             get_relation_score=AsyncMock(return_value={}),
@@ -117,6 +118,65 @@ def runtime():
         search=plugin.passive_memory_manager.search_and_filter_memories,
         run=run,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_context", [False, True])
+async def test_cross_group_context_queries_only_targets_and_stays_frozen_across_tools(
+    runtime, has_context
+):
+    runtime.plugin.passive_memory_enabled = True
+    runtime.plugin.embedding_conf["enabled"] = False
+    observe = AsyncMock()
+    runtime.plugin.passive_memory_manager.observe_messages = observe
+    foreign = MessageData(
+        message_id="foreign", user_id="carol", content="another group's interaction"
+    )
+    context = {"source": [foreign]} if has_context else {}
+    runtime.plugin.db.get_cross_group_pending_context.side_effect = [
+        context,
+        {"source": [MessageData(content="late arrival")]},
+    ]
+    runtime.plugin.call_llm.call_llm_reply.side_effect = [
+        XmlLlmResult(tools_to_call=[("test", {})]),
+        XmlLlmResult(),
+    ]
+    history = MessageData(message_id="history", user_id="history-user", content="past")
+    targets = [
+        MessageData(message_id="A", user_id="alice", content="hello"),
+        MessageData(message_id="B", user_id="bob", content="hello"),
+        MessageData(message_id="A2", user_id="alice", content="again"),
+        MessageData(message_id="self", user_id="self", content="bot output"),
+        MessageData(message_id="log", user_id="tool", role="operation_log"),
+        MessageData(message_id="recalled", user_id="withdrawn", is_recalled=1),
+    ]
+    await runtime.run(reply_messages=targets, recent_messages=[history, *targets])
+
+    runtime.plugin.db.get_cross_group_pending_context.assert_awaited_once_with(
+        "bot", "group", ["alice", "bob"]
+    )
+    assert len(runtime.plugin.call_llm.call_llm_reply.await_args_list) == 2
+    for call in runtime.plugin.call_llm.call_llm_reply.await_args_list:
+        prompt = call.kwargs["user_prompt"]
+        root = fromstring(f"<root>{prompt}</root>")
+        block = root.find("cross_group_context")
+        assert (block is not None) is has_context
+        if has_context:
+            assert block.find("group/message").text == foreign.content
+        assert "late arrival" not in prompt
+        assert all(
+            msg.get("message_id") != "foreign" for msg in root.find("reply_messages")
+        )
+        assert all(
+            profile.get("user_id") != "carol"
+            for profile in root.findall("user_profile")
+        )
+    for call in observe.await_args_list:
+        assert foreign not in call.args[3]
+    for (
+        call
+    ) in runtime.pipeline.media_captioner.get_cached_media_captions.await_args_list:
+        assert (foreign in call.kwargs["recent_messages"]) is has_context
 
 
 @pytest.mark.asyncio

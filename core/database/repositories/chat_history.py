@@ -329,6 +329,86 @@ class ChatHistoryRepository(BaseRepository):
         return await self._attach_forward_messages(bot_name, session_id, messages)
 
     @serialized_operation
+    async def get_cross_group_pending_context(
+        self, bot_name: str, session_id: str, user_ids: list[str]
+    ) -> dict[str, list[MessageData]]:
+        """Merge observed windows around each member's latest pending group message.
+
+        Args:
+            bot_name: Bot owning the recorded conversations.
+            session_id: Current conversation, excluded from anchor selection.
+            user_ids: Frozen reply participants whose recent interactions are needed.
+
+        Returns:
+            Messages grouped by source group, deduplicated and ordered by database
+            ID. Each anchor is pending and at most twenty minutes old; its window
+            includes up to ten observed messages on either side. Source states
+            remain unchanged.
+        """
+        users = list(dict.fromkeys(str(uid) for uid in user_ids if uid))
+        if not users:
+            return {}
+        placeholders = ",".join("?" for _ in users)
+        async with self.conn.execute(
+            f"""
+            SELECT id, user_id, group_or_user_id, created_at
+            FROM chat_history
+            WHERE bot_name = ? AND user_id IN ({placeholders})
+              AND group_or_user_id IS NOT NULL AND group_or_user_id != ''
+              AND group_or_user_id != ? AND group_or_user_id != user_id
+              AND memory_status = 'pending'
+              AND COALESCE(role, 'message') = 'message'
+              AND COALESCE(is_recalled, 0) = 0
+            ORDER BY id DESC
+            """,
+            (bot_name, *users, session_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        now = datetime.now().timestamp()
+        anchors = {}
+        for row in rows:
+            try:
+                timestamp = datetime.fromisoformat(
+                    (row["created_at"] or "").replace("Z", "+00:00")
+                ).timestamp()
+            except (ValueError, OverflowError, OSError):
+                continue
+            if not 0 <= now - timestamp <= 20 * 60:
+                continue
+            previous = anchors.get(row["user_id"])
+            if previous is None or timestamp > previous[0]:
+                anchors[row["user_id"]] = (timestamp, row)
+
+        groups = {}
+        for _, anchor in anchors.values():
+            source = anchor["group_or_user_id"]
+            messages = groups.setdefault(source, {})
+            for operator, order, limit in (("<=", "DESC", 11), (">", "ASC", 10)):
+                async with self.conn.execute(
+                    f"""
+                    SELECT id, group_or_user_id, nickname, user_id, message_id,
+                           content, media_ids, is_recalled, role, created_at
+                    FROM chat_history
+                    WHERE bot_name = ? AND group_or_user_id = ? AND id {operator} ?
+                      AND memory_status IN ('pending', 'summarized')
+                      AND COALESCE(role, 'message') = 'message'
+                      AND COALESCE(is_recalled, 0) = 0
+                    ORDER BY id {order} LIMIT ?
+                    """,
+                    (bot_name, source, anchor["id"], limit),
+                ) as cursor:
+                    for row in await cursor.fetchall():
+                        messages[row["id"]] = _row_to_message(row)
+
+        result = {}
+        for source, messages in groups.items():
+            result[source] = await self._attach_forward_messages(
+                bot_name, source, [messages[mid] for mid in sorted(messages)]
+            )
+        return result
+
+    @serialized_operation
     async def get_user_messages_after_id(
         self,
         bot_name: str,

@@ -418,6 +418,7 @@ def build_reply_prompt(
     user_profiles: list[dict] | None = None,
     current_session_id: str = "",
     image_metadata: dict[str, MediaCaption] | None = None,
+    cross_group_context: dict[str, list[MessageData]] | None = None,
 ) -> str:
     recent_messages, reply_messages = prepare_reply_message_context(
         recent_messages, reply_messages or []
@@ -440,9 +441,14 @@ def build_reply_prompt(
         if str(brief.get("user_id")) not in profile_ids
     ]
     all_messages = [*recent_messages, *reply_messages]
+    cross_group_context = cross_group_context or {}
+    context_messages = [
+        *all_messages,
+        *(msg for messages in cross_group_context.values() for msg in messages),
+    ]
 
     processed_messages, remaining_captions = process_media_captions_for_prompt(
-        messages=all_messages,
+        messages=context_messages,
         media_captions=media_captions,
         threshold=100,
     )
@@ -479,7 +485,7 @@ def build_reply_prompt(
     copied_recent = (
         processed_messages[: len(recent_messages)] if recent_messages else []
     )
-    copied_reply = processed_messages[len(recent_messages) :]
+    copied_reply = processed_messages[len(recent_messages) : len(all_messages)]
 
     # Current results take precedence over copies from earlier turns.
     seen_memory_ids = set()
@@ -521,7 +527,9 @@ def build_reply_prompt(
         )
         user_prompt.append(f"<media_content>\n{media_captions_block}\n</media_content>")
     # 合并转发消息内容
-    forwarded_messages_block = build_forwarded_messages_block(processed_messages)
+    forwarded_messages_block = build_forwarded_messages_block(
+        processed_messages[: len(all_messages)]
+    )
     if forwarded_messages_block:
         user_prompt.append(forwarded_messages_block)
     # 近期消息
@@ -532,6 +540,33 @@ def build_reply_prompt(
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
+        )
+
+    cross_group_blocks = []
+    offset = len(all_messages)
+    for source, messages in cross_group_context.items():
+        copied_messages = processed_messages[offset : offset + len(messages)]
+        offset += len(messages)
+        if not copied_messages:
+            continue
+        parts = [
+            f"<group group_id={quoteattr(str(source))} "
+            f"source={quoteattr(f'来源群聊：{source}')}>",
+        ]
+        forwards = build_forwarded_messages_block(copied_messages)
+        if forwards:
+            parts.append(forwards)
+        parts.extend(
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit)
+            for msg in copied_messages
+        )
+        parts.append("</group>")
+        cross_group_blocks.append("\n".join(parts))
+    if cross_group_blocks:
+        user_prompt.append(
+            "<cross_group_context>\n"
+            + "\n".join(cross_group_blocks)
+            + "\n</cross_group_context>"
         )
 
     # 4. 即时刺激与心境生成区（高权重近因区，为生成提供直接依据，变动置底保护上方缓存）
@@ -559,7 +594,10 @@ def build_reply_prompt(
     if tool_results:
         user_prompt.append(f"<tool_results>\n{tool_results}\n</tool_results>")
     slang_block = build_slang_block(
-        slang_entries, all_messages, processed_messages, message_truncate_limit
+        slang_entries,
+        all_messages,
+        processed_messages[: len(all_messages)],
+        message_truncate_limit,
     )
     if slang_block:
         user_prompt.append(slang_block)
