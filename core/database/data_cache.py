@@ -16,6 +16,7 @@ from ..memory.atomic import memory_metadata
 from ..memory.memory import LTM
 from ..memory.recall_scope import select_automatic_recall_memories
 from ..utils.http_manager import HttpManager
+from ..utils.notice_parse import NoticeParser
 from ..utils.schemas import (
     MediaCaption,
     MemoryItem,
@@ -30,6 +31,9 @@ from .database import Database
 MAX_CAPTION_CACHE_SIZE = 500
 ACCOUNT_TYPE_QUERY_TIMEOUT = 2.0
 ACCOUNT_TYPE_RETRY_INTERVAL = 60.0
+GROUP_NAME_REFRESH_INTERVAL = 24 * 60 * 60
+GROUP_NAME_QUERY_TIMEOUT = 2.0
+GROUP_NAME_RETRY_INTERVAL = 60.0
 
 
 class DataCache:
@@ -74,6 +78,12 @@ class DataCache:
         self._account_type_retry_at: dict[tuple[str, str], float] = {}
         # Manually maintained group rules, using the legacy storage name.
         self.group_profiles: dict[str, str] = {}
+        self.group_metadata: dict[tuple[str, str], dict] = {}
+        self._group_metadata_locks: defaultdict[tuple[str, str], asyncio.Lock] = (
+            defaultdict(asyncio.Lock)
+        )
+        self._group_metadata_tasks: dict[tuple[str, str], asyncio.Task] = {}
+        self._group_metadata_retry_at: dict[tuple[str, str], float] = {}
         self.bot_status: dict[str, Status] = {}
 
         # 禁言静默状态缓存 bot_name:group_id -> expire_timestamp
@@ -103,6 +113,144 @@ class DataCache:
         self.session_recalled_memories: defaultdict[
             str, dict[str, SessionRecallMemory]
         ] = defaultdict(dict)
+
+    async def remember_group_name(
+        self,
+        bot_name: str,
+        group_id: str,
+        group_name: str,
+        *,
+        refreshed: bool = False,
+    ) -> None:
+        """Remember a supplied platform name, preserving old names on empty results.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_id: Platform group identifier.
+            group_name: Name supplied by an event, rename notice, or group query.
+            refreshed: Whether a successful query also renews the refresh timestamp.
+        """
+        if not bot_name or not group_id or not isinstance(group_name, str):
+            return
+        group_name = group_name.strip()
+        if not group_name:
+            return
+        key = (bot_name, group_id)
+        async with self._group_metadata_locks[key]:
+            try:
+                if key not in self.group_metadata:
+                    self.group_metadata[key] = await self.db.get_group_metadata(*key)
+                record = self.group_metadata[key]
+                if record.get("group_name") == group_name and not refreshed:
+                    return
+                now = datetime.now().timestamp()
+                await self.db.upsert_group_metadata(*key, group_name, now)
+                self.group_metadata[key] = {
+                    "group_name": group_name,
+                    "refreshed_at": now,
+                }
+                self._group_metadata_retry_at.pop(key, None)
+            except Exception as error:
+                logger.warning(
+                    "[Giftia] Failed to remember group name for %s/%s: %s",
+                    *key,
+                    error,
+                )
+
+    async def observe_group_metadata(
+        self, bot_name: str, event: AstrMessageEvent
+    ) -> None:
+        """Observe inbound names and schedule one lightweight refresh when needed.
+
+        Args:
+            bot_name: Owning bot configuration.
+            event: Accepted incoming event supplying group data and API routing.
+        """
+        group_id = str(event.get_group_id() or "").strip()
+        if not group_id or group_id in ("0", "None"):
+            return
+        key = (bot_name, group_id)
+        message = getattr(event, "message_obj", None)
+        group_name = getattr(getattr(message, "group", None), "group_name", None)
+        raw = getattr(message, "raw_message", None)
+        if NoticeParser.get_event_types(raw) == ("notice", "notify", "group_name"):
+            group_name = NoticeParser.get_event_field(raw, "name_new", "")
+        await self.remember_group_name(bot_name, group_id, group_name)
+        if key not in self.group_metadata:
+            self.group_metadata[key] = await self.db.get_group_metadata(*key)
+        record = self.group_metadata[key]
+        age = datetime.now().timestamp() - record.get("refreshed_at", 0)
+        if record.get("group_name") and 0 <= age < GROUP_NAME_REFRESH_INTERVAL:
+            return
+        client = getattr(event, "bot", None)
+        if (
+            not callable(getattr(client, "call_action", None))
+            or key in self._group_metadata_tasks
+            or time.monotonic() < self._group_metadata_retry_at.get(key, 0)
+        ):
+            return
+
+        task = asyncio.create_task(
+            self._refresh_group_metadata(bot_name, event, record)
+        )
+        self._group_metadata_tasks[key] = task
+        running_tasks = getattr(self.plugin, "running_tasks", None)
+        if running_tasks is not None:
+            running_tasks[str(id(task))] = task
+
+        def completed(finished: asyncio.Task) -> None:
+            self._group_metadata_tasks.pop(key, None)
+            if running_tasks is not None:
+                running_tasks.pop(str(id(finished)), None)
+            if not finished.cancelled():
+                finished.exception()
+
+        task.add_done_callback(completed)
+
+    async def _refresh_group_metadata(
+        self, bot_name: str, event: AstrMessageEvent, snapshot: dict
+    ) -> None:
+        """Refresh one name without replacing an observation received during lookup.
+
+        Args:
+            bot_name: Owning bot configuration.
+            event: Incoming event supplying the lightweight group API client.
+            snapshot: Metadata object captured before the request started.
+        """
+        group_id = str(event.get_group_id())
+        key = (bot_name, group_id)
+        self_id = str(event.get_self_id() or "")
+        try:
+            info = await asyncio.wait_for(
+                event.bot.call_action(
+                    action="get_group_info",
+                    group_id=int(group_id) if group_id.isdigit() else group_id,
+                    no_cache=True,
+                    **({"self_id": self_id} if self_id else {}),
+                ),
+                timeout=GROUP_NAME_QUERY_TIMEOUT,
+            )
+            if isinstance(info, dict) and "data" in info:
+                if info.get("status") != "ok" or info.get("retcode") != 0:
+                    raise ValueError("Group lookup did not succeed")
+                info = info["data"]
+            if not isinstance(info, dict) or not isinstance(
+                info.get("group_name"), str
+            ):
+                raise ValueError("Group lookup omitted its name")
+            if not info["group_name"].strip():
+                raise ValueError("Group lookup returned an empty name")
+            if "group_id" in info and str(info["group_id"]) != group_id:
+                raise ValueError("Group lookup returned a different group")
+            if self.group_metadata.get(key) is snapshot:
+                await self.remember_group_name(
+                    bot_name, group_id, info["group_name"], refreshed=True
+                )
+        except Exception as error:
+            self._group_metadata_retry_at[key] = (
+                time.monotonic() + GROUP_NAME_RETRY_INTERVAL
+            )
+            logger.debug("[Giftia] Group name lookup failed for %s/%s: %s", *key, error)
 
     async def get_recent_message(
         self, bot_name: str, group_id: str, limit: int = 50

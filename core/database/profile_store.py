@@ -30,6 +30,73 @@ PROFILE_NAMES_CTE = """
 
 class ProfileStoreMixin(RelationHistoryStoreMixin):
     @serialized_operation
+    async def get_group_metadata(self, bot_name: str, group_id: str) -> dict:
+        """Read a group's last known platform name and successful refresh time.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_id: Platform group identifier.
+
+        Returns:
+            Stored metadata, or an empty dictionary for an unknown group.
+        """
+        async with self.conn.execute(
+            "SELECT group_name, refreshed_at FROM group_metadata "
+            "WHERE bot_name=? AND group_id=?",
+            (bot_name, group_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else {}
+
+    @serialized_operation
+    async def get_group_names(
+        self, bot_name: str, group_ids: list[str]
+    ) -> dict[str, str]:
+        """Resolve stored group names in one read without querying the platform.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_ids: Requested platform group identifiers.
+
+        Returns:
+            Known names keyed by group ID; unknown groups are omitted.
+        """
+        ids = list(dict.fromkeys(str(gid) for gid in group_ids if gid))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        async with self.conn.execute(
+            "SELECT group_id, group_name FROM group_metadata "
+            f"WHERE bot_name=? AND group_id IN ({placeholders})",
+            (bot_name, *ids),
+        ) as cursor:
+            return {
+                row["group_id"]: row["group_name"] for row in await cursor.fetchall()
+            }
+
+    @serialized_operation
+    async def upsert_group_metadata(
+        self, bot_name: str, group_id: str, group_name: str, refreshed_at: float
+    ) -> None:
+        """Persist a successful observation without clearing names on empty results.
+
+        Args:
+            bot_name: Owning bot configuration.
+            group_id: Platform group identifier.
+            group_name: Nonempty platform group name.
+            refreshed_at: Unix timestamp of the successful observation.
+        """
+        if not bot_name or not group_id or not group_name.strip():
+            return
+        await self.conn.execute(
+            "INSERT INTO group_metadata (bot_name, group_id, group_name, refreshed_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(bot_name, group_id) DO UPDATE SET "
+            "group_name=excluded.group_name, refreshed_at=excluded.refreshed_at",
+            (bot_name, group_id, group_name.strip(), refreshed_at),
+        )
+        await self.conn.commit()
+
+    @serialized_operation
     async def initialize_user_profile(
         self,
         bot_name: str,

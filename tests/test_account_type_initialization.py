@@ -315,6 +315,7 @@ async def test_missing_and_self_senders_never_create_profiles(
 async def test_real_incoming_message_initializes_before_admission_without_passive_memory(
     runtime, incoming, allowed
 ):
+    runtime.cache.observe_group_metadata = AsyncMock()
     plugin = SimpleNamespace(
         db=runtime.db,
         data_cache=runtime.cache,

@@ -225,6 +225,7 @@ class ReplyPipeline:
         tool_context: dict | None = None,
         review_after_id: int | None = None,
         cross_group_context: dict[str, list[MessageData]] | None = None,
+        cross_group_names: dict[str, str] | None = None,
     ):
         """Generate frozen reply turns and review the first eligible unsent draft.
 
@@ -247,6 +248,7 @@ class ReplyPipeline:
             tool_context: Trusted state shared by tool invocations.
             review_after_id: Input watermark; None disables review for this run.
             cross_group_context: Source-group windows frozen across tool turns.
+            cross_group_names: Known names for the frozen source-group windows.
 
         Yields:
             Parsed reply results ready for action dispatch.
@@ -320,6 +322,15 @@ class ReplyPipeline:
                         bot_name, group_or_user_id, cross_group_users
                     )
                 )
+
+        if cross_group_names is None:
+            cross_group_names = (
+                await self.plugin.db.get_group_names(
+                    bot_name, list(cross_group_context)
+                )
+                if cross_group_context
+                else {}
+            )
 
         context_messages = [
             *recent_messages,
@@ -585,6 +596,16 @@ class ReplyPipeline:
             )
 
         # 3. 构造回复提示词 Prompt
+        group_data = (
+            await event.get_group(event.get_group_id()) if event.get_group_id() else ""
+        )
+        if isinstance(getattr(group_data, "group_name", None), str):
+            await self.plugin.data_cache.remember_group_name(
+                bot_name,
+                str(event.get_group_id()),
+                group_data.group_name,
+                refreshed=True,
+            )
         user_prompt = build_reply_prompt(
             current_session_id=group_or_user_id,
             recent_messages=prompt_recent_messages,
@@ -592,16 +613,13 @@ class ReplyPipeline:
             image_metadata=image_metadata,
             reply_messages=prompt_reply_messages,
             remind_message=remind_message,
-            group_data=str(
-                await event.get_group(event.get_group_id())
-                if event.get_group_id()
-                else ""
-            ),
+            group_data=str(group_data),
             bot_status=bot_status,
             tool_results=tool_results,
             session_recalled_memories=session_recalled_memories,
             relevant_memories=relevant_memories,
             cross_group_context=cross_group_context,
+            cross_group_names=cross_group_names,
             user_profiles=user_profiles,
             group_profile=group_profile,
             active_user_briefs=active_user_briefs,
@@ -859,5 +877,6 @@ class ReplyPipeline:
                 task_creator_names=llm_result.task_creator_names,
                 tool_context=tool_context,
                 cross_group_context=cross_group_context,
+                cross_group_names=cross_group_names,
             ):
                 yield chunk

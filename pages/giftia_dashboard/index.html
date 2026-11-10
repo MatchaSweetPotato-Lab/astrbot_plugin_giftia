@@ -257,6 +257,16 @@
 
             <!-- TAB 3: Bot Status -->
             <section id="tab-bot-status" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="status-bot-name">BOT名称</label>
+                            <select id="status-bot-name">
+                                <option value="">暂无 Bot</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
                 <div class="grid-layout" id="status-grid">
                     <!-- Dynamic status cards -->
                 </div>
@@ -442,8 +452,9 @@
                             <select id="profile-group-id-select"></select>
                         </div>
                         <div class="filter-group" id="profile-group-input-group" style="display: none;">
-                            <label>群聊ID</label>
-                            <input type="text" id="profile-group-id-input" placeholder="筛选群聊ID">
+                            <label>群聊</label>
+                            <input type="text" id="profile-group-id-input" list="profile-group-sessions" placeholder="输入群 ID 或选择群聊">
+                            <datalist id="profile-group-sessions"></datalist>
                         </div>
                         <div class="filter-group" id="profile-user-filter-group">
                             <label>用户ID</label>

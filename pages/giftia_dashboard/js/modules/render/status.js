@@ -1,22 +1,36 @@
+import { populateBotSelect } from '../filters.js';
+
+let statusRequestId = 0;
+
 export async function loadBotStatus() {
+    const requestId = ++statusRequestId;
     const container = document.getElementById("status-grid");
     container.innerHTML = `<div class="loading-row flex-grow"><span class="loader"></span> 加载状态中...</div>`;
 
     try {
         const res = await window.apiGet("/status");
+        if (requestId !== statusRequestId) return;
         if (res.status === "success" && res.data) {
             renderBotStatus(res.data);
         } else {
             throw new Error(res.message || "请求失败");
         }
     } catch (e) {
-        container.innerHTML = `<div class="no-data-row flex-grow">加载状态失败: ${e.message}</div>`;
+        if (requestId !== statusRequestId) return;
+        container.innerHTML = `<div class="no-data-row flex-grow">加载状态失败: ${window.escapeHtml(String(e.message))}</div>`;
     }
 }
 
 export function renderBotStatus(items) {
     const container = document.getElementById("status-grid");
-    if (!items || items.length === 0) {
+    const botSelect = document.getElementById("status-bot-name");
+    const statuses = items || [];
+    const bots = [...new Set(statuses.map(item => item.bot_name).filter(Boolean))].sort();
+    const selectedBot = bots.includes(botSelect.value) ? botSelect.value : (bots[0] || "");
+    populateBotSelect(botSelect, bots, selectedBot);
+    botSelect.onchange = () => renderBotStatus(statuses);
+    items = statuses.filter(item => item.bot_name === selectedBot);
+    if (items.length === 0) {
         container.innerHTML = `<div class="no-data-row flex-grow">目前暂无活动的会话状态，请让机器人先和群友聊天试试吧！</div>`;
         return;
     }
@@ -67,11 +81,8 @@ export function renderBotStatus(items) {
             <div class="status-card card">
                 <div class="status-card-header">
                     <div class="status-card-titles">
-                        <h3 class="status-card-title">${window.escapeHtml(item.bot_name)}</h3>
                         <div class="status-card-subtitle-row">
-                            <span class="status-card-subtitle" title="${window.escapeHtml(item.group_or_user_id)}">
-                                会话: ${window.escapeHtml(item.group_or_user_id)}
-                            </span>
+                            <h3 class="status-card-title" title="${window.escapeHtml(window.formatSessionLabel(item))}">${window.escapeHtml(window.formatSessionLabel(item))}</h3>
                             <button class="btn-copy-icon" onclick="window.copyToClipboard(decodeURIComponent('${groupArg}'), '会话 ID')" title="复制会话 ID">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>

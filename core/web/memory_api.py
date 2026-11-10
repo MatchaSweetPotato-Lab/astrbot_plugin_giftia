@@ -8,7 +8,7 @@ from astrbot.api.web import error_response, json_response, request
 from ..database.profile_store import PROFILE_NAMES_CTE
 from ..memory.atomic import MemoryRecord, memory_metadata
 from ..utils.schemas import normalize_memory_importance
-from .web_helpers import optional_bool, optional_int
+from .web_helpers import attach_group_names, optional_bool, optional_int
 
 
 class MemoryApi:
@@ -228,6 +228,8 @@ class MemoryApi:
                             f"[Giftia API] Failed to query user call names for memories: {e}"
                         )
 
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {
                     "status": "success",
@@ -292,6 +294,8 @@ class MemoryApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+
+            await attach_group_names(self.giftia.db, sessions, selected_bot_name)
 
             return json_response(
                 {
@@ -515,6 +519,8 @@ class MemoryApi:
                         item, clean_rules
                     )
                     items.append(item)
+
+            await attach_group_names(self.giftia.db, items)
 
             return json_response(
                 {

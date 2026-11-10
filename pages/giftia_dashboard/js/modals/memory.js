@@ -245,7 +245,7 @@ function renderMemoryCleanCandidates(items, total, truncated) {
                     <div class="memory-clean-candidate-text">${window.escapeHtml(item.text)}</div>
                     <div class="memory-clean-candidate-meta">
                         ${item.metadata?.manual_entry ? '<span>人工录入</span>' : ''}
-                        <span>会话 ${window.escapeHtml(item.group_or_user_id || "-")}</span>
+                        <span>会话 ${window.escapeHtml(window.formatSessionLabel(item) || "-")}</span>
                         <span>重要度 ${item.importance}</span>
                         <span>命中 ${item.hit_count || 0} 次</span>
                         <span>创建 ${window.formatDate(item.created_at)}</span>

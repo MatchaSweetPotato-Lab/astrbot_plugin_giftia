@@ -419,6 +419,7 @@ def build_reply_prompt(
     current_session_id: str = "",
     image_metadata: dict[str, MediaCaption] | None = None,
     cross_group_context: dict[str, list[MessageData]] | None = None,
+    cross_group_names: dict[str, str] | None = None,
 ) -> str:
     recent_messages, reply_messages = prepare_reply_message_context(
         recent_messages, reply_messages or []
@@ -549,9 +550,14 @@ def build_reply_prompt(
         offset += len(messages)
         if not copied_messages:
             continue
+        name = (cross_group_names or {}).get(source, "")
+        name_attr = f" group_name={quoteattr(name)}" if name else ""
+        source_label = (
+            f"来源群聊：{name}（{source}）" if name else f"来源群聊：{source}"
+        )
         parts = [
-            f"<group group_id={quoteattr(str(source))} "
-            f"source={quoteattr(f'来源群聊：{source}')}>",
+            f"<group group_id={quoteattr(str(source))}{name_attr} "
+            f"source={quoteattr(source_label)}>",
         ]
         forwards = build_forwarded_messages_block(copied_messages)
         if forwards:

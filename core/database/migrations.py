@@ -522,6 +522,25 @@ async def _migrate_to_v5(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def _migrate_to_v6(conn: aiosqlite.Connection) -> None:
+    """Persist platform group names independently from manually maintained rules.
+
+    Args:
+        conn: Database connection being initialized.
+    """
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS group_metadata (
+            bot_name TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            refreshed_at REAL NOT NULL,
+            PRIMARY KEY (bot_name, group_id)
+        )
+        """
+    )
+
+
 # Schema versions are independent of plugin releases; released steps stay frozen.
 MIGRATIONS = (
     (1, _migrate_legacy_to_v1),
@@ -529,6 +548,7 @@ MIGRATIONS = (
     (3, _migrate_to_v3),
     (4, _migrate_to_v4),
     (5, _migrate_to_v5),
+    (6, _migrate_to_v6),
 )
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 

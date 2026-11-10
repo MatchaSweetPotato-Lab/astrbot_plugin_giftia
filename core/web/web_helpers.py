@@ -13,6 +13,32 @@ USER_PROFILE_FIELD_KEYS = (
 )
 
 
+async def attach_group_names(
+    db, items: list[dict], bot_name: str | None = None
+) -> None:
+    """Enrich dashboard records using known names while retaining raw identifiers.
+
+    Args:
+        db: Database providing batched, bot-scoped name lookup.
+        items: Mutable records containing group_or_user_id or group_id.
+        bot_name: Default bot for records from a single-bot filter or query.
+    """
+    by_bot = {}
+    for item in items:
+        owner = item.get("bot_name") or bot_name
+        group_id = item.get("group_or_user_id") or item.get("group_id")
+        if owner and group_id:
+            by_bot.setdefault(owner, []).append((str(group_id), item))
+    for owner, records in by_bot.items():
+        names = await db.get_group_names(owner, [gid for gid, _ in records])
+        for group_id, item in records:
+            name = names.get(group_id)
+            if name:
+                item["group_name"] = name
+                if str(item.get("source_label", "")).startswith("来源群聊"):
+                    item["source_label"] = f"来源群聊：{name}（{group_id}）"
+
+
 def optional_int(
     value, default: int | None = None, min_value: int | None = None
 ) -> int | None:

@@ -197,6 +197,11 @@ function renderChartAndProgressBars() {
             let label = key;
             if (dimension === "model" && key.includes("/")) {
                 label = key.split("/").pop();
+            } else if (dimension === "group") {
+                label = window.formatSessionLabel(
+                    (stats.by_group || []).find(group => group.group_or_user_id === key)
+                    || { group_or_user_id: key }
+                );
             } else if (dimension === "type") {
                 const typeNameMap = {
                     'reply': '正式回复',
@@ -329,12 +334,12 @@ function renderChartAndProgressBars() {
             container.innerHTML = groups.map((g) => {
                 const tokens = g.total_tokens || 0;
                 const pct = ((tokens / maxGroupTokens) * 100).toFixed(1);
-                const gKey = g.group_or_user_id || '私聊/系统';
-                const barColor = getColorForKey(gKey);
+                const gKey = window.formatSessionLabel(g) || '私聊/系统';
+                const barColor = getColorForKey(g.group_or_user_id || '私聊/系统');
                 return `
                     <div class="token-stat-row">
                         <div class="token-stat-info align-center">
-                            <span class="token-stat-name monospace" title="${gKey}">${gKey}</span>
+                            <span class="token-stat-name monospace" title="${window.escapeHtml(gKey)}">${window.escapeHtml(gKey)}</span>
                             <span class="token-stat-value">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                         </div>
                         <div class="progress-bar-container">

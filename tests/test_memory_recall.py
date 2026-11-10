@@ -5,11 +5,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from xml.etree.ElementTree import fromstring
 
+import aiosqlite
 import pytest
+from core.conversation.decision_engine import DecisionEngine
 from core.conversation.media_captioner import MediaCaptioner
 from core.conversation.reply_pipeline import ReplyPipeline
 from core.database.data_cache import DataCache
-from core.utils.schemas import MediaCaption, MessageData, XmlLlmResult
+from core.database.database import Database
+from core.database.schema import initialize_database
+from core.utils.schemas import Decision, MediaCaption, MessageData, XmlLlmResult
+
+from astrbot.core.platform.astrbot_message import Group
 
 
 def memory(memory_id, score=0.9, text=None, users=None):
@@ -78,6 +84,7 @@ def runtime():
             )
         ),
         db=SimpleNamespace(
+            get_group_names=AsyncMock(return_value={}),
             get_cross_group_pending_context=AsyncMock(return_value={}),
             get_user_common_groups=AsyncMock(return_value={}),
             get_relation_changes=AsyncMock(return_value=[]),
@@ -121,6 +128,40 @@ def runtime():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["reply", "decision"])
+async def test_existing_group_queries_backfill_names_without_an_extra_request(
+    runtime, tmp_path, monkeypatch, stage
+):
+    monkeypatch.setenv("ASTRBOT_ROOT", str(tmp_path))
+    async with aiosqlite.connect(":memory:") as conn:
+        conn.row_factory = aiosqlite.Row
+        await initialize_database(conn)
+        runtime.cache.db = Database(conn)
+        runtime.event.get_group.return_value = Group(
+            group_id="group", group_name='讨论群 & "A"'
+        )
+        targets = [MessageData(message_id="A", user_id="alice", content="hello")]
+        if stage == "reply":
+            await runtime.run(reply_messages=targets)
+        else:
+            runtime.plugin.active_reply_counters = {}
+            runtime.plugin.bot_map["bot"]["decision_conf"] = {
+                "provider_ids": ["decision"]
+            }
+            runtime.plugin.db.update_message_decision = AsyncMock()
+            runtime.plugin.call_llm.call_llm_decision = AsyncMock(
+                return_value=Decision(reply_decision=0, use_rag=0)
+            )
+            await DecisionEngine(runtime.plugin).evaluate_decision(
+                runtime.event, "bot", "Bot", "group", targets, []
+            )
+        assert await runtime.cache.db.get_group_names("bot", ["group"]) == {
+            "group": '讨论群 & "A"'
+        }
+        runtime.event.get_group.assert_awaited_once_with("group")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("has_context", [False, True])
 async def test_cross_group_context_queries_only_targets_and_stays_frozen_across_tools(
     runtime, has_context
@@ -133,6 +174,7 @@ async def test_cross_group_context_queries_only_targets_and_stays_frozen_across_
         message_id="foreign", user_id="carol", content="another group's interaction"
     )
     context = {"source": [foreign]} if has_context else {}
+    runtime.plugin.db.get_group_names.return_value = {"source": '来源群 & "A"'}
     runtime.plugin.db.get_cross_group_pending_context.side_effect = [
         context,
         {"source": [MessageData(content="late arrival")]},
@@ -156,6 +198,7 @@ async def test_cross_group_context_queries_only_targets_and_stays_frozen_across_
         "bot", "group", ["alice", "bob"]
     )
     assert len(runtime.plugin.call_llm.call_llm_reply.await_args_list) == 2
+    assert runtime.plugin.db.get_group_names.await_count == int(has_context)
     for call in runtime.plugin.call_llm.call_llm_reply.await_args_list:
         prompt = call.kwargs["user_prompt"]
         root = fromstring(f"<root>{prompt}</root>")
@@ -163,6 +206,8 @@ async def test_cross_group_context_queries_only_targets_and_stays_frozen_across_
         assert (block is not None) is has_context
         if has_context:
             assert block.find("group/message").text == foreign.content
+            assert block.find("group").get("group_id") == "source"
+            assert block.find("group").get("group_name") == '来源群 & "A"'
         assert "late arrival" not in prompt
         assert all(
             msg.get("message_id") != "foreign" for msg in root.find("reply_messages")

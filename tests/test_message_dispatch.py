@@ -42,6 +42,7 @@ def runtime(monkeypatch):
             chat_history_repo=SimpleNamespace(update_processing_status=AsyncMock()),
         ),
         data_cache=SimpleNamespace(
+            observe_group_metadata=AsyncMock(),
             add_message=AsyncMock(),
             get_recent_message=AsyncMock(return_value=[]),
             is_bot_muted=Mock(return_value=False),

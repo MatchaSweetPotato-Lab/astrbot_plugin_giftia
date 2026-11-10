@@ -6,6 +6,12 @@ window.ACCOUNT_TYPE_LABELS = Object.freeze({
     qq_account: "普通 QQ 账号"
 });
 
+window.formatSessionLabel = function(session) {
+    const id = String(session?.group_or_user_id || session?.group_id || "");
+    const name = typeof session?.group_name === "string" ? session.group_name.trim() : "";
+    return name && id ? `${name}（${id}）` : id;
+};
+
 window.formatDate = function(isoString) {
     if (!isoString) return "-";
     try {

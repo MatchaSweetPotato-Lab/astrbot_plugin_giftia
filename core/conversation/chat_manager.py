@@ -473,6 +473,7 @@ class ChatManager:
         async with self.plugin.parse_locks[f"{bot_name}:{event.unified_msg_origin}"]:
             if not self.decision_engine.check_whitelists(event):
                 return
+            await self.plugin.data_cache.observe_group_metadata(bot_name, event)
             (
                 current_message,
                 _image_urls,
@@ -1626,6 +1627,9 @@ class ChatManager:
                     )
                     if isinstance(info, dict):
                         group_name = info.get("group_name", "")
+                        await self.plugin.data_cache.remember_group_name(
+                            bot_name, group_id, group_name, refreshed=True
+                        )
                 except Exception:
                     pass
             group_display = (

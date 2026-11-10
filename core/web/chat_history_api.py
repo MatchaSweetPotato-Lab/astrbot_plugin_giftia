@@ -3,6 +3,8 @@ import json
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from .web_helpers import attach_group_names
+
 
 class ChatHistoryApi:
     """Chat history APIs: query, filter options, delete, auto clean configs/triggers."""
@@ -96,6 +98,8 @@ class ChatHistoryApi:
                     0,
                 )
 
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {
                     "status": "success",
@@ -174,6 +178,8 @@ class ChatHistoryApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+
+            await attach_group_names(self.giftia.db, sessions, selected_bot_name)
 
             return json_response(
                 {

@@ -5,6 +5,7 @@ from astrbot.api.web import error_response, json_response, request
 
 from ..database.repositories.bot_status import parse_custom_status_json
 from ..utils.schemas import normalize_energy
+from .web_helpers import attach_group_names
 
 
 class BotStatusApi:
@@ -55,6 +56,8 @@ class BotStatusApi:
                         "task_board": task_board,
                     }
                 )
+
+            await attach_group_names(self.giftia.db, items)
 
             return json_response({"status": "success", "data": items})
         except Exception as e:

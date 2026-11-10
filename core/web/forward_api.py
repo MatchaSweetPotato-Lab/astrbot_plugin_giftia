@@ -5,6 +5,7 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 from ..utils.schemas import FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
+from .web_helpers import attach_group_names
 
 
 def _safe_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -219,6 +220,8 @@ class ForwardApi:
                     self._row_to_forward_item(row, include_nodes=False) for row in rows
                 ]
 
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {
                     "status": "success",
@@ -262,10 +265,12 @@ class ForwardApi:
             if not row:
                 return error_response("合并转发记录不存在")
 
+            item = self._row_to_forward_item(row, include_nodes=True)
+            await attach_group_names(self.giftia.db, [item])
             return json_response(
                 {
                     "status": "success",
-                    "data": self._row_to_forward_item(row, include_nodes=True),
+                    "data": item,
                 }
             )
         except Exception as e:
@@ -321,6 +326,8 @@ class ForwardApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+
+            await attach_group_names(self.giftia.db, sessions, selected_bot_name)
 
             return json_response(
                 {

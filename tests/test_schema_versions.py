@@ -26,6 +26,33 @@ async def schema_version(conn):
 
 
 @pytest.mark.asyncio
+async def test_group_metadata_upgrade_preserves_rules_and_names_on_restart(database):
+    await database.execute("BEGIN")
+    for version, migration in migrations.MIGRATIONS:
+        if version >= 6:
+            break
+        await migration(database)
+        await database.execute(f"PRAGMA user_version={version}")
+    await database.execute(
+        "INSERT INTO group_profiles (bot_name, group_or_user_id, profile) "
+        "VALUES ('bot', '123', 'Existing group rules')"
+    )
+    await database.commit()
+    await schema.initialize_database(database)
+    await database.execute(
+        "INSERT INTO group_metadata (bot_name, group_id, group_name, refreshed_at) "
+        "VALUES ('bot', '123', 'Group name', 1794268800)"
+    )
+    await database.commit()
+    await schema.initialize_database(database)
+    async with database.execute("SELECT profile FROM group_profiles") as cursor:
+        assert (await cursor.fetchone())[0] == "Existing group rules"
+    async with database.execute("SELECT group_name FROM group_metadata") as cursor:
+        assert (await cursor.fetchone())[0] == "Group name"
+    assert await schema_version(database) == migrations.CURRENT_SCHEMA_VERSION
+
+
+@pytest.mark.asyncio
 async def test_fresh_database_has_latest_schema_without_running_migrations(
     database, monkeypatch
 ):
