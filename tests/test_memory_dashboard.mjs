@@ -39,11 +39,12 @@ globalThis.document = {
 globalThis.window = {};
 await import('../pages/giftia_dashboard/js/utils.js');
 const { state } = await import('../pages/giftia_dashboard/js/modules/state.js');
-const { getScopedFilterParams } = await import('../pages/giftia_dashboard/js/modules/filters.js');
+const { getScopedFilterParams, populateSessionSelect, refreshScopedFilters } = await import('../pages/giftia_dashboard/js/modules/filters.js');
 const { loadMemories, renderMemories } = await import('../pages/giftia_dashboard/js/modules/render/memories.js');
 const { renderChatHistory } = await import('../pages/giftia_dashboard/js/modules/render/history.js');
 const { renderRelationChanges } = await import('../pages/giftia_dashboard/js/modules/render/relation_history.js');
-const { renderUserProfiles } = await import('../pages/giftia_dashboard/js/modules/render/profiles.js');
+const { renderUserProfiles, renderGroupProfiles } = await import('../pages/giftia_dashboard/js/modules/render/profiles.js');
+const { loadBotStatus, renderBotStatus } = await import('../pages/giftia_dashboard/js/modules/render/status.js');
 await import('../pages/giftia_dashboard/js/modals/memory.js');
 await import('../pages/giftia_dashboard/js/modals/profile.js');
 await import('../pages/giftia_dashboard/js/modals/relation_guide.js');
@@ -73,6 +74,91 @@ beforeEach(() => {
         loadMemories: async () => {},
         loadUserProfiles: async () => {}
     };
+});
+
+test('session labels preserve raw filter IDs and unknown-name fallback', () => {
+    const select = get('history-group-id');
+    select.tagName = 'SELECT';
+    populateSessionSelect(select, [
+        { group_or_user_id: '123', group_name: '兴趣群 & <讨论>', total: 2 },
+        { group_or_user_id: '456', total: 1 },
+    ], '123');
+    assert.deepEqual(select.options.map(option => option.value), ['123', '456']);
+    assert.deepEqual(select.options.map(option => option.text), ['兴趣群 & <讨论>（123） (2)', '456 (1)']);
+    assert.equal(select.value, '123');
+    assert.equal(select.title, '兴趣群 & <讨论>（123）');
+});
+
+test('group rule name suggestions refresh without changing the typed group ID', async () => {
+    get('profile-bot-name').value = 'bot';
+    const input = get('profile-group-id-input');
+    input.tagName = 'INPUT';
+    input.value = '999';
+    input.setAttribute('list', 'profile-group-sessions');
+    window.apiGet = async () => ({ status: 'success', data: {
+        bots: ['bot'], selected_bot_name: 'bot',
+        sessions: [{ group_or_user_id: '123', group_name: '兴趣群', total: 1 }]
+    } });
+    await refreshScopedFilters('groupProfiles');
+    assert.equal(input.value, '999');
+    const [suggestion] = get('profile-group-sessions').options;
+    assert.equal(suggestion.value, '123');
+    assert.equal(suggestion.text, '兴趣群（123）');
+});
+
+test('group cards and status escape names while preserving IDs and actions', () => {
+    const item = { bot_name: 'bot', group_or_user_id: '123', group_name: '<img src=x onerror=alert(1)>', profile: 'rules' };
+    renderGroupProfiles([item]);
+    renderBotStatus([item]);
+    for (const id of ['group-profile-list', 'status-grid']) {
+        const html = get(id).innerHTML;
+        assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;（123）/);
+        assert.doesNotMatch(html, /<img/);
+    }
+    assert.match(get('status-grid').innerHTML, /复制会话 ID/);
+});
+
+test('status bot selection isolates cards while preserving group IDs and action routing', () => {
+    const items = [
+        { bot_name: 'Bot B', group_or_user_id: '123', group_name: '群 B', mood: 'B mood' },
+        { bot_name: 'Bot A', group_or_user_id: '123', group_name: '群 A', mood: 'A mood' },
+    ];
+    const select = get('status-bot-name');
+    select.value = 'Bot B';
+    renderBotStatus(items);
+    assert.deepEqual(select.options.map(option => option.value), ['Bot A', 'Bot B']);
+    assert.equal(select.value, 'Bot B');
+    assert.match(get('status-grid').innerHTML, /群 B（123）/);
+    assert.doesNotMatch(get('status-grid').innerHTML, /群 A|A mood/);
+    assert.match(get('status-grid').innerHTML, /fillEnergy\('Bot%20B', '123'\)/);
+    assert.doesNotMatch(get('status-grid').innerHTML.match(/<h3[^>]*>.*?<\/h3>/)[0], /Bot B/);
+
+    select.value = 'Bot A';
+    select.onchange();
+    assert.match(get('status-grid').innerHTML, /群 A（123）/);
+    assert.doesNotMatch(get('status-grid').innerHTML, /群 B|B mood/);
+    renderBotStatus([]);
+    assert.equal(select.disabled, true);
+    assert.match(get('status-grid').innerHTML, /暂无活动的会话状态/);
+});
+
+test('late status refreshes cannot replace current data or change the selected bot', async () => {
+    const pending = [];
+    window.apiGet = () => new Promise(resolve => pending.push(resolve));
+    const select = get('status-bot-name');
+    select.value = 'Bot B';
+    const older = loadBotStatus();
+    const newer = loadBotStatus();
+    pending[1]({ status: 'success', data: [
+        { bot_name: 'Bot A', group_or_user_id: '123', mood: 'other bot' },
+        { bot_name: 'Bot B', group_or_user_id: '456', mood: 'current data' },
+    ] });
+    await newer;
+    pending[0]({ status: 'success', data: [{ bot_name: 'Bot A', mood: 'stale data' }] });
+    await older;
+    assert.equal(select.value, 'Bot B');
+    assert.match(get('status-grid').innerHTML, /current data/);
+    assert.doesNotMatch(get('status-grid').innerHTML, /other bot|stale data/);
 });
 
 test('history badges use each message observation state independently', () => {

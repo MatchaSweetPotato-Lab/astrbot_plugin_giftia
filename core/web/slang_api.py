@@ -1,6 +1,8 @@
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from .web_helpers import attach_group_names
+
 
 class SlangApi:
     """Dashboard vocabulary management using the shared session repository."""
@@ -37,6 +39,8 @@ class SlangApi:
                 [*params, limit, (page - 1) * limit],
             ) as cursor:
                 items = [dict(row) for row in await cursor.fetchall()]
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {"status": "success", "data": {"items": items, "total": total}}
             )
@@ -85,6 +89,8 @@ class SlangApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+            await attach_group_names(self.giftia.db, sessions, selected)
+
             return json_response(
                 {
                     "status": "success",

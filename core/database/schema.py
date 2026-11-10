@@ -10,6 +10,15 @@ from . import migrations
 
 TABLE_DEFINITIONS = (
     """
+    CREATE TABLE IF NOT EXISTS group_metadata (
+        bot_name TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        group_name TEXT NOT NULL,
+        refreshed_at REAL NOT NULL,
+        PRIMARY KEY (bot_name, group_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS slang (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bot_name TEXT NOT NULL,

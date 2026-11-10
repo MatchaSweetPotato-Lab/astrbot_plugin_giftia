@@ -107,9 +107,20 @@ export function populateBotSelect(selectEl, bots, selectedBotName) {
 
 export function populateSessionSelect(selectEl, sessions, selectedSession) {
     if (!selectEl) return;
-    if (selectEl.tagName !== "SELECT") return;
+    if (selectEl.tagName !== "SELECT") {
+        const listId = selectEl.getAttribute('list');
+        if (listId) {
+            document.getElementById(listId)?.replaceChildren(
+                ...(sessions || []).map(session => new Option(
+                    window.formatSessionLabel(session), session.group_or_user_id
+                ))
+            );
+        }
+        return;
+    }
     selectEl.innerHTML = "";
     if (!sessions || sessions.length === 0) {
+        selectEl.title = "";
         selectEl.append(new Option("暂无会话", ""));
         selectEl.disabled = true;
         return;
@@ -118,10 +129,12 @@ export function populateSessionSelect(selectEl, sessions, selectedSession) {
     sessions.forEach(session => {
         const sessionId = session.group_or_user_id || "";
         const total = session.total || 0;
-        selectEl.append(new Option(`${sessionId} (${total})`, sessionId));
+        selectEl.append(new Option(`${window.formatSessionLabel(session)} (${total})`, sessionId));
     });
     selectEl.disabled = false;
     selectEl.value = selectedSession || sessions[0].group_or_user_id || "";
+    const selected = sessions.find(session => session.group_or_user_id === selectEl.value);
+    selectEl.title = selected ? window.formatSessionLabel(selected) : "";
 }
 
 export async function refreshScopedFilters(viewKey, preserveSession = true) {
@@ -159,10 +172,12 @@ export async function refreshScopedFilters(viewKey, preserveSession = true) {
                 sessions.forEach(session => {
                     const sessionId = session.group_or_user_id || "";
                     const total = session.total || 0;
-                    groupEl.append(new Option(`${sessionId} (${total})`, sessionId));
+                    groupEl.append(new Option(`${window.formatSessionLabel(session)} (${total})`, sessionId));
                 });
                 groupEl.disabled = false;
                 groupEl.value = nextSession;
+                const selected = sessions.find(session => session.group_or_user_id === nextSession);
+                groupEl.title = selected ? window.formatSessionLabel(selected) : "全部会话/群聊";
             } else {
                 const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
                     ? currentSession
@@ -170,6 +185,8 @@ export async function refreshScopedFilters(viewKey, preserveSession = true) {
                 groupEl.value = nextSession;
                 populateSessionSelect(groupEl, sessions, nextSession);
             }
+        } else if (groupEl) {
+            populateSessionSelect(groupEl, sessions, currentSession);
         }
     } catch (e) {
         if (selection !== JSON.stringify(getScopedFilterParams(viewKey))) return;

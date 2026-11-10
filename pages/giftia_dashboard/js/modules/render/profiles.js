@@ -196,7 +196,7 @@ export function renderGroupProfiles(items) {
                 <div class="profile-card-header">
                     <div class="profile-card-id-section">
                         <span class="profile-card-id-label">群聊:</span>
-                        <span class="profile-card-id-value">${window.escapeHtml(String(item.group_or_user_id))}</span>
+                        <span class="profile-card-id-value">${window.escapeHtml(window.formatSessionLabel(item))}</span>
                     </div>
                 </div>
                 <div class="profile-card-body">

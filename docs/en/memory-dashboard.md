@@ -16,6 +16,24 @@ Open Giftia WebUI from the AstrBot plugin page and select **长期记忆 (Long-t
 
 Management pages and administrator commands handle deletion; the bot queries memories through `search_memory`. Directly supported personality, interest and agreement information is stored as individual facts.
 
+## Group names and IDs
+
+Conversation filters, group rule cards, conversation status and merged forwards display **Group name (group ID)** when a name is known, falling back to the ID otherwise. The **群聊 (Group)** filter in group rules offers name suggestions and also accepts a raw ID. Filtering, copying IDs and editing continue to use the original ID.
+
+Names are stored independently for each bot and group ID. Accepted incoming group messages supply names when available. Missing names or names last refreshed at least 24 hours ago trigger a background group-info lookup; concurrent lookups for the same group are merged. Failures preserve the old name and wait at least 60 seconds before retrying. Rename notices update names immediately, and existing decision or reply group-info queries also backfill names. There is no startup group-list sync; historical groups acquire names as messages and queries arrive. Names are maintained independently from manual group rules.
+
+Group filters default to 240px on desktop and fill their container on narrow screens. Long names are truncated visually; hovering reveals the full name and group ID. The actual filter value remains the original ID.
+
+![Long names retain a bounded filter width, using example data](../images/long-group-filter.jpg)
+
+![Group names and IDs, with ID-only fallback, using example data](../images/group-names.jpg)
+
+## Conversation status
+
+Open **会话状态 (Conversation status)** and choose a bot using **BOT名称 (Bot name)** at the top. The first bot with stored conversation status is selected by default. Switching bots immediately displays that bot's cards, and status-data refreshes preserve the selection. Card titles show **Group name (group ID)**, falling back to the ID when the name is unknown. Copying IDs, editing status and replenishing energy continue to target the selected bot's corresponding conversation.
+
+![Bot-filtered conversation status with group names and IDs, using example data](../images/status-bot-filter.jpg)
+
 ## Group rules
 
 In **画像管理 (Profile management)**, switch **内容类型 (Content type)** to **群规 (Group rules)**, select a bot, and click **新建群规 (New group rules)**. Enter the group ID and rule content, then save. Bots without existing rules can create their first entry directly. Saving selects the target group; use **编辑 (Edit)** on a card to change its rules. Each bot and group ID has one rule entry, so saving replaces existing content for that pair.

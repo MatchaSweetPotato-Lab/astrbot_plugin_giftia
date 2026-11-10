@@ -375,13 +375,19 @@ class DecisionEngine:
             recent_messages=all_for_caption,
         )
 
+        group_data = (
+            await event.get_group(event.get_group_id()) if event.get_group_id() else ""
+        )
+        if isinstance(getattr(group_data, "group_name", None), str):
+            await self.plugin.data_cache.remember_group_name(
+                bot_name,
+                str(event.get_group_id()),
+                group_data.group_name,
+                refreshed=True,
+            )
         user_prompt = build_decision_prompt(
             user_id=event.get_sender_id(),
-            group_data=str(
-                await event.get_group(event.get_group_id())
-                if event.get_group_id()
-                else ""
-            ),
+            group_data=str(group_data),
             recent_messages=recent_messages,
             pending_messages=pending_messages,
             bot_status=bot_status,

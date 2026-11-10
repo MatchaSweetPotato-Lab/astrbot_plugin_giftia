@@ -63,6 +63,7 @@ def runtime(tmp_path, monkeypatch):
             parse_user_message=AsyncMock(), chain_to_result=AsyncMock()
         ),
         data_cache=SimpleNamespace(
+            observe_group_metadata=AsyncMock(),
             add_message=AsyncMock(),
             user_profiles={},
             user_profile_records={},

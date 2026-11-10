@@ -148,7 +148,7 @@ export function renderForwards(items) {
                 </td>
                 <td data-label="会话/来源">
                     <div class="forward-source-cell">
-                        <span>${window.escapeHtml(item.group_or_user_id || "")}</span>
+                        <span>${window.escapeHtml(window.formatSessionLabel(item))}</span>
                         <span>${window.escapeHtml(sourceLabel)}${item.source_id ? ` · ${window.escapeHtml(item.source_id)}` : ""}</span>
                         <span>所属消息: ${window.escapeHtml(item.owner_message_id || "-")}</span>
                     </div>
@@ -230,7 +230,7 @@ export function renderForwardDetail(item) {
             </div>
             <div class="forward-detail-meta-item">
                 <span>会话</span>
-                <strong>${window.escapeHtml(item.group_or_user_id || "-")}</strong>
+                <strong>${window.escapeHtml(window.formatSessionLabel(item) || "-")}</strong>
             </div>
             <div class="forward-detail-meta-item">
                 <span>所属消息</span>

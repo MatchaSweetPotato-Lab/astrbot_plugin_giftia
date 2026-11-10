@@ -14,7 +14,7 @@ from ..utils.relation_scoring import (
     valid_relation_tier_counts,
 )
 from ..utils.schemas import ACCOUNT_TYPE_LABELS
-from .web_helpers import USER_PROFILE_FIELD_KEYS
+from .web_helpers import USER_PROFILE_FIELD_KEYS, attach_group_names
 
 
 class ProfileApi:
@@ -241,6 +241,8 @@ class ProfileApi:
                         }
                     )
 
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {
                     "status": "success",
@@ -311,6 +313,8 @@ class ProfileApi:
                 profile = await cursor.fetchone()
             if revision != (profile[0] if profile else 0):
                 return error_response("互动评价历史已更新，请重试", status_code=409)
+            await attach_group_names(self.giftia.db, items, bot_name)
+
             return json_response(
                 {
                     "status": "success",
@@ -455,6 +459,8 @@ class ProfileApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+
+            await attach_group_names(self.giftia.db, sessions, selected_bot_name)
 
             return json_response(
                 {
@@ -789,6 +795,8 @@ class ProfileApi:
                         }
                     )
 
+            await attach_group_names(self.giftia.db, items)
+
             return json_response(
                 {
                     "status": "success",
@@ -856,6 +864,8 @@ class ProfileApi:
                         for row in rows
                         if row["group_or_user_id"]
                     ]
+
+            await attach_group_names(self.giftia.db, sessions, selected_bot_name)
 
             return json_response(
                 {

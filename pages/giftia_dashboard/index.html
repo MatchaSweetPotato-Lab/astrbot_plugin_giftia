@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="css/components/stickers.css">
     <link rel="stylesheet" href="css/components/reports.css">
     <link rel="stylesheet" href="css/components/model_health.css">
-    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/dashboard.css?v=group-filters">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
     <script src="/api/plugin/page/bridge-sdk.js"></script>
@@ -63,7 +63,7 @@
                             <label for="slang-bot">机器人</label>
                             <select id="slang-bot"></select>
                         </div>
-                        <div class="filter-group">
+                        <div class="filter-group group-filter">
                             <label for="slang-session">会话 / 群号</label>
                             <select id="slang-session"></select>
                             <datalist id="slang-sessions"></datalist>
@@ -137,7 +137,7 @@
                             <label>Bot名称</label>
                             <select id="history-bot-name"></select>
                         </div>
-                        <div class="filter-group">
+                        <div class="filter-group group-filter">
                             <label>群聊/用户ID</label>
                             <select id="history-group-id"></select>
                         </div>
@@ -215,7 +215,7 @@
                             <label>Bot名称</label>
                             <select id="memory-bot-name"></select>
                         </div>
-                        <div class="filter-group">
+                        <div class="filter-group group-filter">
                             <label>群聊/用户ID</label>
                             <select id="memory-group-id"></select>
                         </div>
@@ -257,6 +257,16 @@
 
             <!-- TAB 3: Bot Status -->
             <section id="tab-bot-status" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="status-bot-name">BOT名称</label>
+                            <select id="status-bot-name">
+                                <option value="">暂无 Bot</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
                 <div class="grid-layout" id="status-grid">
                     <!-- Dynamic status cards -->
                 </div>
@@ -373,7 +383,7 @@
                             <label>Bot名称</label>
                             <select id="forward-bot-name"></select>
                         </div>
-                        <div class="filter-group">
+                        <div class="filter-group group-filter">
                             <label>群聊/用户ID</label>
                             <select id="forward-group-id"></select>
                         </div>
@@ -437,13 +447,14 @@
                             <label>Bot名称</label>
                             <select id="profile-bot-name"></select>
                         </div>
-                        <div class="filter-group" id="profile-group-select-group">
+                        <div class="filter-group group-filter" id="profile-group-select-group">
                             <label>群聊ID</label>
                             <select id="profile-group-id-select"></select>
                         </div>
-                        <div class="filter-group" id="profile-group-input-group" style="display: none;">
-                            <label>群聊ID</label>
-                            <input type="text" id="profile-group-id-input" placeholder="筛选群聊ID">
+                        <div class="filter-group group-filter" id="profile-group-input-group" style="display: none;">
+                            <label>群聊</label>
+                            <input type="text" id="profile-group-id-input" list="profile-group-sessions" placeholder="输入群 ID 或选择群聊">
+                            <datalist id="profile-group-sessions"></datalist>
                         </div>
                         <div class="filter-group" id="profile-user-filter-group">
                             <label>用户ID</label>
@@ -481,7 +492,7 @@
                             <label>Bot名称</label>
                             <select id="token-bot-name"></select>
                         </div>
-                        <div class="filter-group">
+                        <div class="filter-group group-filter">
                             <label>群聊/用户ID</label>
                             <select id="token-group-id"></select>
                         </div>

@@ -26,7 +26,7 @@ export async function initializeSlangTab(preserveSession = true) {
         const datalist = document.getElementById('slang-sessions');
         if (datalist) {
             datalist.replaceChildren(
-                ...sessions.map(s => new Option(s.group_or_user_id, s.group_or_user_id))
+                ...sessions.map(s => new Option(window.formatSessionLabel(s), s.group_or_user_id))
             );
         }
         document.getElementById('slang-add').disabled = !bot.value;

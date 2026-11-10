@@ -3,6 +3,8 @@ import json
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from .web_helpers import attach_group_names
+
 
 class TokenApi:
     """Token statistics and logs management APIs."""
@@ -21,6 +23,9 @@ class TokenApi:
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 time_range=time_range,
+            )
+            await attach_group_names(
+                self.giftia.db, stats.get("by_group", []), bot_name
             )
             return json_response({"status": "success", "stats": stats})
         except Exception as e:
