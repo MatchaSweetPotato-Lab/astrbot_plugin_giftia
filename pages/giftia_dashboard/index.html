@@ -549,10 +549,17 @@
             <section id="tab-model-health" class="tab-panel">
                 <div class="filter-card card model-health-toolbar">
                     <div>
-                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。失效模型由后台独立探测，冷却到期后发送简短文本请求，测试通过后恢复使用。业务请求会持续跳过失效模型；也可手动测试并立即恢复健康状态。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
-                        <span class="muted-text">查看各流程使用的对话模型，测试连接并恢复可用状态。</span>
+                        <h3>模型状态 <span class="info-tooltip" data-tooltip="所有流程共用供应商健康状态。开启健康管理后自动跳过故障模型，并在冷却后探测；探测回复必须精确匹配随机校验串才会恢复。手动停用的模型始终直接跳过，且不进行自动或手动探测。设置会自动保存。"><svg viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span></h3>
+                        <span id="model-health-hint" class="muted-text">查看各流程使用的对话模型，测试连接并管理可用状态。</span>
                     </div>
-                    <button id="model-health-refresh" class="btn btn-secondary" type="button">刷新</button>
+                    <div class="model-health-controls">
+                        <label for="model-health-enabled">模型健康管理</label>
+                        <div class="switch-container">
+                            <input type="checkbox" id="model-health-enabled" class="switch-checkbox" role="switch" checked disabled>
+                            <label for="model-health-enabled" class="switch-label"></label>
+                        </div>
+                        <button id="model-health-refresh" class="btn btn-secondary" type="button">刷新</button>
+                    </div>
                 </div>
                 <p id="model-health-count" class="muted-text">正在加载模型状态…</p>
                 <p id="model-health-error" role="alert"></p>
