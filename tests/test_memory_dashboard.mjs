@@ -86,6 +86,7 @@ test('session labels preserve raw filter IDs and unknown-name fallback', () => {
     assert.deepEqual(select.options.map(option => option.value), ['123', '456']);
     assert.deepEqual(select.options.map(option => option.text), ['兴趣群 & <讨论>（123） (2)', '456 (1)']);
     assert.equal(select.value, '123');
+    assert.equal(select.title, '兴趣群 & <讨论>（123）');
 });
 
 test('group rule name suggestions refresh without changing the typed group ID', async () => {

@@ -22,6 +22,10 @@ Conversation filters, group rule cards, conversation status and merged forwards 
 
 Names are stored independently for each bot and group ID. Accepted incoming group messages supply names when available. Missing names or names last refreshed at least 24 hours ago trigger a background group-info lookup; concurrent lookups for the same group are merged. Failures preserve the old name and wait at least 60 seconds before retrying. Rename notices update names immediately, and existing decision or reply group-info queries also backfill names. There is no startup group-list sync; historical groups acquire names as messages and queries arrive. Names are maintained independently from manual group rules.
 
+Group filters default to 240px on desktop and fill their container on narrow screens. Long names are truncated visually; hovering reveals the full name and group ID. The actual filter value remains the original ID.
+
+![Long names retain a bounded filter width, using example data](../images/long-group-filter.jpg)
+
 ![Group names and IDs, with ID-only fallback, using example data](../images/group-names.jpg)
 
 ## Conversation status
