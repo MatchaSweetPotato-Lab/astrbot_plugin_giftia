@@ -366,6 +366,11 @@ async def test_manual_memory_creation_accepts_type(memory_api, memory_type):
     item = (await client.get("/memories")).json()["data"]["items"][0]
     assert item["metadata"]["memory_type"] == memory_type
     assert item["metadata"]["evidence"] == []
+    assert item["metadata"]["manual_entry"] is True
+    assert (
+        await plugin.db.get_kv_data("passive_memory:last_summarized_id:bot:group", 0)
+        == 0
+    )
 
 
 @pytest.mark.asyncio

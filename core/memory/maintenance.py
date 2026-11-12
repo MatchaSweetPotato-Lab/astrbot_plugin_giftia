@@ -151,6 +151,12 @@ class MemoryMaintenanceMixin:
             ),
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
+            response_validator=lambda completion: validate_memory_records(
+                MemoryRecords.model_validate(parse_markdown_json(completion)),
+                messages,
+                media,
+                self_id,
+            ),
         )
         if not completion:
             return False
@@ -321,43 +327,61 @@ class MemoryMaintenanceMixin:
         prompt += "\n\nJSON Schema:\n" + json.dumps(
             MemoryNoveltyReview.model_json_schema(), ensure_ascii=False
         )
+
+        def validate_review(completion: str) -> list[dict]:
+            """Validate all decisions without changing the source records.
+
+            Args:
+                completion: Proposed novelty decisions from a summary provider.
+
+            Returns:
+                Approved records with optional text and topic edits.
+
+            Raises:
+                ValueError: The response is malformed or decisions are invalid.
+            """
+            review = MemoryNoveltyReview.model_validate(parse_markdown_json(completion))
+            decisions = {item.candidate_id: item for item in review.decisions}
+            if len(decisions) != len(review.decisions) or set(decisions) != set(
+                range(1, len(records) + 1)
+            ):
+                raise ValueError(
+                    "Memory novelty review must cover every candidate once"
+                )
+            kept = []
+            for candidate, record in zip(candidates, records):
+                decision = decisions[candidate["candidate_id"]]
+                if decision.is_new:
+                    updated = dict(record)
+                    if decision.text is not None:
+                        updated["text"] = decision.text
+                    if decision.topic is not None:
+                        updated["topic"] = decision.topic
+                    kept.append(updated)
+                else:
+                    if decision.text is not None or decision.topic is not None:
+                        raise ValueError("Discarded candidates cannot contain edits")
+                    if not candidate["related_memories"] and not any(
+                        set(record["associated_user_ids"])
+                        & set(item["associated_user_ids"])
+                        for item in kept
+                    ):
+                        raise ValueError(
+                            "Duplicate decision has no related fact to compare"
+                        )
+            return kept
+
         completion = await self._call_summary_llm(
             "记忆新颖性整理",
             prompt,
             json.dumps({"candidates": candidates}, ensure_ascii=False),
             bot_name=bot_name,
             group_or_user_id=session_id,
+            response_validator=validate_review,
         )
         if not completion:
             raise ValueError("Memory novelty review returned no decisions")
-        review = MemoryNoveltyReview.model_validate(parse_markdown_json(completion))
-        decisions = {item.candidate_id: item for item in review.decisions}
-        if len(decisions) != len(review.decisions) or set(decisions) != set(
-            range(1, len(records) + 1)
-        ):
-            raise ValueError("Memory novelty review must cover every candidate once")
-        kept = []
-        for candidate, record in zip(candidates, records):
-            decision = decisions[candidate["candidate_id"]]
-            if decision.is_new:
-                updated = dict(record)
-                if decision.text is not None:
-                    updated["text"] = decision.text
-                if decision.topic is not None:
-                    updated["topic"] = decision.topic
-                kept.append(updated)
-            else:
-                if decision.text is not None or decision.topic is not None:
-                    raise ValueError("Discarded candidates cannot contain edits")
-                if not candidate["related_memories"] and not any(
-                    set(record["associated_user_ids"])
-                    & set(item["associated_user_ids"])
-                    for item in kept
-                ):
-                    raise ValueError(
-                        "Duplicate decision has no related fact to compare"
-                    )
-        return kept
+        return validate_review(completion)
 
     async def _sync_memory_vectors(self, bot_name: str, session_id: str) -> None:
         """Retry optional indexing without changing durable memory state.

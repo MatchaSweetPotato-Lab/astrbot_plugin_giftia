@@ -97,7 +97,17 @@ class MemoryRecord(BaseModel):
         le=10,
         description="事实对后续互动的重要程度，1 最低、10 最高；不表示可信度或新旧程度。",
     )
-    evidence: list[MemoryEvidence] = Field(default_factory=list, max_length=20)
+    evidence: list[MemoryEvidence] = Field(
+        min_length=1,
+        max_length=20,
+        description="必填且非空，至少引用一条 new_messages 中的直接来源消息，每项只填写 source_id。",
+    )
+
+
+class ManualMemoryRecord(MemoryRecord):
+    """An administrator assertion without generated chat evidence."""
+
+    evidence: list[MemoryEvidence] = Field(default_factory=list, max_length=0)
 
 
 class MemoryRecords(BaseModel):

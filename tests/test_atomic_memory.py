@@ -60,6 +60,24 @@ async def runtime(tmp_path, monkeypatch):
         await db.close()
 
 
+@pytest.fixture
+def summary_llm(runtime, monkeypatch):
+    """Exercise production retries with mocked provider responses.
+
+    Args:
+        runtime: Isolated memory runtime.
+        monkeypatch: Test-scoped attribute restoration.
+
+    Returns:
+        Mock of AstrBot's generation API.
+    """
+    monkeypatch.delattr(runtime.manager, "_call_summary_llm")
+    runtime.plugin.passive_memory_provider_ids = ["primary", "fallback"]
+    generate = AsyncMock()
+    runtime.plugin.context = SimpleNamespace(llm_generate=generate)
+    return generate
+
+
 async def message(
     runtime,
     text,
@@ -574,6 +592,131 @@ async def test_invalid_batch_keeps_progress_and_can_retry(runtime, response):
     )
     assert (
         await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group") == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    ["invalid_json", "invalid_schema", "missing_evidence", "empty_evidence", "source"],
+)
+@pytest.mark.parametrize("failed_attempts", [1, 2, 3, 4])
+async def test_invalid_extraction_retries_providers_without_advancing_progress(
+    runtime, summary_llm, fault, failed_attempts
+):
+    previous = await message(runtime, "这是一条无需记忆的问候")
+    summary_llm.return_value = SimpleNamespace(completion_text='{"memories": []}')
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", previous.db_id, previous.db_id
+    )
+    summary_llm.assert_awaited_once()
+    summary_llm.reset_mock()
+
+    source = await message(runtime, "以后请使用简短回复", day=11)
+    invalid = atom(source)
+    if fault == "invalid_schema":
+        invalid["importance"] = "high"
+    elif fault == "missing_evidence":
+        invalid.pop("evidence")
+    elif fault == "empty_evidence":
+        invalid["evidence"] = []
+    elif fault == "source":
+        invalid["evidence"][0]["source_id"] += 1000000
+    rejected = (
+        "broken JSON"
+        if fault == "invalid_json"
+        else json.dumps({"memories": [atom(source), invalid]})
+    )
+
+    async def respond(**kwargs):
+        assert await rows(runtime) == []
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (source.db_id, source.db_id, 1)
+        assert (
+            await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+            == previous.db_id
+        )
+        return SimpleNamespace(
+            completion_text=(
+                rejected
+                if summary_llm.await_count <= failed_attempts
+                else json.dumps({"memories": [atom(source)]})
+            )
+        )
+
+    summary_llm.side_effect = respond
+    success = await runtime.manager._run_background_summarize(
+        "bot", "group", "self", source.db_id, source.db_id
+    )
+    assert success is (failed_attempts < 4)
+    assert [
+        call.kwargs["chat_provider_id"] for call in summary_llm.await_args_list
+    ] == ["primary", "primary", "fallback", "fallback"][: failed_attempts + 1]
+    if not success:
+        assert await rows(runtime) == []
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (source.db_id, source.db_id, 1)
+        assert (
+            await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+            == previous.db_id
+        )
+        await runtime.manager.maintain_memories()
+        assert [
+            call.kwargs["chat_provider_id"] for call in summary_llm.await_args_list
+        ] == ["primary", "primary", "fallback", "fallback", "primary"]
+    saved = await rows(runtime)
+    assert len(saved) == 1
+    assert saved[0]["text"] == source.content
+    assert json.loads(saved[0]["metadata"])["evidence"][0]["source_id"] == source.db_id
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (0, 0, 0)
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+        == source.db_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_transport_empty_and_invalid_responses_share_summary_retry_budget(
+    runtime, summary_llm
+):
+    source = await message(runtime, "以后请使用简短回复")
+    summary_llm.side_effect = [
+        RuntimeError("Temporary transport failure"),
+        SimpleNamespace(completion_text="broken JSON"),
+        SimpleNamespace(completion_text=""),
+        SimpleNamespace(completion_text=json.dumps({"memories": [atom(source)]})),
+    ]
+    assert await runtime.manager._run_background_summarize(
+        "bot", "group", "self", source.db_id, source.db_id
+    )
+    assert [
+        call.kwargs["chat_provider_id"] for call in summary_llm.await_args_list
+    ] == ["primary", "primary", "fallback", "fallback"]
+    assert len(await rows(runtime)) == 1
+
+
+@pytest.mark.asyncio
+async def test_single_summary_provider_stops_after_two_invalid_responses(
+    runtime, summary_llm
+):
+    source = await message(runtime, "以后请使用简短回复")
+    runtime.plugin.passive_memory_provider_ids = ["primary"]
+    summary_llm.return_value = SimpleNamespace(completion_text="broken JSON")
+    assert not await runtime.manager._run_background_summarize(
+        "bot", "group", "self", source.db_id, source.db_id
+    )
+    assert summary_llm.await_count == 2
+    assert await rows(runtime) == []
+    assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+        "bot", "group"
+    ) == (source.db_id, source.db_id, 1)
+    assert (
+        await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group", 0)
+        == 0
     )
 
 
@@ -2371,6 +2514,81 @@ async def test_failed_novelty_review_preserves_pending_sources_for_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["invalid_json", "incomplete", "unsupported_discard"])
+@pytest.mark.parametrize("failed_attempts", [1, 2, 4])
+async def test_invalid_novelty_review_retries_before_committing_any_memories(
+    runtime, summary_llm, fault, failed_attempts
+):
+    first = await message(runtime, "我是高中生")
+    second = await message(runtime, "我喜欢天文", day=11)
+    proposals = [atom(first, topic="身份"), atom(second, topic="爱好")]
+    rejected = {
+        "invalid_json": "broken JSON",
+        "incomplete": '{"decisions": [{"candidate_id": 1, "is_new": true}]}',
+        "unsupported_discard": '{"decisions": [{"candidate_id": 1, "is_new": false}, {"candidate_id": 2, "is_new": true}]}',
+    }[fault]
+    accepted = json.dumps(
+        {
+            "decisions": [
+                {"candidate_id": 1, "is_new": True},
+                {"candidate_id": 2, "is_new": True},
+            ]
+        }
+    )
+
+    async def respond(**kwargs):
+        assert await rows(runtime) == []
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (first.db_id, second.db_id, 2)
+        assert (
+            await runtime.db.get_kv_data(
+                "passive_memory:last_summarized_id:bot:group", 0
+            )
+            == 0
+        )
+        if summary_llm.await_count == 1:
+            return SimpleNamespace(completion_text=json.dumps({"memories": proposals}))
+        return SimpleNamespace(
+            completion_text=(
+                rejected if summary_llm.await_count <= failed_attempts + 1 else accepted
+            )
+        )
+
+    summary_llm.side_effect = respond
+    success = await runtime.manager._run_background_summarize(
+        "bot", "group", "self", first.db_id, second.db_id
+    )
+    assert success is (failed_attempts < 4)
+    assert [
+        call.kwargs["chat_provider_id"] for call in summary_llm.await_args_list
+    ] == ["primary"] + ["primary", "primary", "fallback", "fallback"][
+        : failed_attempts + 1
+    ]
+    saved = await rows(runtime)
+    if success:
+        assert [row["text"] for row in saved] == [first.content, second.content]
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (0, 0, 0)
+        assert (
+            await runtime.db.get_kv_data("passive_memory:last_summarized_id:bot:group")
+            == second.db_id
+        )
+    else:
+        assert saved == []
+        assert await runtime.db.chat_history_repo.get_pending_memory_stats(
+            "bot", "group"
+        ) == (first.db_id, second.db_id, 2)
+        assert (
+            await runtime.db.get_kv_data(
+                "passive_memory:last_summarized_id:bot:group", 0
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("memory_type", [None, "fact", "event", "legacy"])
 @pytest.mark.parametrize(
     "scope,bot,user,session,compared",
@@ -2620,7 +2838,8 @@ async def test_counter_reset_failure_keeps_committed_summary_and_relationship_up
 def test_extraction_schema_requests_memory_type_and_evidence():
     from core.memory.atomic import MemoryRecords
 
-    fields = MemoryRecords.model_json_schema()["$defs"]["MemoryRecord"]["properties"]
+    record_schema = MemoryRecords.model_json_schema()["$defs"]["MemoryRecord"]
+    fields = record_schema["properties"]
     assert set(fields) == {
         "memory_type",
         "associated_user_ids",
@@ -2630,6 +2849,8 @@ def test_extraction_schema_requests_memory_type_and_evidence():
         "importance",
         "evidence",
     }
+    assert "evidence" in record_schema["required"]
+    assert fields["evidence"]["minItems"] == 1
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 from ..database.profile_store import PROFILE_NAMES_CTE
-from ..memory.atomic import MemoryRecord, memory_metadata
+from ..memory.atomic import ManualMemoryRecord, memory_metadata
 from ..utils.schemas import normalize_memory_importance
 from .web_helpers import attach_group_names, optional_bool, optional_int
 
@@ -324,7 +324,7 @@ class MemoryApi:
                 associated = [
                     uid.strip() for uid in associated.split(",") if uid.strip()
                 ]
-            item = MemoryRecord(
+            item = ManualMemoryRecord(
                 memory_type=body.get("memory_type", "fact"),
                 topic=body.get("topic") or "人工记录",
                 text=body.get("text"),

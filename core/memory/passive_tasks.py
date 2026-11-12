@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Callable
 
 from astrbot.api import logger
 
@@ -22,7 +23,24 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
         user_prompt: str,
         bot_name: str = "",
         group_or_user_id: str = "",
+        *,
+        response_validator: Callable[[str], object] | None = None,
     ) -> str | None:
+        """Try summary providers within a shared call and validation retry budget.
+
+        Args:
+            task_name: Summary task used in logs and token accounting.
+            system_prompt: Task instructions and optional response schema.
+            user_prompt: Source data for the summary.
+            bot_name: Owning bot configuration.
+            group_or_user_id: Owning conversation.
+            response_validator: Optional synchronous content validator. Raising
+                ValueError or TypeError rejects the response and consumes this
+                attempt; its return value is ignored.
+
+        Returns:
+            Accepted response text, or None after all providers fail.
+        """
         logger.debug(
             f"[Giftia Passive Memory] Final prompts: task={task_name}, "
             f"bot={bot_name}, session={group_or_user_id}\n"
@@ -78,6 +96,21 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                             task_name,
                             log_text,
                         )
+                        if response_validator is not None:
+                            try:
+                                response_validator(completion_text)
+                            except (ValueError, TypeError) as error:
+                                logger.warning(
+                                    "[Giftia Memory] Rejected %s response from %s "
+                                    "(attempt %s/2) for %s:%s: %s",
+                                    task_name,
+                                    provider_id,
+                                    attempt + 1,
+                                    bot_name,
+                                    group_or_user_id,
+                                    error,
+                                )
+                                continue
                         return completion_text
                 except ProviderUnavailableError:
                     break
@@ -87,7 +120,9 @@ class PassiveSummaryTaskMixin(MemoryMaintenanceMixin, PassiveContextMixin):
                     )
 
         logger.error(
-            f"[Giftia Passive Memory] 所有配置的总结提供商均调用失败，{task_name}终止。"
+            "[Giftia Passive Memory] All configured providers failed to return "
+            "an accepted response for %s",
+            task_name,
         )
         return None
 
