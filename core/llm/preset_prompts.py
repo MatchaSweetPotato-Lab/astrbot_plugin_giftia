@@ -615,8 +615,6 @@ def get_decision_rules(
 
 ## 会话数据说明
 {ACCOUNT_TYPE_GUIDE}
-{PROFILE_SOURCE_PRIVACY_GUIDE}
-{TASK_BOARD_USAGE_GUIDE}
 {SLANG_USAGE_GUIDE}
 
 ## 状态与检索判定 (use_rag)
@@ -624,7 +622,6 @@ def get_decision_rules(
 - **RAG 触发条件**：在以下情况下，必须将 `use_rag` 设为 `true`：
   - 提及过往大事件、约定或询问过去的承诺。
   - 讨论之前聊天的久远细节。
-  - 需要获取/更新某位群友的特定喜好、专属昵称或用户画像。
 - **检索词格式**：`rag_query` 必须为自然语言查询问题，严禁使用关键字拼接。{meme_tags_rule}
 
 # 输出格式规范
